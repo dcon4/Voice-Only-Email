@@ -1,6 +1,7 @@
 MIT License
 
-Copyright (c) 2026 dcon4
+Copyright (c) 2024 Sayak Naskar (Original voice-based-email-for-blind project)
+Kotlin/Android port and modifications (c) 2026 dcon4
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -15,7 +16,19 @@ copies or substantial portions of the Software.
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
 IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
 FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+aUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+out of OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+---
+
+ATTRIBUTION:
+
+This project is a derivative work based on:
+- Original Repository: https://github.com/hacky1997/voice-based-email-for-blind
+- Original Author: Sayak Naskar
+- Original License: MIT
+
+This Kotlin/Android port maintains the same MIT license to ensure compliance
+with the original project's licensing terms.
