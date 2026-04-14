@@ -20,6 +20,7 @@ import net.openid.appauth.ResponseTypeValues
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
 
 private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "auth_prefs")
 
@@ -73,8 +74,11 @@ class AuthRepository @Inject constructor(
         response: AuthorizationResponse
     ): Pair<String?, String?> = suspendCancellableCoroutine { cont ->
         val tokenRequest = response.createTokenExchangeRequest()
-        authService.performTokenRequest(tokenRequest) { tokenResponse, _ ->
-            cont.resume(Pair(tokenResponse?.accessToken, tokenResponse?.refreshToken))
+        authService.performTokenRequest(tokenRequest) { tokenResponse, ex ->
+            when {
+                ex != null -> cont.resumeWithException(ex)
+                else -> cont.resume(Pair(tokenResponse?.accessToken, tokenResponse?.refreshToken))
+            }
         }
     }
 }

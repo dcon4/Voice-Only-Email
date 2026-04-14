@@ -1,13 +1,16 @@
 package com.example.voicegmail.voice
 
+import android.Manifest
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.os.Bundle
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import android.speech.tts.TextToSpeech
 import android.util.Log
+import androidx.core.content.ContextCompat
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -53,6 +56,11 @@ class VoiceManager @Inject constructor(
     }
 
     fun startListening(onResult: (String) -> Unit) {
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO)
+                != PackageManager.PERMISSION_GRANTED) {
+            Log.w(tag, "RECORD_AUDIO permission not granted; cannot start listening")
+            return
+        }
         if (!SpeechRecognizer.isRecognitionAvailable(context)) {
             Log.w(tag, "Speech recognition not available")
             return

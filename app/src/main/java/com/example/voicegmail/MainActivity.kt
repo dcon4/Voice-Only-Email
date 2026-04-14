@@ -13,10 +13,15 @@ import androidx.navigation.compose.rememberNavController
 import com.example.voicegmail.ui.screens.ComposeEmailScreen
 import com.example.voicegmail.ui.screens.InboxScreen
 import com.example.voicegmail.ui.theme.VoiceGmailTheme
+import com.example.voicegmail.voice.VoiceManager
 import dagger.hilt.android.AndroidEntryPoint
+import javax.inject.Inject
 
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
+
+    @Inject lateinit var voiceManager: VoiceManager
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
@@ -44,5 +49,10 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        voiceManager.shutdown()
     }
 }

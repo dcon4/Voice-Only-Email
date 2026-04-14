@@ -2,6 +2,9 @@ package com.example.voicegmail.gmail
 
 import android.util.Base64
 import com.example.voicegmail.auth.AuthRepository
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.first
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -20,8 +23,10 @@ class GmailRepository @Inject constructor(
     suspend fun listInbox(): List<EmailItem> {
         val auth = authHeader()
         val refs = gmailApiService.listMessages(auth).messages ?: return emptyList()
-        return refs.map { ref ->
-            gmailApiService.getMessage(auth, ref.id).toEmailItem()
+        return coroutineScope {
+            refs.map { ref ->
+                async { gmailApiService.getMessage(auth, ref.id).toEmailItem() }
+            }.awaitAll()
         }
     }
 

@@ -59,12 +59,16 @@ class InboxViewModel @Inject constructor(
         val exception = AuthorizationException.fromIntent(data)
         if (response != null) {
             viewModelScope.launch {
-                val (accessToken, refreshToken) = authRepository.exchangeCodeForTokens(authService, response)
-                if (accessToken != null) {
-                    authRepository.saveTokens(accessToken, refreshToken)
-                    loadInbox()
-                } else {
-                    _uiState.value = InboxUiState.Error("Sign-in failed: could not get access token")
+                try {
+                    val (accessToken, refreshToken) = authRepository.exchangeCodeForTokens(authService, response)
+                    if (accessToken != null) {
+                        authRepository.saveTokens(accessToken, refreshToken)
+                        loadInbox()
+                    } else {
+                        _uiState.value = InboxUiState.Error("Sign-in failed: could not get access token")
+                    }
+                } catch (e: Exception) {
+                    _uiState.value = InboxUiState.Error("Sign-in failed: ${e.message}")
                 }
             }
         } else {
