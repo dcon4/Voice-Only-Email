@@ -20,18 +20,36 @@ android {
             useSupportLibrary = true
         }
 
-        // ── OAuth redirect URI ──────────────────────────────────────────────────────
-        // Set this to the *reverse* of your Google OAuth Client ID prefix.
+        // ── OAuth client ID + redirect URI ─────────────────────────────────────────
+        // The client ID is read from the OAUTH_CLIENT_ID environment variable so it
+        // never has to be checked in to source control.
         //
-        // Example:
-        //   Client ID  : 123456789000-abcdefghijklmnop.apps.googleusercontent.com
-        //   Prefix     : 123456789000-abcdefghijklmnop        ← copy this part
-        //   Scheme     : com.googleusercontent.apps.123456789000-abcdefghijklmnop
+        // For local development: set the env var before building, e.g.
+        //   export OAUTH_CLIENT_ID="123456789000-abcdefghijklmnop.apps.googleusercontent.com"
+        //   ./gradlew :app:assembleDebug
         //
-        // This must match the redirect URI you register in Google Cloud Console.
-        // See README.md → "Create OAuth 2.0 Credentials" for full instructions.
-        val oauthRedirectScheme = "com.googleusercontent.apps.YOUR_CLIENT_ID_PREFIX" // e.g. "com.googleusercontent.apps.123456789000-abcdefghijklmnop"
+        // For CI: add a repository secret named OAUTH_CLIENT_ID in
+        //   Settings → Secrets and variables → Actions.
+        val oauthClientId = System.getenv("OAUTH_CLIENT_ID").let { envValue ->
+            if (envValue.isNullOrBlank()) {
+                logger.warn(
+                    "\n⚠️  OAUTH_CLIENT_ID env var is not set. " +
+                    "The app will build but OAuth sign-in will not work. " +
+                    "Set OAUTH_CLIENT_ID before building a usable APK.\n"
+                )
+                "YOUR_CLIENT_ID_PREFIX.apps.googleusercontent.com"
+            } else {
+                require(envValue.endsWith(".apps.googleusercontent.com")) {
+                    "OAUTH_CLIENT_ID must end with '.apps.googleusercontent.com', got: $envValue"
+                }
+                envValue
+            }
+        }
+        // Derive the reverse-client-ID scheme used as the OAuth redirect URI.
+        val oauthPrefix = oauthClientId.removeSuffix(".apps.googleusercontent.com")
+        val oauthRedirectScheme = "com.googleusercontent.apps.$oauthPrefix"
         manifestPlaceholders["appAuthRedirectScheme"] = oauthRedirectScheme
+        buildConfigField("String", "OAUTH_CLIENT_ID", "\"$oauthClientId\"")
         buildConfigField("String", "OAUTH_REDIRECT_SCHEME", "\"$oauthRedirectScheme\"")
     }
 
