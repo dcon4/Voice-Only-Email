@@ -19,6 +19,20 @@ android {
         vectorDrawables {
             useSupportLibrary = true
         }
+
+        // ── OAuth redirect URI ──────────────────────────────────────────────────────
+        // Set this to the *reverse* of your Google OAuth Client ID prefix.
+        //
+        // Example:
+        //   Client ID  : 123456789000-abcdefghijklmnop.apps.googleusercontent.com
+        //   Prefix     : 123456789000-abcdefghijklmnop        ← copy this part
+        //   Scheme     : com.googleusercontent.apps.123456789000-abcdefghijklmnop
+        //
+        // This must match the redirect URI you register in Google Cloud Console.
+        // See README.md → "Create OAuth 2.0 Credentials" for full instructions.
+        val oauthRedirectScheme = "com.googleusercontent.apps.YOUR_CLIENT_ID_PREFIX" // e.g. "com.googleusercontent.apps.123456789000-abcdefghijklmnop"
+        manifestPlaceholders["appAuthRedirectScheme"] = oauthRedirectScheme
+        buildConfigField("String", "OAUTH_REDIRECT_SCHEME", "\"$oauthRedirectScheme\"")
     }
 
     buildTypes {
