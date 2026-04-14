@@ -107,7 +107,7 @@ fun SettingsScreen(
                     value = speechRate,
                     onValueChange = { viewModel.setSpeechRate(it) },
                     valueRange = 0.5f..2.0f,
-                    steps = 5,
+                    steps = 6,
                     modifier = Modifier
                         .weight(1f)
                         .padding(horizontal = 8.dp)

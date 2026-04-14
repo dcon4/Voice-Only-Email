@@ -49,7 +49,7 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             VoiceGmailTheme {
-                VoiceGmailApp(
+                VoiceGmailContent(
                     activity = this,
                     authViewModel = authViewModel,
                     voiceManager = voiceManager,
@@ -66,7 +66,7 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-private fun VoiceGmailApp(
+private fun VoiceGmailContent(
     activity: Activity,
     authViewModel: AuthViewModel,
     voiceManager: VoiceManager,

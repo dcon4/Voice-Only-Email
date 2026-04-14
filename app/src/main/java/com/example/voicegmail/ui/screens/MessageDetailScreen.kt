@@ -33,6 +33,9 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import com.example.voicegmail.voice.VoiceManager
 import com.example.voicegmail.viewmodel.InboxViewModel
 
+private const val TTS_BODY_PREVIEW_LENGTH = 500
+private const val UI_BODY_PREVIEW_LENGTH = 300
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MessageDetailScreen(
@@ -51,7 +54,7 @@ fun MessageDetailScreen(
     LaunchedEffect(message) {
         message?.let { msg ->
             voiceManager.speakNow(
-                "Email from ${msg.from}. Subject: ${msg.subject}. ${msg.bodyText.take(500)}"
+                "Email from ${msg.from}. Subject: ${msg.subject}. ${msg.bodyText.take(TTS_BODY_PREVIEW_LENGTH)}"
             )
         }
     }
@@ -118,7 +121,7 @@ fun MessageDetailScreen(
                         text = msg.bodyText.ifBlank { msg.snippet },
                         style = MaterialTheme.typography.bodyLarge,
                         modifier = Modifier.semantics {
-                            contentDescription = "Email body: ${msg.bodyText.take(300)}"
+                            contentDescription = "Email body: ${msg.bodyText.take(UI_BODY_PREVIEW_LENGTH)}"
                         }
                     )
                 }

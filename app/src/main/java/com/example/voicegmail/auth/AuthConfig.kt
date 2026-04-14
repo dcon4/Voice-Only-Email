@@ -16,8 +16,10 @@ package com.example.voicegmail.auth
  * IMPORTANT: Do NOT commit your real Client ID to a public repository.
  */
 object AuthConfig {
-    // Replace with your Android OAuth 2.0 Client ID
-    const val CLIENT_ID = "YOUR_ANDROID_OAUTH_CLIENT_ID.apps.googleusercontent.com"
+    // TODO: Replace with your Android OAuth 2.0 Client ID before running
+    // This placeholder is intentionally invalid — the app will fail to authenticate
+    // until you supply a real client ID (see README for instructions).
+    const val CLIENT_ID = "REPLACE_WITH_YOUR_CLIENT_ID.apps.googleusercontent.com"
 
     const val REDIRECT_URI = "com.example.voicegmail:/oauth2redirect"
 

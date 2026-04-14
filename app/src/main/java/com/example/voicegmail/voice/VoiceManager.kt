@@ -22,37 +22,45 @@ class VoiceManager @Inject constructor(
     private var isReady = false
     private var speechRate: Float = 1.0f
     private val pendingQueue = mutableListOf<String>()
+    private val lock = Any()
 
     init {
         tts = TextToSpeech(context, this)
     }
 
     override fun onInit(status: Int) {
-        if (status == TextToSpeech.SUCCESS) {
-            tts?.language = Locale.US
-            tts?.setSpeechRate(speechRate)
-            isReady = true
-            // Drain any queued utterances
-            pendingQueue.forEach { speak(it) }
-            pendingQueue.clear()
+        synchronized(lock) {
+            if (status == TextToSpeech.SUCCESS) {
+                tts?.language = Locale.US
+                tts?.setSpeechRate(speechRate)
+                isReady = true
+                // Drain any queued utterances
+                val queued = pendingQueue.toList()
+                pendingQueue.clear()
+                queued.forEach { speak(it) }
+            }
         }
     }
 
     /** Speak [text] aloud. If TTS is not yet ready, the text is queued. */
     fun speak(text: String) {
-        if (!isReady) {
-            pendingQueue += text
-            return
+        synchronized(lock) {
+            if (!isReady) {
+                pendingQueue += text
+                return
+            }
         }
         tts?.speak(text, TextToSpeech.QUEUE_ADD, null, UUID.randomUUID().toString())
     }
 
     /** Interrupt and stop current speech, then speak [text]. */
     fun speakNow(text: String) {
-        if (!isReady) {
-            pendingQueue.clear()
-            pendingQueue += text
-            return
+        synchronized(lock) {
+            if (!isReady) {
+                pendingQueue.clear()
+                pendingQueue += text
+                return
+            }
         }
         tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, UUID.randomUUID().toString())
     }

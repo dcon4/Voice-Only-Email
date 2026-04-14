@@ -6,6 +6,9 @@ on:
     branches: [ "main", "copilot/**" ]
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   build-apk:
     runs-on: ubuntu-latest

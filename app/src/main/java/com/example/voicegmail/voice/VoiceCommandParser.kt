@@ -35,7 +35,9 @@ class VoiceCommandParser @Inject constructor() {
             }
 
             text.startsWith("body ") || text.startsWith("message ") -> {
-                val body = rawText.substringAfter(" ").trim()
+                val body = rawText.substringAfter(
+                    if (text.startsWith("body ")) "body " else "message "
+                ).trim()
                 VoiceCommand.SetBody(body)
             }
 
