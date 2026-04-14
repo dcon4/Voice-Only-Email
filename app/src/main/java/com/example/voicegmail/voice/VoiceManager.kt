@@ -9,6 +9,7 @@ import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import android.speech.tts.TextToSpeech
+import android.speech.tts.UtteranceProgressListener
 import android.util.Log
 import androidx.core.content.ContextCompat
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -23,6 +24,7 @@ class VoiceManager @Inject constructor(
     @ApplicationContext private val context: Context
 ) {
     private val tag = "VoiceManager"
+    private val utteranceId = "vm_utterance"
 
     private var tts: TextToSpeech? = null
     private var ttsReady = false
@@ -51,8 +53,35 @@ class VoiceManager @Inject constructor(
 
     fun speak(text: String) {
         if (ttsReady) {
-            tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, null)
+            tts?.setOnUtteranceProgressListener(null)
+            tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, utteranceId)
         }
+    }
+
+    /**
+     * Speaks [prompt] via TTS, then automatically starts listening once speech completes.
+     * The recognized text is delivered to [onResult]. This serializes speech and listening so
+     * they never overlap.
+     */
+    fun speakAndThenListen(prompt: String, onResult: (String) -> Unit) {
+        if (!ttsReady) {
+            Log.w(tag, "TTS not ready; falling back to immediate listen")
+            startListening(onResult)
+            return
+        }
+        tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
+            override fun onStart(utteranceId: String?) {}
+            override fun onDone(utteranceId: String?) {
+                tts?.setOnUtteranceProgressListener(null)
+                startListening(onResult)
+            }
+            @Deprecated("Deprecated in API 21", ReplaceWith("onError(utteranceId, errorCode)"))
+            override fun onError(utteranceId: String?) {
+                tts?.setOnUtteranceProgressListener(null)
+                startListening(onResult)
+            }
+        })
+        tts?.speak(prompt, TextToSpeech.QUEUE_FLUSH, null, utteranceId)
     }
 
     fun startListening(onResult: (String) -> Unit) {
@@ -99,6 +128,13 @@ class VoiceManager @Inject constructor(
     }
 
     fun stopListening() {
+        speechRecognizer?.stopListening()
+        _isListening.value = false
+    }
+
+    /** Stops both TTS and speech recognition immediately. */
+    fun stopAll() {
+        tts?.stop()
         speechRecognizer?.stopListening()
         _isListening.value = false
     }

@@ -12,6 +12,9 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -25,26 +28,57 @@ fun ComposeEmailScreen(
     onBack: () -> Unit,
     viewModel: ComposeViewModel = hiltViewModel()
 ) {
-    var to by remember { mutableStateOf("") }
-    var subject by remember { mutableStateOf("") }
-    var body by remember { mutableStateOf("") }
+    // Bind UI text to ViewModel state so both voice and manual entry stay in sync
+    val to by viewModel.to.collectAsState()
+    val subject by viewModel.subject.collectAsState()
+    val body by viewModel.body.collectAsState()
     var activeField by remember { mutableStateOf<String?>(null) }
 
     val context = LocalContext.current
     val sendState by viewModel.sendState.collectAsState()
     val isListening by viewModel.isListening.collectAsState()
 
-    // Tracks which field is waiting for RECORD_AUDIO permission to be granted
+    // Navigate back when voice flow triggers it (cancel or successful send)
+    LaunchedEffect(Unit) {
+        viewModel.navigateBack.collect { onBack() }
+    }
+
+    // Stop voice when leaving the screen
+    DisposableEffect(Unit) {
+        onDispose { viewModel.stopAll() }
+    }
+
+    // Start the guided voice flow as soon as the screen is entered (permission check first)
+    var permissionChecked by remember { mutableStateOf(false) }
+    val micPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { isGranted ->
+        if (isGranted) viewModel.startGuidedVoiceFlow()
+    }
+
+    LaunchedEffect(Unit) {
+        if (!permissionChecked) {
+            permissionChecked = true
+            if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO)
+                    == PackageManager.PERMISSION_GRANTED) {
+                viewModel.startGuidedVoiceFlow()
+            } else {
+                micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+            }
+        }
+    }
+
+    // Tracks which field is waiting for RECORD_AUDIO permission for manual mic buttons
     var pendingPermissionField by remember { mutableStateOf<String?>(null) }
 
-    val micPermissionLauncher = rememberLauncherForActivityResult(
+    val manualMicPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { isGranted ->
         if (isGranted) {
             when (pendingPermissionField) {
-                "to"      -> viewModel.startVoiceInput { result -> to = result }
-                "subject" -> viewModel.startVoiceInput { result -> subject = result }
-                "body"    -> viewModel.startVoiceInput { result -> body = result }
+                "to"      -> viewModel.startVoiceInput { result -> viewModel.updateTo(result) }
+                "subject" -> viewModel.startVoiceInput { result -> viewModel.updateSubject(result) }
+                "body"    -> viewModel.startVoiceInput { result -> viewModel.updateBody(result) }
             }
         }
         pendingPermissionField = null
@@ -57,31 +91,34 @@ fun ComposeEmailScreen(
             viewModel.startVoiceInput(onResult)
         } else {
             pendingPermissionField = field
-            micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
-        }
-    }
-
-    LaunchedEffect(sendState) {
-        if (sendState is SendState.Success) {
-            onBack()
+            manualMicPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
         }
     }
 
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Compose") },
+                title = {
+                    Text(
+                        "Compose",
+                        modifier = Modifier.semantics { heading() }
+                    )
+                },
                 navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                    IconButton(
+                        onClick = onBack,
+                        modifier = Modifier.semantics { contentDescription = "Go back to inbox" }
+                    ) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null)
                     }
                 },
                 actions = {
                     IconButton(
                         onClick = { viewModel.sendEmail(to, subject, body) },
-                        enabled = sendState !is SendState.Sending && to.isNotBlank()
+                        enabled = sendState !is SendState.Sending && to.isNotBlank(),
+                        modifier = Modifier.semantics { contentDescription = "Send email" }
                     ) {
-                        Icon(Icons.Default.Send, contentDescription = "Send")
+                        Icon(Icons.Default.Send, contentDescription = null)
                     }
                 }
             )
@@ -98,23 +135,27 @@ fun ComposeEmailScreen(
                 Text(
                     text = "Error: ${(sendState as SendState.Error).message}",
                     color = MaterialTheme.colorScheme.error,
-                    style = MaterialTheme.typography.bodySmall
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.semantics {
+                        contentDescription = "Send error: ${(sendState as SendState.Error).message}"
+                    }
                 )
             }
 
             OutlinedTextField(
                 value = to,
-                onValueChange = { to = it },
+                onValueChange = { viewModel.updateTo(it) },
                 label = { Text("To") },
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
                 trailingIcon = {
-                    IconButton(onClick = {
-                        startVoiceForField("to") { result -> to = result }
-                    }) {
+                    IconButton(
+                        onClick = { startVoiceForField("to") { result -> viewModel.updateTo(result) } },
+                        modifier = Modifier.semantics { contentDescription = "Voice input for recipient" }
+                    ) {
                         Icon(
                             Icons.Default.Mic,
-                            contentDescription = "Voice input for To",
+                            contentDescription = null,
                             tint = if (isListening && activeField == "to")
                                 MaterialTheme.colorScheme.primary
                             else
@@ -126,17 +167,18 @@ fun ComposeEmailScreen(
 
             OutlinedTextField(
                 value = subject,
-                onValueChange = { subject = it },
+                onValueChange = { viewModel.updateSubject(it) },
                 label = { Text("Subject") },
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
                 trailingIcon = {
-                    IconButton(onClick = {
-                        startVoiceForField("subject") { result -> subject = result }
-                    }) {
+                    IconButton(
+                        onClick = { startVoiceForField("subject") { result -> viewModel.updateSubject(result) } },
+                        modifier = Modifier.semantics { contentDescription = "Voice input for subject" }
+                    ) {
                         Icon(
                             Icons.Default.Mic,
-                            contentDescription = "Voice input for Subject",
+                            contentDescription = null,
                             tint = if (isListening && activeField == "subject")
                                 MaterialTheme.colorScheme.primary
                             else
@@ -148,18 +190,19 @@ fun ComposeEmailScreen(
 
             OutlinedTextField(
                 value = body,
-                onValueChange = { body = it },
+                onValueChange = { viewModel.updateBody(it) },
                 label = { Text("Message") },
                 modifier = Modifier
                     .fillMaxWidth()
                     .weight(1f),
                 trailingIcon = {
-                    IconButton(onClick = {
-                        startVoiceForField("body") { result -> body = result }
-                    }) {
+                    IconButton(
+                        onClick = { startVoiceForField("body") { result -> viewModel.updateBody(result) } },
+                        modifier = Modifier.semantics { contentDescription = "Voice input for message body" }
+                    ) {
                         Icon(
                             Icons.Default.Mic,
-                            contentDescription = "Voice input for Message",
+                            contentDescription = null,
                             tint = if (isListening && activeField == "body")
                                 MaterialTheme.colorScheme.primary
                             else
