@@ -39,24 +39,31 @@ A voice-first Gmail client for Android, built with Kotlin, Jetpack Compose, Hilt
    123456789000-abcdefghijklmnopqrstuvwxyz012345.apps.googleusercontent.com
    ```
 
-### 3. Configure the app — two files to edit
+### 3. Configure the OAuth Client ID
 
-#### a) `app/src/main/java/com/example/voicegmail/auth/AuthConfig.kt`
+The Client ID is injected at build time via an environment variable so it never
+touches source control.
 
-Replace the placeholder with your full Client ID:
-```kotlin
-const val CLIENT_ID = "123456789000-abcdefghijklmnopqrstuvwxyz012345.apps.googleusercontent.com"
+#### Local development
+
+Export the variable before building:
+```bash
+export OAUTH_CLIENT_ID="123456789000-abcdefghijklmnopqrstuvwxyz012345.apps.googleusercontent.com"
+./gradlew :app:assembleDebug
 ```
 
-#### b) `app/build.gradle.kts` — set `oauthRedirectScheme` (line ~21)
+#### CI (GitHub Actions)
 
-The redirect scheme is the **reverse** of the prefix (the part before `.apps.googleusercontent.com`):
-```kotlin
-val oauthRedirectScheme = "com.googleusercontent.apps.123456789000-abcdefghijklmnopqrstuvwxyz012345"
-```
+Add a repository secret named `OAUTH_CLIENT_ID`:
+1. Go to **Settings → Secrets and variables → Actions → New repository secret**
+2. Name: `OAUTH_CLIENT_ID`
+3. Value: your full Client ID (e.g. `123456789000-abcdefghijklmnopqrstuvwxyz012345.apps.googleusercontent.com`)
 
-> These two values must always match. `AuthConfig.REDIRECT_URI` is computed from the
-> scheme automatically — you do not need to change it manually.
+The workflow in `.github/workflows/android.yml` will automatically pick it up.
+
+> **No manual file edits are needed.** `app/build.gradle.kts` reads the env var,
+> derives the OAuth redirect scheme, and exposes both values to the app via
+> `BuildConfig`. `AuthConfig.kt` reads them from `BuildConfig` at runtime.
 
 ### 4. Build and Run
 ```bash
