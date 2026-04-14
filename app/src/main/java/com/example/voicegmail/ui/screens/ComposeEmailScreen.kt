@@ -102,7 +102,14 @@ fun ComposeEmailScreen(
                         activeField = "subject"
                         viewModel.startVoiceInput { result -> subject = result }
                     }) {
-                        Icon(Icons.Default.Mic, contentDescription = "Voice input for Subject")
+                        Icon(
+                            Icons.Default.Mic,
+                            contentDescription = "Voice input for Subject",
+                            tint = if (isListening && activeField == "subject")
+                                MaterialTheme.colorScheme.primary
+                            else
+                                MaterialTheme.colorScheme.onSurface
+                        )
                     }
                 }
             )
@@ -119,7 +126,14 @@ fun ComposeEmailScreen(
                         activeField = "body"
                         viewModel.startVoiceInput { result -> body = result }
                     }) {
-                        Icon(Icons.Default.Mic, contentDescription = "Voice input for Message")
+                        Icon(
+                            Icons.Default.Mic,
+                            contentDescription = "Voice input for Message",
+                            tint = if (isListening && activeField == "body")
+                                MaterialTheme.colorScheme.primary
+                            else
+                                MaterialTheme.colorScheme.onSurface
+                        )
                     }
                 }
             )
