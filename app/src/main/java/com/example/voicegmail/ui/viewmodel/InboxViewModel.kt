@@ -104,7 +104,7 @@ class InboxViewModel @Inject constructor(
                 _uiState.value = InboxUiState.Success(emails)
                 if (emails.isNotEmpty()) {
                     val prompt = "You have ${emails.size} email${if (emails.size == 1) "" else "s"}. " +
-                        "Say 'read' to hear the first one, 'next' to skip, " +
+                        "Say 'read' to hear the first one, 'next' to move to the second email, " +
                         "'previous' to go back, 'refresh' to reload, or 'compose' to write a new email."
                     voiceCommandEngine.speakThenListen(prompt) { cmd -> handleCommand(cmd, emails) }
                 } else {

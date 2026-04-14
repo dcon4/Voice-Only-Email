@@ -59,26 +59,29 @@ class ComposeViewModel @Inject constructor(
     private fun askForTo() {
         voiceCommandEngine.speakThenListen(
             "Who would you like to send to? Please say the recipient's email address."
-        ) { cmd ->
-            when (cmd) {
-                is VoiceCommand.Cancel -> cancel()
-                is VoiceCommand.FreeText -> {
-                    _to.value = cmd.text
-                    voiceManager.speak("Recipient set to ${cmd.text}.")
+        ) { cmd -> handleToResult(cmd) }
+    }
+
+    private fun handleToResult(cmd: VoiceCommand) {
+        when (cmd) {
+            is VoiceCommand.Cancel -> cancel()
+            is VoiceCommand.FreeText -> {
+                _to.value = cmd.text
+                voiceManager.speak("Recipient set to ${cmd.text}.")
+                askForSubject()
+            }
+            else -> {
+                // The raw recognized text may still be a valid email address even
+                // if it matched a command keyword — use it directly.
+                val raw = voiceManager.recognizedText.value ?: ""
+                if (raw.isNotBlank()) {
+                    _to.value = raw
+                    voiceManager.speak("Recipient set to $raw.")
                     askForSubject()
-                }
-                else -> {
-                    // Treat any other recognised text as the address
-                    val raw = voiceManager.recognizedText.value ?: ""
-                    if (raw.isNotBlank()) {
-                        _to.value = raw
-                        voiceManager.speak("Recipient set to $raw.")
-                        askForSubject()
-                    } else {
-                        voiceCommandEngine.speakThenListen(
-                            "I didn't catch that. Please say the recipient's email address."
-                        ) { retry -> if (retry is VoiceCommand.Cancel) cancel() else askForTo() }
-                    }
+                } else {
+                    voiceCommandEngine.speakThenListen(
+                        "I didn't catch that. Please say the recipient's email address, or say cancel to go back."
+                    ) { retry -> handleToResult(retry) }
                 }
             }
         }
@@ -86,22 +89,26 @@ class ComposeViewModel @Inject constructor(
 
     private fun askForSubject() {
         voiceCommandEngine.speakThenListen("What is the subject of your email?") { cmd ->
-            when (cmd) {
-                is VoiceCommand.Cancel -> cancel()
-                is VoiceCommand.FreeText -> {
-                    _subject.value = cmd.text
+            handleSubjectResult(cmd)
+        }
+    }
+
+    private fun handleSubjectResult(cmd: VoiceCommand) {
+        when (cmd) {
+            is VoiceCommand.Cancel -> cancel()
+            is VoiceCommand.FreeText -> {
+                _subject.value = cmd.text
+                askForBody()
+            }
+            else -> {
+                val raw = voiceManager.recognizedText.value ?: ""
+                if (raw.isNotBlank()) {
+                    _subject.value = raw
                     askForBody()
-                }
-                else -> {
-                    val raw = voiceManager.recognizedText.value ?: ""
-                    if (raw.isNotBlank()) {
-                        _subject.value = raw
-                        askForBody()
-                    } else {
-                        voiceCommandEngine.speakThenListen(
-                            "I didn't catch that. Please say the subject."
-                        ) { retry -> if (retry is VoiceCommand.Cancel) cancel() else askForSubject() }
-                    }
+                } else {
+                    voiceCommandEngine.speakThenListen(
+                        "I didn't catch that. Please say the subject, or say cancel to go back."
+                    ) { retry -> handleSubjectResult(retry) }
                 }
             }
         }
@@ -109,22 +116,26 @@ class ComposeViewModel @Inject constructor(
 
     private fun askForBody() {
         voiceCommandEngine.speakThenListen("Say your message now.") { cmd ->
-            when (cmd) {
-                is VoiceCommand.Cancel -> cancel()
-                is VoiceCommand.FreeText -> {
-                    _body.value = cmd.text
+            handleBodyResult(cmd)
+        }
+    }
+
+    private fun handleBodyResult(cmd: VoiceCommand) {
+        when (cmd) {
+            is VoiceCommand.Cancel -> cancel()
+            is VoiceCommand.FreeText -> {
+                _body.value = cmd.text
+                confirmAndSend()
+            }
+            else -> {
+                val raw = voiceManager.recognizedText.value ?: ""
+                if (raw.isNotBlank()) {
+                    _body.value = raw
                     confirmAndSend()
-                }
-                else -> {
-                    val raw = voiceManager.recognizedText.value ?: ""
-                    if (raw.isNotBlank()) {
-                        _body.value = raw
-                        confirmAndSend()
-                    } else {
-                        voiceCommandEngine.speakThenListen(
-                            "I didn't catch that. Please say your message."
-                        ) { retry -> if (retry is VoiceCommand.Cancel) cancel() else askForBody() }
-                    }
+                } else {
+                    voiceCommandEngine.speakThenListen(
+                        "I didn't catch that. Please say your message, or say cancel to go back."
+                    ) { retry -> handleBodyResult(retry) }
                 }
             }
         }

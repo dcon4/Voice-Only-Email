@@ -67,15 +67,17 @@ class VoiceCommandEngine @Inject constructor(
     private fun parse(text: String): VoiceCommand {
         val lower = text.trim().lowercase()
         return when {
+            // Multi-word phrases checked before single-word substring matches
             lower.contains("try again") || lower.contains("retry") -> VoiceCommand.TryAgain
-            lower.contains("send") -> VoiceCommand.Send
+            lower.contains("new email") -> VoiceCommand.Compose
+            lower.matches(Regex("(go back( one)?|previous|prior|last)")) -> VoiceCommand.Previous
             lower.matches(Regex("(read( next)?|hear( it)?)")) -> VoiceCommand.Read
+            lower.contains("send") -> VoiceCommand.Send
             lower.contains("next") -> VoiceCommand.Next
-            lower.matches(Regex("(previous|go back( one)?|prior|last)")) -> VoiceCommand.Previous
             lower.contains("refresh") || lower.contains("reload") -> VoiceCommand.Refresh
-            lower.contains("compose") || lower.contains("new email") || lower.contains("write") -> VoiceCommand.Compose
+            lower.contains("compose") || lower.contains("write") -> VoiceCommand.Compose
             lower.contains("repeat") || lower.contains("again") -> VoiceCommand.Repeat
-            lower.matches(Regex("(go back|back|cancel|exit|stop|never mind)")) -> VoiceCommand.Cancel
+            lower.matches(Regex("(back|cancel|exit|stop|never mind)")) -> VoiceCommand.Cancel
             else -> VoiceCommand.FreeText(text)
         }
     }

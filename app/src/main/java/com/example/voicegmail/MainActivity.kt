@@ -63,7 +63,7 @@ class MainActivity : ComponentActivity() {
         wakeLock = pm.newWakeLock(
             PowerManager.SCREEN_DIM_WAKE_LOCK or PowerManager.ACQUIRE_CAUSES_WAKEUP,
             "VoiceGmail:ListeningWakeLock"
-        ).also { it.acquire(30 * 60 * 1000L /* 30 min max */) }
+        ).also { it.acquire(10 * 60 * 1000L /* 10 min max */) }
     }
 
     override fun onPause() {
