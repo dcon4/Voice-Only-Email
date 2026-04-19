@@ -13,61 +13,68 @@ A voice-first Gmail client for Android, built with Kotlin, Jetpack Compose, Hilt
 
 ## Setup (required before the app works)
 
-### 1. Create a Google Cloud Project
-1. Go to [console.cloud.google.com](https://console.cloud.google.com)
-2. Create a new project (or select an existing one)
-3. Enable the **Gmail API** under "APIs & Services → Library"
+### 1. Create a Google Cloud project
+1. Go to https://console.cloud.google.com
+2. Create a new project, or select an existing one
+3. Enable the **Gmail API** in **APIs & Services → Library**
 
-### 2. Create OAuth 2.0 Credentials
+### 2. Configure OAuth in Google Cloud Console
+1. Go to **APIs & Services → OAuth consent screen**
+2. Choose **External** if you are using normal Gmail accounts
+3. Fill in:
+   - App name
+   - Support email
+   - Developer contact email
+4. Add yourself and any beta testers as **Test users** if the app is not published yet
 
-> ⚠️ **Important:** You must create an **Android** type client, not "Web application".
-> Google only accepts `com.googleusercontent.apps.<prefix>:/oauth2redirect` as a
-> redirect URI for Android apps. A package-name scheme like `com.example.myapp:/…`
-> will be rejected.
+### 3. Create an Android OAuth client
+1. Go to **APIs & Services → Credentials**
+2. Click **Create Credentials → OAuth client ID**
+3. Choose **Android** as the application type
+4. Enter the package name:
 
-1. Go to "APIs & Services → Credentials"
-2. Click "Create Credentials" → "OAuth client ID"
-3. Application type: **Android**
-4. Package name: `com.example.voicegmail`
-5. Get your app's **SHA-1 fingerprint**:
-   ```
-   keytool -list -v -keystore ~/.android/debug.keystore -alias androiddebugkey -storepass android -keypass android
-   ```
-6. Paste the SHA-1 into the form and click **Create**
-7. Note your **Client ID** — it looks like:
-   ```
-   123456789000-abcdefghijklmnopqrstuvwxyz012345.apps.googleusercontent.com
-   ```
+   `com.example.voicegmail`
 
-### 3. Configure the app — two files to edit
+5. Enter the **SHA-1 certificate fingerprint** for the release keystore used by GitHub Actions
+6. Click **Create**
 
-#### a) `app/src/main/java/com/example/voicegmail/auth/AuthConfig.kt`
+### 4. Copy the Client ID into the app
+After creating the Android OAuth client, Google will show a Client ID like this:
 
-Replace the placeholder with your full Client ID:
-```kotlin
-const val CLIENT_ID = "123456789000-abcdefghijklmnopqrstuvwxyz012345.apps.googleusercontent.com"
-```
+`123456789000-abcdefghijklmnopqrstuvwxyz012345.apps.googleusercontent.com`
 
-#### b) `app/build.gradle.kts` — set `oauthRedirectScheme` (line ~21)
+Put that full value into:
 
-The redirect scheme is the **reverse** of the prefix (the part before `.apps.googleusercontent.com`):
-```kotlin
-val oauthRedirectScheme = "com.googleusercontent.apps.123456789000-abcdefghijklmnopqrstuvwxyz012345"
-```
+`app/src/main/java/com/example/voicegmail/auth/AuthConfig.kt`
 
-> These two values must always match. `AuthConfig.REDIRECT_URI` is computed from the
-> scheme automatically — you do not need to change it manually.
+### 5. Set the OAuth redirect scheme
+In:
 
-### 4. Build and Run
+`app/build.gradle.kts`
+
+set the redirect scheme to the reverse of the Client ID prefix.
+
+Example:
+- Client ID: `123456789000-abcdefghijklmnopqrstuvwxyz012345.apps.googleusercontent.com`
+- Prefix: `123456789000-abcdefghijklmnopqrstuvwxyz012345`
+- Redirect scheme: `com.googleusercontent.apps.123456789000-abcdefghijklmnopqrstuvwxyz012345`
+
+### 6. GitHub Actions signing
+This repo is set up to build a signed release APK in GitHub Actions using these secrets:
+
+- `ANDROID_KEYSTORE_BASE64`
+- `ANDROID_KEYSTORE_PASSWORD`
+- `ANDROID_KEY_ALIAS`
+- `ANDROID_KEY_PASSWORD`
+
+### 7. Build
+GitHub Actions will produce the APK artifact.
+
+If you want to build locally for development, run:
+
 ```bash
 ./gradlew :app:assembleDebug
 ```
-Install on device:
-```bash
-adb install app/build/outputs/apk/debug/app-debug.apk
-```
-
-Or open the project in Android Studio and click **Run**.
 
 ## Architecture
 - **Jetpack Compose** — UI
@@ -79,4 +86,3 @@ Or open the project in Android Studio and click **Run**.
 
 ## CI
 GitHub Actions builds a debug APK on every push. See `.github/workflows/android.yml`.
-
