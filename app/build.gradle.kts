@@ -20,7 +20,7 @@ android {
             useSupportLibrary = true
         }
 
-        // ── OAuth redirect URI ──────────────────────────────────────────────────────
+        // ── OAuth redirect URI ─────────────────────────────────────────────────────
         // Set this to the *reverse* of your Google OAuth Client ID prefix.
         //
         // Example:
@@ -30,7 +30,7 @@ android {
         //
         // This must match the redirect URI you register in Google Cloud Console.
         // See README.md → "Create OAuth 2.0 Credentials" for full instructions.
-        val oauthRedirectScheme = "com.googleusercontent.apps.YOUR_CLIENT_ID_PREFIX" // e.g. "com.googleusercontent.apps.123456789000-abcdefghijklmnop"
+        val oauthRedirectScheme = "com.googleusercontent.apps.359413552450-q15anq7roa4kt8no4re5i7ouqn1guql1" // e.g. "com.googleusercontent.apps.123456789000-abcdefghijklmnop"
         manifestPlaceholders["appAuthRedirectScheme"] = oauthRedirectScheme
         buildConfigField("String", "OAUTH_REDIRECT_SCHEME", "\"$oauthRedirectScheme\"")
     }
