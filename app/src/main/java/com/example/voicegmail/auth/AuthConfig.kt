@@ -18,9 +18,8 @@ import com.example.voicegmail.BuildConfig
  * See README.md for full step-by-step setup instructions.
  */
 object AuthConfig {
-    // TODO: Replace with your Google Cloud OAuth 2.0 Android Client ID
-    // Example: "123456789000-abcdefghijklmnopqrstuvwxyz012345.apps.googleusercontent.com"
-    const val CLIENT_ID = "YOUR_CLIENT_ID_PREFIX.apps.googleusercontent.com"
+    // Google Cloud OAuth 2.0 Android Client ID
+    const val CLIENT_ID = "359413552450-q15anq7roa4kt8no4re5i7ouqn1guql1.apps.googleusercontent.com"
 
     // Derived from the manifest placeholder set in app/build.gradle.kts.
     // The reverse-client-ID scheme (com.googleusercontent.apps.<prefix>) is the
