@@ -70,7 +70,7 @@ This repo is set up to build a signed release APK in GitHub Actions using these 
 ### 7. Build
 GitHub Actions will produce the APK artifact.
 
-If you want to build locally for development, run:
+If you want to build locally for development, then run:
 
 ```bash
 ./gradlew :app:assembleDebug
