@@ -43,7 +43,14 @@ jobs:
           echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 --decode > "$RUNNER_TEMP/release.keystore.jks"
           ls -l "$RUNNER_TEMP/release.keystore.jks"
 
-      - name: Build Release APK
+      - name: Build Debug APK (PRs)
+        if: ${{ github.event_name == 'pull_request' }}
+        run: |
+          set -euo pipefail
+          ./gradlew :app:assembleDebug --stacktrace
+
+      - name: Build Release APK (push)
+        if: ${{ github.event_name == 'push' }}
         env:
           ANDROID_KEYSTORE_PATH: ${{ runner.temp }}/release.keystore.jks
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
@@ -59,11 +66,28 @@ jobs:
           echo "=== APK outputs ==="
           ls -R app/build/outputs/apk || true
 
-      - name: Upload Release APK
+      - name: Verify APK signing
+        if: ${{ github.event_name == 'push' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          SIGNED_APK="app/build/outputs/apk/release/app-release.apk"
+          APKSIGNER=$(find "$ANDROID_SDK_ROOT/build-tools" -name "apksigner" -type f | sort -V | tail -1)
+          echo "Using apksigner: $APKSIGNER"
+          "$APKSIGNER" verify --verbose --print-certs "$SIGNED_APK"
+
+      - name: Upload Debug APK (PRs)
+        if: ${{ github.event_name == 'pull_request' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: debug-apk
+          if-no-files-found: error
+          path: app/build/outputs/apk/debug/app-debug.apk
+
+      - name: Upload Release APK (push)
+        if: ${{ github.event_name == 'push' }}
         uses: actions/upload-artifact@v4
         with:
           name: release-apk
           if-no-files-found: error
-          path: |
-            app/build/outputs/apk/release/*.apk
-            app/build/outputs/apk/*/release/*.apk
+          path: app/build/outputs/apk/release/app-release.apk
