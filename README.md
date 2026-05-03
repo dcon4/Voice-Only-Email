@@ -60,12 +60,49 @@ Example:
 - Redirect scheme: `com.googleusercontent.apps.123456789000-abcdefghijklmnopqrstuvwxyz012345`
 
 ### 6. GitHub Actions signing
-This repo is set up to build a signed release APK in GitHub Actions using these secrets:
+The workflow produces a **signed** release APK when the four secrets below are set.
+If any secret is missing (e.g., a fork PR build), Gradle skips signing and the APK
+remains unsigned — the build still succeeds but the artifact cannot be installed on a
+device without re-signing.
 
-- `ANDROID_KEYSTORE_BASE64`
-- `ANDROID_KEYSTORE_PASSWORD`
-- `ANDROID_KEY_ALIAS`
-- `ANDROID_KEY_PASSWORD`
+#### 6a. Generate a release keystore (one-time setup)
+```bash
+keytool -genkeypair -v \
+  -keystore release.jks \
+  -alias my-release-key \
+  -keyalg RSA -keysize 2048 \
+  -validity 10000
+```
+Keep `release.jks` safe — do **not** commit it to the repository.
+
+#### 6b. Convert the keystore to a base64 string
+```bash
+base64 -w 0 release.jks > release.jks.b64
+cat release.jks.b64
+```
+(On macOS omit `-w 0`; the output is already single-line.)
+
+#### 6c. Add the four GitHub Secrets
+Go to **Repository → Settings → Secrets and variables → Actions → New repository secret** and add:
+
+| Secret name                | Value                                         |
+|----------------------------|-----------------------------------------------|
+| `ANDROID_KEYSTORE_BASE64`  | full contents of `release.jks.b64`            |
+| `ANDROID_KEYSTORE_PASSWORD`| password chosen for the keystore              |
+| `ANDROID_KEY_ALIAS`        | alias used above (e.g. `my-release-key`)      |
+| `ANDROID_KEY_PASSWORD`     | password for the key (may equal keystore pwd) |
+
+#### 6d. Confirm the artifact is signed
+After a successful push-triggered workflow run, download the `release-apk` artifact
+and verify it with `apksigner`:
+
+```bash
+# Install build-tools if needed (change the version to whatever you have)
+$ANDROID_HOME/build-tools/34.0.0/apksigner verify --verbose --print-certs app-release.apk
+```
+
+A properly signed APK prints `Verified` and certificate details.
+An unsigned APK prints `DOES NOT VERIFY` or raises an error.
 
 ### 7. Build
 GitHub Actions will produce the APK artifact.
@@ -85,4 +122,4 @@ If you want to build locally for development, then run:
 - **Android TTS + SpeechRecognizer** — Voice I/O
 
 ## CI
-GitHub Actions builds a debug APK on every push. See `.github/workflows/android.yml`.
+GitHub Actions builds a **signed release APK** on every push when the four signing secrets are configured. See `.github/workflows/android.yml` and section 6 above for setup details.

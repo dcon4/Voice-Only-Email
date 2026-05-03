@@ -5,6 +5,16 @@ plugins {
     kotlin("kapt")
 }
 
+// Read signing credentials from environment variables (set by GitHub Actions secrets).
+// When any variable is absent the signing config is skipped so local/debug builds
+// continue to work without requiring secrets.
+val envKeystorePath     = System.getenv("ANDROID_KEYSTORE_PATH")
+val envKeystorePassword = System.getenv("ANDROID_KEYSTORE_PASSWORD")
+val envKeyAlias         = System.getenv("ANDROID_KEY_ALIAS")
+val envKeyPassword      = System.getenv("ANDROID_KEY_PASSWORD")
+val hasSigningEnv = listOf(envKeystorePath, envKeystorePassword, envKeyAlias, envKeyPassword)
+    .none { it.isNullOrBlank() }
+
 android {
     namespace = "com.example.voicegmail"
     compileSdk = 34
@@ -35,6 +45,17 @@ android {
         buildConfigField("String", "OAUTH_REDIRECT_SCHEME", "\"$oauthRedirectScheme\"")
     }
 
+    if (hasSigningEnv) {
+        signingConfigs {
+            create("release") {
+                storeFile = File(envKeystorePath!!)
+                storePassword = envKeystorePassword
+                keyAlias = envKeyAlias
+                keyPassword = envKeyPassword
+            }
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
@@ -42,6 +63,9 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
+            if (hasSigningEnv) {
+                signingConfig = signingConfigs.getByName("release")
+            }
         }
     }
     compileOptions {
