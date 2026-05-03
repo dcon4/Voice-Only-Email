@@ -27,73 +27,40 @@ jobs:
       - name: Make gradlew executable
         run: chmod +x ./gradlew
 
-      # Debug APK is always testable and does NOT require signing secrets.
       - name: Build Debug APK
-        run: |
-          set -euo pipefail
-          ./gradlew :app:assembleDebug --stacktrace
-
-      # Release build + signing is best-effort (only on push, and only if secrets exist).
-      # GitHub Actions does not allow secrets.* in step-level if: expressions here,
-      # so we check them inside the shell script instead.
-      - name: Decode release keystore (optional)
-        if: ${{ github.event_name == 'push' }}
-        env:
-          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [ -n "${ANDROID_KEYSTORE_BASE64:-}" ]; then
-            echo "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/release.keystore.jks"
-            ls -l "$RUNNER_TEMP/release.keystore.jks"
-          fi
+        run: ./gradlew :app:assembleDebug --stacktrace
 
       - name: Build Release APK (optional)
         if: ${{ github.event_name == 'push' }}
         env:
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
-          ANDROID_KEYSTORE_PATH: ${{ runner.temp }}/release.keystore.jks
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          ANDROID_KEYSTORE_PATH: ${{ runner.temp }}/release.keystore.jks
+        shell: bash
         run: |
           set -euo pipefail
-          if [ -n "${ANDROID_KEYSTORE_BASE64:-}" ]; then
-            ./gradlew :app:assembleRelease --stacktrace
-          else
+          if [ -z "${ANDROID_KEYSTORE_BASE64:-}" ]; then
             echo "Skipping release build: signing secrets not configured."
+            exit 0
           fi
+
+          echo "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$ANDROID_KEYSTORE_PATH"
+          ./gradlew :app:assembleRelease --stacktrace
+
+          SIGNED_APK="$(find app/build/outputs/apk -type f -name '*release*.apk' ! -name '*-unsigned.apk' | sort -V | tail -1)"
+          if [ -z "${SIGNED_APK:-}" ] || [ ! -f "$SIGNED_APK" ]; then
+            echo "No signed release APK found."
+            ls -R app/build/outputs/apk || true
+            exit 1
+          fi
+
+          APKSIGNER="$(find "$ANDROID_SDK_ROOT/build-tools" -name apksigner -type f | sort -V | tail -1)"
+          "$APKSIGNER" verify --verbose --print-certs "$SIGNED_APK"
 
       - name: List APK outputs
-        shell: bash
-        run: |
-          echo "=== APK outputs ==="
-          ls -R app/build/outputs/apk || true
-
-      - name: Verify APK signing (optional)
-        if: ${{ github.event_name == 'push' }}
-        env:
-          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [ -n "${ANDROID_KEYSTORE_BASE64:-}" ]; then
-            # Find the signed release APK produced by the build.
-            # Exclude *-unsigned.apk because it will always fail apksigner verification.
-            SIGNED_APK="$(find app/build/outputs/apk -type f -name '*release*.apk' ! -name '*-unsigned.apk' | sort -V | tail -1)"
-
-            if [ -z "${SIGNED_APK:-}" ] || [ ! -f "$SIGNED_APK" ]; then
-              echo "No signed release APK found under app/build/outputs/apk (excluding *-unsigned.apk)."
-              echo "Contents:"
-              ls -R app/build/outputs/apk || true
-              exit 1
-            fi
-
-            APKSIGNER="$(find "$ANDROID_SDK_ROOT/build-tools" -name apksigner -type f | sort -V | tail -1)"
-            echo "Using apksigner: $APKSIGNER"
-            echo "Verifying: $SIGNED_APK"
-            "$APKSIGNER" verify --verbose --print-certs "$SIGNED_APK"
-          fi
+        run: ls -R app/build/outputs/apk || true
 
       - name: Upload Debug APK
         uses: actions/upload-artifact@v4
@@ -104,10 +71,8 @@ jobs:
 
       - name: Upload Release APK (optional)
         if: ${{ github.event_name == 'push' }}
-        env:
-          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
         uses: actions/upload-artifact@v4
         with:
           name: release-apk
-          if-no-files-found: error
+          if-no-files-found: ignore
           path: app/build/outputs/apk/**/*release*.apk
