@@ -20,9 +20,7 @@ android {
             useSupportLibrary = true
         }
 
-        // Keep a single redirect scheme/client ID by default so both debug and
-        // release can be configured from the app, but allow build variants to
-        // override these values later if needed.
+        // Default OAuth values; individual build types can override these.
         val oauthRedirectScheme = "com.googleusercontent.apps.359413552450-q15anq7roa4kt8no4re5i7ouqn1guql1"
         val oauthClientId = "359413552450-q15anq7roa4kt8no4re5i7ouqn1guql1.apps.googleusercontent.com"
 
@@ -31,9 +29,6 @@ android {
         buildConfigField("String", "OAUTH_CLIENT_ID", "\"$oauthClientId\"")
     }
 
-    // Sign release builds in CI using environment variables provided by the workflow.
-    // Locally, if these env vars are not set, Gradle will fall back to the default
-    // debug signing behavior (and the release build will be unsigned).
     signingConfigs {
         create("release") {
             val storePath = System.getenv("ANDROID_KEYSTORE_PATH")
@@ -64,8 +59,6 @@ android {
                 "proguard-rules.pro"
             )
 
-            // Only apply the release signing config when CI env vars are present.
-            // This prevents local builds from failing if the keystore isn't configured.
             if (!System.getenv("ANDROID_KEYSTORE_PATH").isNullOrBlank()) {
                 signingConfig = signingConfigs.getByName("release")
             }
@@ -107,24 +100,18 @@ dependencies {
     implementation("androidx.navigation:navigation-compose:2.7.7")
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.3")
 
-    // Hilt
     implementation("com.google.dagger:hilt-android:2.51.1")
     kapt("com.google.dagger:hilt-android-compiler:2.51.1")
     implementation("androidx.hilt:hilt-navigation-compose:1.2.0")
 
-    // AppAuth for OAuth PKCE
     implementation("net.openid:appauth:0.11.1")
 
-    // Networking (Gmail REST API)
     implementation("com.squareup.retrofit2:retrofit:2.11.0")
     implementation("com.squareup.retrofit2:converter-gson:2.11.0")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("com.squareup.okhttp3:logging-interceptor:4.12.0")
 
-    // DataStore
     implementation("androidx.datastore:datastore-preferences:1.1.1")
-
-    // Coroutines
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
 
     testImplementation("junit:junit:4.13.2")
