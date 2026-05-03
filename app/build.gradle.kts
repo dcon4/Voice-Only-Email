@@ -35,6 +35,31 @@ android {
         buildConfigField("String", "OAUTH_REDIRECT_SCHEME", "\"$oauthRedirectScheme\"")
     }
 
+    // Sign release builds in CI using environment variables provided by the workflow.
+    // Locally, if these env vars are not set, Gradle will fall back to the default
+    // debug signing behavior (and the release build will be unsigned).
+    signingConfigs {
+        create("release") {
+            val storePath = System.getenv("ANDROID_KEYSTORE_PATH")
+            val storePass = System.getenv("ANDROID_KEYSTORE_PASSWORD")
+            val alias = System.getenv("ANDROID_KEY_ALIAS")
+            val keyPass = System.getenv("ANDROID_KEY_PASSWORD")
+
+            if (!storePath.isNullOrBlank()) {
+                storeFile = file(storePath)
+            }
+            if (!storePass.isNullOrBlank()) {
+                storePassword = storePass
+            }
+            if (!alias.isNullOrBlank()) {
+                keyAlias = alias
+            }
+            if (!keyPass.isNullOrBlank()) {
+                keyPassword = keyPass
+            }
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
@@ -42,6 +67,12 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
+
+            // Only apply the release signing config when CI env vars are present.
+            // This prevents local builds from failing if the keystore isn't configured.
+            if (!System.getenv("ANDROID_KEYSTORE_PATH").isNullOrBlank()) {
+                signingConfig = signingConfigs.getByName("release")
+            }
         }
     }
     compileOptions {
