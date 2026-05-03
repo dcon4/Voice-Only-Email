@@ -5,21 +5,11 @@ import com.example.voicegmail.BuildConfig
 /**
  * OAuth configuration for Google Sign-In.
  *
- * Before running, you must make two edits:
- *
- * 1. Replace CLIENT_ID below with your Google Cloud OAuth 2.0 Android client ID.
- *    Format: XXXXXXXXXX-xxxxxxxxxxxxxxxxxxxxxxxxxxxx.apps.googleusercontent.com
- *
- * 2. In app/build.gradle.kts, replace YOUR_CLIENT_ID_PREFIX with the part of
- *    your client ID that comes *before* ".apps.googleusercontent.com".
- *    Example: if CLIENT_ID = "123-abc.apps.googleusercontent.com"
- *             then the prefix = "123-abc"
- *
- * See README.md for full step-by-step setup instructions.
+ * The values come from BuildConfig so debug and release builds can use the
+ * correct Google OAuth configuration for their signing certificates.
  */
 object AuthConfig {
-    // Google Cloud OAuth 2.0 Android Client ID
-    const val CLIENT_ID = "359413552450-q15anq7roa4kt8no4re5i7ouqn1guql1.apps.googleusercontent.com"
+    val CLIENT_ID: String get() = BuildConfig.OAUTH_CLIENT_ID
 
     // Derived from the manifest placeholder set in app/build.gradle.kts.
     // The reverse-client-ID scheme (com.googleusercontent.apps.<prefix>) is the
