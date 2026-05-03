@@ -2,7 +2,7 @@
 
 A voice-first Gmail client for Android, built with Kotlin, Jetpack Compose, Hilt, AppAuth, and the Gmail REST API.
 
-> **Note:** This app was built to help a totally blind user manage email by voice.
+> **Note:** This app was built to help a totally blind user manage Gmail email by voice.
 
 ## Features
 - Sign in with Google (OAuth 2.0 PKCE via AppAuth)
