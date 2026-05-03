@@ -20,9 +20,9 @@ android {
             useSupportLibrary = true
         }
 
-        // Default OAuth values; individual build types can override these.
-        val oauthRedirectScheme = "com.googleusercontent.apps.359413552450-q15anq7roa4kt8no4re5i7ouqn1guql1"
-        val oauthClientId = "359413552450-q15anq7roa4kt8no4re5i7ouqn1guql1.apps.googleusercontent.com"
+        // OAuth values for the Google Cloud client the app already uses.
+        val oauthRedirectScheme = "com.googleusercontent.apps.359413552450-behaotfl41hjthrd3elk5dbm0phcl939"
+        val oauthClientId = "359413552450-behaotfl41hjthrd3elk5dbm0phcl939.apps.googleusercontent.com"
 
         manifestPlaceholders["appAuthRedirectScheme"] = oauthRedirectScheme
         buildConfigField("String", "OAUTH_REDIRECT_SCHEME", "\"$oauthRedirectScheme\"")
@@ -64,20 +64,25 @@ android {
             }
         }
     }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
+
     kotlinOptions {
         jvmTarget = "17"
     }
+
     buildFeatures {
         compose = true
         buildConfig = true
     }
+
     composeOptions {
         kotlinCompilerExtensionVersion = "1.5.14"
     }
+
     packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
