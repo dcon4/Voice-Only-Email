@@ -27,30 +27,24 @@ jobs:
       - name: Make gradlew executable
         run: chmod +x ./gradlew
 
-      # These must exist in GitHub Secrets:
-      # ANDROID_KEYSTORE_BASE64, ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS, ANDROID_KEY_PASSWORD
-      #
-      # NOTE: Secrets are not provided to pull_request workflows from forks.
-      - name: Decode release keystore
-        if: ${{ github.event_name == 'push' }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [ -z "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" ]; then
-            echo "ANDROID_KEYSTORE_BASE64 secret is missing/empty."
-            exit 1
-          fi
-          echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 --decode > "$RUNNER_TEMP/release.keystore.jks"
-          ls -l "$RUNNER_TEMP/release.keystore.jks"
-
-      - name: Build Debug APK (PRs)
-        if: ${{ github.event_name == 'pull_request' }}
+      # Debug APK is always testable and does NOT require signing secrets.
+      - name: Build Debug APK
         run: |
           set -euo pipefail
           ./gradlew :app:assembleDebug --stacktrace
 
-      - name: Build Release APK (push)
-        if: ${{ github.event_name == 'push' }}
+      # Release build + signing is best-effort (only if secrets exist).
+      # This keeps the workflow green even when you haven't configured signing yet.
+      - name: Decode release keystore (optional)
+        if: ${{ github.event_name == 'push' && secrets.ANDROID_KEYSTORE_BASE64 != '' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 --decode > "$RUNNER_TEMP/release.keystore.jks"
+          ls -l "$RUNNER_TEMP/release.keystore.jks"
+
+      - name: Build Release APK (optional)
+        if: ${{ github.event_name == 'push' && secrets.ANDROID_KEYSTORE_BASE64 != '' }}
         env:
           ANDROID_KEYSTORE_PATH: ${{ runner.temp }}/release.keystore.jks
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
@@ -66,8 +60,8 @@ jobs:
           echo "=== APK outputs ==="
           ls -R app/build/outputs/apk || true
 
-      - name: Verify APK signing
-        if: ${{ github.event_name == 'push' }}
+      - name: Verify APK signing (optional)
+        if: ${{ github.event_name == 'push' && secrets.ANDROID_KEYSTORE_BASE64 != '' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -88,16 +82,15 @@ jobs:
           echo "Verifying: $SIGNED_APK"
           "$APKSIGNER" verify --verbose --print-certs "$SIGNED_APK"
 
-      - name: Upload Debug APK (PRs)
-        if: ${{ github.event_name == 'pull_request' }}
+      - name: Upload Debug APK
         uses: actions/upload-artifact@v4
         with:
           name: debug-apk
           if-no-files-found: error
           path: app/build/outputs/apk/debug/app-debug.apk
 
-      - name: Upload Release APK (push)
-        if: ${{ github.event_name == 'push' }}
+      - name: Upload Release APK (optional)
+        if: ${{ github.event_name == 'push' && secrets.ANDROID_KEYSTORE_BASE64 != '' }}
         uses: actions/upload-artifact@v4
         with:
           name: release-apk
