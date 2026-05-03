@@ -72,11 +72,12 @@ jobs:
         run: |
           set -euo pipefail
 
-          # Find the release APK produced by the build (most recent match)
-          SIGNED_APK="$(find app/build/outputs/apk -type f -name "*release*.apk" | sort | tail -1)"
+          # Find the signed release APK produced by the build.
+          # Exclude *-unsigned.apk because it will always fail apksigner verification.
+          SIGNED_APK="$(find app/build/outputs/apk -type f -name "*release*.apk" ! -name "*-unsigned.apk" | sort -V | tail -1)"
 
           if [ -z "${SIGNED_APK:-}" ] || [ ! -f "$SIGNED_APK" ]; then
-            echo "No release APK found under app/build/outputs/apk."
+            echo "No signed release APK found under app/build/outputs/apk (excluding *-unsigned.apk)."
             echo "Contents:"
             ls -R app/build/outputs/apk || true
             exit 1
