@@ -23,4 +23,6 @@ object AuthConfig {
         "https://www.googleapis.com/auth/gmail.readonly",
         "https://www.googleapis.com/auth/gmail.send"
     )
+
+    // No-op change to trigger a fresh CI build.
 }
