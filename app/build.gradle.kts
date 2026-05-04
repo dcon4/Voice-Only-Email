@@ -20,9 +20,9 @@ android {
             useSupportLibrary = true
         }
 
-        // OAuth values for the Google Cloud client the app already uses.
-        val oauthRedirectScheme = "com.googleusercontent.apps.359413552450-behaotfl41hjthrd3elk5dbm0phcl939"
-        val oauthClientId = "359413552450-behaotfl41hjthrd3elk5dbm0phcl939.apps.googleusercontent.com"
+        // OAuth values for the newly created Google Cloud Android client.
+        val oauthRedirectScheme = "com.googleusercontent.apps.359413552450-ifbmb206qrd37er7l56r0muoa80ck89g"
+        val oauthClientId = "359413552450-ifbmb206qrd37er7l56r0muoa80ck89g.apps.googleusercontent.com"
 
         manifestPlaceholders["appAuthRedirectScheme"] = oauthRedirectScheme
         buildConfigField("String", "OAUTH_REDIRECT_SCHEME", "\"$oauthRedirectScheme\"")
