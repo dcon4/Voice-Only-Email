@@ -27,6 +27,9 @@ jobs:
       - name: Make gradlew executable
         run: chmod +x ./gradlew
 
+      - name: Print debug SHA-1
+        run: ./gradlew :app:signingReport
+
       - name: Build Debug APK
         run: ./gradlew :app:assembleDebug --stacktrace
 
