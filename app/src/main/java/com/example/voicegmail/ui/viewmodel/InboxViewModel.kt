@@ -6,6 +6,7 @@ import androidx.activity.result.ActivityResult
 import androidx.core.content.FileProvider
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.voicegmail.BuildConfig
 import com.example.voicegmail.auth.AuthRepository
 import com.example.voicegmail.debug.DebugLogger
 import com.example.voicegmail.gmail.EmailItem
@@ -229,7 +230,7 @@ class InboxViewModel @Inject constructor(
         val file = DebugLogger.getLogFile()?.takeIf { it.exists() } ?: return null
         val uri = FileProvider.getUriForFile(
             context,
-            "${context.packageName}.debug.fileprovider",
+            "${BuildConfig.APPLICATION_ID}.debug.fileprovider",
             file
         )
         return Intent(Intent.ACTION_SEND).apply {

@@ -20,7 +20,7 @@ object DebugLogger {
 
     fun init(context: Context) {
         logFile = File(context.filesDir, LOG_FILE_NAME)
-        log("DebugLogger", "Logger initialised — log file: ${logFile?.absolutePath}")
+        log("DebugLogger", "Logger initialized — log file: ${logFile?.absolutePath}")
     }
 
     fun log(tag: String, message: String) {
