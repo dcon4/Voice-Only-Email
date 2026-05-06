@@ -12,6 +12,7 @@ import androidx.compose.ui.Modifier
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import com.example.voicegmail.debug.DebugLogger
 import com.example.voicegmail.ui.screens.ComposeEmailScreen
 import com.example.voicegmail.ui.screens.InboxScreen
 import com.example.voicegmail.ui.theme.VoiceGmailTheme
@@ -28,6 +29,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        DebugLogger.log("MainActivity", "onCreate")
         setContent {
             VoiceGmailTheme {
                 Surface(
@@ -57,6 +59,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
+        DebugLogger.log("MainActivity", "onResume")
         // Keep the screen and CPU on while the app is active so the microphone
         // is never cut off during voice dictation.
         val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
