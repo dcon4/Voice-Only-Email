@@ -36,8 +36,17 @@ jobs:
           set -euo pipefail
           DEBUG_APK="app/build/outputs/apk/debug/app-debug.apk"
           APKSIGNER="$(find "$ANDROID_SDK_ROOT/build-tools" -name apksigner -type f | sort -V | tail -1)"
+          CERT_OUTPUT="$(mktemp)"
+          trap 'rm -f "$CERT_OUTPUT"' EXIT
           echo "--- Debug APK signing certificate ---"
-          "$APKSIGNER" verify --verbose --print-certs "$DEBUG_APK"
+          "$APKSIGNER" verify --verbose --print-certs "$DEBUG_APK" | tee "$CERT_OUTPUT"
+          DEBUG_SHA1="$(grep -m1 'certificate SHA-1 digest:' "$CERT_OUTPUT" | sed 's/.*certificate SHA-1 digest:[[:space:]]*//')"
+          if [ -n "${DEBUG_SHA1:-}" ]; then
+            echo "Debug APK SHA-1: $DEBUG_SHA1"
+          else
+            echo "Unable to parse debug APK SHA-1 from apksigner output."
+            exit 1
+          fi
 
       - name: Build Release APK (optional)
         if: ${{ github.event_name == 'push' }}
@@ -66,7 +75,17 @@ jobs:
           fi
 
           APKSIGNER="$(find "$ANDROID_SDK_ROOT/build-tools" -name apksigner -type f | sort -V | tail -1)"
-          "$APKSIGNER" verify --verbose --print-certs "$SIGNED_APK"
+          CERT_OUTPUT="$(mktemp)"
+          trap 'rm -f "$CERT_OUTPUT"' EXIT
+          echo "--- Release APK signing certificate ---"
+          "$APKSIGNER" verify --verbose --print-certs "$SIGNED_APK" | tee "$CERT_OUTPUT"
+          RELEASE_SHA1="$(grep -m1 'certificate SHA-1 digest:' "$CERT_OUTPUT" | sed 's/.*certificate SHA-1 digest:[[:space:]]*//')"
+          if [ -n "${RELEASE_SHA1:-}" ]; then
+            echo "Release APK SHA-1: $RELEASE_SHA1"
+          else
+            echo "Unable to parse release APK SHA-1 from apksigner output."
+            exit 1
+          fi
 
       - name: List APK outputs
         run: ls -R app/build/outputs/apk || true
