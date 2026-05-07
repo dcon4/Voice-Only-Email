@@ -7,6 +7,7 @@ import androidx.core.content.FileProvider
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.voicegmail.BuildConfig
+import com.example.voicegmail.auth.AuthConfig
 import com.example.voicegmail.auth.AuthRepository
 import com.example.voicegmail.debug.DebugLogger
 import com.example.voicegmail.gmail.EmailItem
