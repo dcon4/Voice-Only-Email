@@ -67,21 +67,48 @@ class InboxViewModel @Inject constructor(
     fun getSignInIntent(): Intent {
         DebugLogger.log("Auth", "Sign-in button pressed")
         val request = authRepository.buildAuthorizationRequest()
-        DebugLogger.log("Auth", "Auth request launched — redirect: ${request.redirectUri}")
+        DebugLogger.log(
+            "Auth",
+            "Auth request launched — package=${context.packageName}, debug=${BuildConfig.DEBUG}, " +
+                "clientIdSuffix=${AuthConfig.CLIENT_ID.takeLast(12)}, redirect=${request.redirectUri}, " +
+                "scopeCount=${request.scope?.split(' ')?.size ?: 0}, scopes=${request.scope}, " +
+                "codeVerifierPresent=${!request.codeVerifier.isNullOrBlank()}"
+        )
         return authService.getAuthorizationRequestIntent(request)
     }
 
     fun handleSignInResult(result: ActivityResult) {
-        val data = result.data ?: return
+        val data = result.data
+        DebugLogger.log(
+            "Auth",
+            "Sign-in activity result — resultCode=${result.resultCode}, hasData=${data != null}, " +
+                "action=${data?.action}, data=${data?.dataString}, extras=${data?.extras?.keySet()?.sorted()}"
+        )
+        if (data == null) {
+            DebugLogger.log("Auth", "Sign-in result returned without intent data")
+            return
+        }
         val response = AuthorizationResponse.fromIntent(data)
         val exception = AuthorizationException.fromIntent(data)
-        DebugLogger.log("Auth", "Redirect received — response=${response != null}, exception=${exception?.message}")
+        DebugLogger.log(
+            "Auth",
+            "Redirect received — response=${response != null}, hasAuthCode=${!response?.authorizationCode.isNullOrBlank()}, " +
+                "hasState=${!response?.state.isNullOrBlank()}, exception=${exception?.toDebugSummary()}"
+        )
         if (response != null) {
             viewModelScope.launch {
                 try {
+                    DebugLogger.log(
+                        "Auth",
+                        "Starting token exchange — grantType=authorization_code, hasAuthCode=${!response.authorizationCode.isNullOrBlank()}"
+                    )
                     val (accessToken, refreshToken) = authRepository.exchangeCodeForTokens(authService, response)
                     if (accessToken != null) {
-                        DebugLogger.log("Auth", "Token exchange success — accessToken present, refreshToken=${refreshToken != null}")
+                        DebugLogger.log(
+                            "Auth",
+                            "Token exchange success — accessTokenPresent=true, accessTokenLength=${accessToken.length}, " +
+                                "refreshTokenPresent=${refreshToken != null}, refreshTokenLength=${refreshToken?.length ?: 0}"
+                        )
                         authRepository.saveTokens(accessToken, refreshToken)
                         loadInbox()
                     } else {
@@ -98,7 +125,7 @@ class InboxViewModel @Inject constructor(
                 }
             }
         } else {
-            DebugLogger.log("Auth", "Sign-in failed — no auth response: ${exception?.message}")
+            DebugLogger.log("Auth", "Sign-in failed — no auth response: ${exception?.toDebugSummary()}")
             val msg = "Sign-in failed: ${exception?.message}"
             _uiState.value = InboxUiState.Error(msg)
             voiceManager.speak(msg)
@@ -247,6 +274,9 @@ class InboxViewModel @Inject constructor(
         super.onCleared()
         authService.dispose()
     }
+
+    private fun AuthorizationException.toDebugSummary(): String =
+        "type=$type, code=$code, error=$error, description=$errorDescription, uri=$errorUri"
 }
 
 sealed class InboxUiState {

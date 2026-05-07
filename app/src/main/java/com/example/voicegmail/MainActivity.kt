@@ -71,12 +71,14 @@ class MainActivity : ComponentActivity() {
 
     override fun onPause() {
         super.onPause()
+        DebugLogger.log("MainActivity", "onPause — wakeLockHeld=${wakeLock?.isHeld == true}")
         wakeLock?.let { if (it.isHeld) it.release() }
         wakeLock = null
     }
 
     override fun onDestroy() {
         super.onDestroy()
+        DebugLogger.log("MainActivity", "onDestroy")
         voiceManager.shutdown()
     }
 }
