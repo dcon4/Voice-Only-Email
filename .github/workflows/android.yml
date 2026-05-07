@@ -27,11 +27,17 @@ jobs:
       - name: Make gradlew executable
         run: chmod +x ./gradlew
 
-      - name: Print debug SHA-1
-        run: ./gradlew :app:signingReport
-
       - name: Build Debug APK
         run: ./gradlew :app:assembleDebug --stacktrace
+
+      - name: Verify debug APK certificate (SHA-1 for Google OAuth)
+        shell: bash
+        run: |
+          set -euo pipefail
+          DEBUG_APK="app/build/outputs/apk/debug/app-debug.apk"
+          APKSIGNER="$(find "$ANDROID_SDK_ROOT/build-tools" -name apksigner -type f | sort -V | tail -1)"
+          echo "--- Debug APK signing certificate ---"
+          "$APKSIGNER" verify --verbose --print-certs "$DEBUG_APK"
 
       - name: Build Release APK (optional)
         if: ${{ github.event_name == 'push' }}
