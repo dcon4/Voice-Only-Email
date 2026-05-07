@@ -37,6 +37,7 @@ jobs:
           DEBUG_APK="app/build/outputs/apk/debug/app-debug.apk"
           APKSIGNER="$(find "$ANDROID_SDK_ROOT/build-tools" -name apksigner -type f | sort -V | tail -1)"
           CERT_OUTPUT="$(mktemp)"
+          trap 'rm -f "$CERT_OUTPUT"' EXIT
           echo "--- Debug APK signing certificate ---"
           "$APKSIGNER" verify --verbose --print-certs "$DEBUG_APK" | tee "$CERT_OUTPUT"
           DEBUG_SHA1="$(grep -m1 'certificate SHA-1 digest:' "$CERT_OUTPUT" | sed 's/.*certificate SHA-1 digest:[[:space:]]*//')"
@@ -75,6 +76,7 @@ jobs:
 
           APKSIGNER="$(find "$ANDROID_SDK_ROOT/build-tools" -name apksigner -type f | sort -V | tail -1)"
           CERT_OUTPUT="$(mktemp)"
+          trap 'rm -f "$CERT_OUTPUT"' EXIT
           echo "--- Release APK signing certificate ---"
           "$APKSIGNER" verify --verbose --print-certs "$SIGNED_APK" | tee "$CERT_OUTPUT"
           RELEASE_SHA1="$(grep -m1 'certificate SHA-1 digest:' "$CERT_OUTPUT" | sed 's/.*certificate SHA-1 digest:[[:space:]]*//')"
