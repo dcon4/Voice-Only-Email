@@ -8,16 +8,19 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.example.voicegmail.BuildConfig
 import com.example.voicegmail.gmail.EmailItem
 import com.example.voicegmail.ui.viewmodel.InboxNavEvent
 import com.example.voicegmail.ui.viewmodel.InboxUiState
@@ -31,6 +34,7 @@ fun InboxScreen(
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val isSignedIn by viewModel.isSignedIn.collectAsState()
+    val context = LocalContext.current
 
     val signInLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.StartActivityForResult()
@@ -62,6 +66,22 @@ fun InboxScreen(
                     )
                 },
                 actions = {
+                    if (BuildConfig.DEBUG) {
+                        IconButton(
+                            onClick = {
+                                viewModel.getShareLogIntent()?.let { intent ->
+                                    context.startActivity(
+                                        android.content.Intent.createChooser(intent, "Share debug log")
+                                    )
+                                }
+                            },
+                            modifier = Modifier.semantics {
+                                contentDescription = "Share debug log"
+                            }
+                        ) {
+                            Icon(Icons.Default.BugReport, contentDescription = null)
+                        }
+                    }
                     IconButton(
                         onClick = { viewModel.loadInbox() },
                         modifier = Modifier.semantics {

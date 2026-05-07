@@ -3,9 +3,12 @@ package com.example.voicegmail.ui.viewmodel
 import android.content.Context
 import android.content.Intent
 import androidx.activity.result.ActivityResult
+import androidx.core.content.FileProvider
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.voicegmail.BuildConfig
 import com.example.voicegmail.auth.AuthRepository
+import com.example.voicegmail.debug.DebugLogger
 import com.example.voicegmail.gmail.EmailItem
 import com.example.voicegmail.gmail.GmailRepository
 import com.example.voicegmail.voice.VoiceCommand
@@ -62,7 +65,9 @@ class InboxViewModel @Inject constructor(
     }
 
     fun getSignInIntent(): Intent {
+        DebugLogger.log("Auth", "Sign-in button pressed")
         val request = authRepository.buildAuthorizationRequest()
+        DebugLogger.log("Auth", "Auth request launched — redirect: ${request.redirectUri}")
         return authService.getAuthorizationRequestIntent(request)
     }
 
@@ -70,25 +75,30 @@ class InboxViewModel @Inject constructor(
         val data = result.data ?: return
         val response = AuthorizationResponse.fromIntent(data)
         val exception = AuthorizationException.fromIntent(data)
+        DebugLogger.log("Auth", "Redirect received — response=${response != null}, exception=${exception?.message}")
         if (response != null) {
             viewModelScope.launch {
                 try {
                     val (accessToken, refreshToken) = authRepository.exchangeCodeForTokens(authService, response)
                     if (accessToken != null) {
+                        DebugLogger.log("Auth", "Token exchange success — accessToken present, refreshToken=${refreshToken != null}")
                         authRepository.saveTokens(accessToken, refreshToken)
                         loadInbox()
                     } else {
+                        DebugLogger.log("Auth", "Token exchange failed — null access token")
                         val msg = "Sign-in failed: could not get access token"
                         _uiState.value = InboxUiState.Error(msg)
                         voiceManager.speak(msg)
                     }
                 } catch (e: Exception) {
+                    DebugLogger.logException("Auth", "Token exchange exception", e)
                     val msg = "Sign-in failed: ${e.message}"
                     _uiState.value = InboxUiState.Error(msg)
                     voiceManager.speak(msg)
                 }
             }
         } else {
+            DebugLogger.log("Auth", "Sign-in failed — no auth response: ${exception?.message}")
             val msg = "Sign-in failed: ${exception?.message}"
             _uiState.value = InboxUiState.Error(msg)
             voiceManager.speak(msg)
@@ -210,6 +220,25 @@ class InboxViewModel @Inject constructor(
 
     /** Stops all audio — useful when navigating away from the inbox. */
     fun stopVoice() = voiceCommandEngine.stopAll()
+
+    /**
+     * Builds a share [Intent] for the debug log file.
+     * Returns null in release builds (where [DebugLogger.getLogFile] is always null)
+     * or when the log file does not yet exist.
+     */
+    fun getShareLogIntent(): Intent? {
+        val file = DebugLogger.getLogFile()?.takeIf { it.exists() } ?: return null
+        val uri = FileProvider.getUriForFile(
+            context,
+            "${BuildConfig.APPLICATION_ID}.debug.fileprovider",
+            file
+        )
+        return Intent(Intent.ACTION_SEND).apply {
+            type = "text/plain"
+            putExtra(Intent.EXTRA_STREAM, uri)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+    }
 
     private fun currentEmails(): List<EmailItem> =
         (_uiState.value as? InboxUiState.Success)?.emails ?: emptyList()
