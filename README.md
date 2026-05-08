@@ -35,7 +35,7 @@ A voice-first Gmail client for Android, built with Kotlin, Jetpack Compose, Hilt
 
    `com.example.voicegmail`
 
-5. Enter the **SHA-1 certificate fingerprint** for the APK you will actually install
+5. Enter the **SHA-1 certificate fingerprint** corresponding to the build type you plan to install
 6. Click **Create**
 
 Use a separate Android OAuth client for each signing certificate you use:
