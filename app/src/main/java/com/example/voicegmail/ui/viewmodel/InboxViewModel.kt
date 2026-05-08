@@ -85,7 +85,7 @@ class InboxViewModel @Inject constructor(
         }
     }
 
-    fun getSignInIntent(): Intent {
+    private fun getSignInIntent(): Intent {
         val request = authRepository.buildAuthorizationRequest()
         DebugLogger.log(
             "Auth",
