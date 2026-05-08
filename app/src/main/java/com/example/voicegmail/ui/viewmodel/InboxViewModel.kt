@@ -110,7 +110,7 @@ class InboxViewModel @Inject constructor(
         DebugLogger.log(
             "Auth",
             "Redirect received — response=${response != null}, hasAuthCode=${!response?.authorizationCode.isNullOrBlank()}, " +
-                "hasState=${!response?.state.isNullOrBlank()}, exception=${exception?.toDebugSummary()}"
+                "hasState=${!response?.state.isNullOrBlank()}, exception=${exception?.toAuthDebugSummary()}"
         )
         if (response != null) {
             viewModelScope.launch {
@@ -145,7 +145,7 @@ class InboxViewModel @Inject constructor(
                 }
             }
         } else {
-            DebugLogger.log("Auth", "Sign-in failed — no auth response: ${exception?.toDebugSummary()}")
+            DebugLogger.log("Auth", "Sign-in failed — no auth response: ${exception?.toAuthDebugSummary()}")
             setAuthInProgress(false, "auth callback missing authorization response")
             val msg = "Sign-in failed: ${exception?.message}"
             _uiState.value = InboxUiState.Error(msg)
@@ -305,7 +305,7 @@ class InboxViewModel @Inject constructor(
         )
     }
 
-    private fun AuthorizationException.toDebugSummary(): String =
+    private fun AuthorizationException.toAuthDebugSummary(): String =
         "type=$type, code=$code, error=$error, description=$errorDescription, uri=$errorUri"
 }
 

@@ -20,6 +20,7 @@ object DebugLogger {
 
     private const val LOG_FILE_NAME = "voicegmail-debug.log"
     private val dateFormat = SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.US)
+    private val processId = Process.myPid()
 
     private var logFile: File? = null
 
@@ -37,7 +38,7 @@ object DebugLogger {
     @Synchronized
     fun log(tag: String, message: String) {
         val timestamp = dateFormat.format(Date())
-        val line = "$timestamp [pid=${Process.myPid()} thread=${Thread.currentThread().name}] [$tag] $message\n"
+        val line = "$timestamp [pid=$processId thread=${Thread.currentThread().name}] [$tag] $message\n"
         try {
             logFile?.appendText(line)
         } catch (e: Exception) {
