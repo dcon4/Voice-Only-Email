@@ -34,6 +34,7 @@ fun InboxScreen(
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val isSignedIn by viewModel.isSignedIn.collectAsState()
+    val isAuthInProgress by viewModel.isAuthInProgress.collectAsState()
     val context = LocalContext.current
 
     val signInLauncher = rememberLauncherForActivityResult(
@@ -131,12 +132,13 @@ fun InboxScreen(
                             modifier = Modifier.semantics { heading() }
                         )
                         Button(
-                            onClick = { signInLauncher.launch(viewModel.getSignInIntent()) },
+                            onClick = { viewModel.getSignInIntent()?.let(signInLauncher::launch) },
+                            enabled = !isAuthInProgress,
                             modifier = Modifier.semantics {
                                 contentDescription = "Sign in with Google"
                             }
                         ) {
-                            Text("Sign in with Google")
+                            Text(if (isAuthInProgress) "Signing in…" else "Sign in with Google")
                         }
                     }
                 }

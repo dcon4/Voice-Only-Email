@@ -42,6 +42,9 @@ class InboxViewModel @Inject constructor(
     private val _isSignedIn = MutableStateFlow(false)
     val isSignedIn: StateFlow<Boolean> = _isSignedIn
 
+    private val _isAuthInProgress = MutableStateFlow(false)
+    val isAuthInProgress: StateFlow<Boolean> = _isAuthInProgress
+
     private val _currentEmailIndex = MutableStateFlow(0)
     val currentEmailIndex: StateFlow<Int> = _currentEmailIndex
 
@@ -65,28 +68,41 @@ class InboxViewModel @Inject constructor(
         }
     }
 
-    fun getSignInIntent(): Intent {
-        DebugLogger.log("Auth", "Sign-in button pressed")
-        val request = authRepository.buildAuthorizationRequest()
-        DebugLogger.log(
-            "Auth",
-            "Auth request launched — package=${context.packageName}, debug=${BuildConfig.DEBUG}, " +
-                "clientIdSuffix=${AuthConfig.CLIENT_ID.takeLast(12)}, redirect=${request.redirectUri}, " +
-                "scopeCount=${request.scope?.split(' ')?.size ?: 0}, scopes=${request.scope}, " +
-                "codeVerifierPresent=${!request.codeVerifier.isNullOrBlank()}"
-        )
-        return authService.getAuthorizationRequestIntent(request)
+    fun getSignInIntent(): Intent? {
+        DebugLogger.log("Auth", "Sign-in requested — authInProgress=${_isAuthInProgress.value}")
+        if (_isAuthInProgress.value) {
+            DebugLogger.log("Auth", "Duplicate sign-in launch blocked")
+            return null
+        }
+
+        return try {
+            setAuthInProgress(true, "sign-in intent requested")
+            val request = authRepository.buildAuthorizationRequest()
+            DebugLogger.log(
+                "Auth",
+                "Auth request launched — package=${context.packageName}, debug=${BuildConfig.DEBUG}, " +
+                    "redirect=${request.redirectUri}, scopeCount=${request.scope?.split(' ')?.size ?: 0}, " +
+                    "scopes=${request.scope}, codeVerifierPresent=${!request.codeVerifier.isNullOrBlank()}, " +
+                    "clientIdConfigured=${AuthConfig.CLIENT_ID.isNotBlank()}"
+            )
+            authService.getAuthorizationRequestIntent(request)
+        } catch (e: Exception) {
+            setAuthInProgress(false, "sign-in intent creation failed")
+            DebugLogger.logException("Auth", "Failed to create sign-in intent", e)
+            null
+        }
     }
 
     fun handleSignInResult(result: ActivityResult) {
         val data = result.data
         DebugLogger.log(
             "Auth",
-            "Sign-in activity result — resultCode=${result.resultCode}, hasData=${data != null}, " +
+            "Sign-in activity result — resultCode=${result.resultCode}, authInProgress=${_isAuthInProgress.value}, hasData=${data != null}, " +
                 "action=${data?.action}, data=${data?.dataString}, extras=${data?.extras?.keySet()?.sorted()}"
         )
         if (data == null) {
             DebugLogger.log("Auth", "Sign-in result returned without intent data")
+            setAuthInProgress(false, "sign-in result missing intent data")
             return
         }
         val response = AuthorizationResponse.fromIntent(data)
@@ -110,15 +126,18 @@ class InboxViewModel @Inject constructor(
                             "Token exchange success — accessTokenPresent=true, accessTokenLength=${accessToken.length}, " +
                                 "refreshTokenPresent=${refreshToken != null}, refreshTokenLength=${refreshToken?.length ?: 0}"
                         )
+                        setAuthInProgress(false, "token exchange succeeded")
                         authRepository.saveTokens(accessToken, refreshToken)
                         loadInbox()
                     } else {
                         DebugLogger.log("Auth", "Token exchange failed — null access token")
+                        setAuthInProgress(false, "token exchange returned null access token")
                         val msg = "Sign-in failed: could not get access token"
                         _uiState.value = InboxUiState.Error(msg)
                         voiceManager.speak(msg)
                     }
                 } catch (e: Exception) {
+                    setAuthInProgress(false, "token exchange threw exception")
                     DebugLogger.logException("Auth", "Token exchange exception", e)
                     val msg = "Sign-in failed: ${e.message}"
                     _uiState.value = InboxUiState.Error(msg)
@@ -127,6 +146,7 @@ class InboxViewModel @Inject constructor(
             }
         } else {
             DebugLogger.log("Auth", "Sign-in failed — no auth response: ${exception?.toDebugSummary()}")
+            setAuthInProgress(false, "auth callback missing authorization response")
             val msg = "Sign-in failed: ${exception?.message}"
             _uiState.value = InboxUiState.Error(msg)
             voiceManager.speak(msg)
@@ -274,6 +294,15 @@ class InboxViewModel @Inject constructor(
     override fun onCleared() {
         super.onCleared()
         authService.dispose()
+    }
+
+    private fun setAuthInProgress(inProgress: Boolean, reason: String) {
+        val previous = _isAuthInProgress.value
+        _isAuthInProgress.value = inProgress
+        DebugLogger.log(
+            "Auth",
+            "Auth in progress changed — previous=$previous, current=$inProgress, reason=$reason"
+        )
     }
 
     private fun AuthorizationException.toDebugSummary(): String =
