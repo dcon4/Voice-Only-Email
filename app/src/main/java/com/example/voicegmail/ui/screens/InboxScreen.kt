@@ -132,7 +132,7 @@ fun InboxScreen(
                             modifier = Modifier.semantics { heading() }
                         )
                         Button(
-                            onClick = { viewModel.getSignInIntent()?.let(signInLauncher::launch) },
+                            onClick = { viewModel.launchSignIn(signInLauncher::launch) },
                             enabled = !isAuthInProgress,
                             modifier = Modifier.semantics {
                                 contentDescription = "Sign in with Google"

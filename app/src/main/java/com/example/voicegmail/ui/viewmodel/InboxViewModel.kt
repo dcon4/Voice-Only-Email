@@ -68,29 +68,32 @@ class InboxViewModel @Inject constructor(
         }
     }
 
-    fun getSignInIntent(): Intent? {
+    fun launchSignIn(launch: (Intent) -> Unit) {
         DebugLogger.log("Auth", "Sign-in requested — authInProgress=${_isAuthInProgress.value}")
         if (_isAuthInProgress.value) {
             DebugLogger.log("Auth", "Duplicate sign-in launch blocked")
-            return null
+            return
         }
 
-        return try {
+        try {
             setAuthInProgress(true, "sign-in intent requested")
-            val request = authRepository.buildAuthorizationRequest()
-            DebugLogger.log(
-                "Auth",
-                "Auth request launched — package=${context.packageName}, debug=${BuildConfig.DEBUG}, " +
-                    "redirect=${request.redirectUri}, scopeCount=${request.scope?.split(' ')?.size ?: 0}, " +
-                    "scopes=${request.scope}, codeVerifierPresent=${!request.codeVerifier.isNullOrBlank()}, " +
-                    "clientIdConfigured=${AuthConfig.CLIENT_ID.isNotBlank()}"
-            )
-            authService.getAuthorizationRequestIntent(request)
+            launch(getSignInIntent())
         } catch (e: Exception) {
             setAuthInProgress(false, "sign-in intent creation failed")
             DebugLogger.logException("Auth", "Failed to create sign-in intent", e)
-            null
         }
+    }
+
+    fun getSignInIntent(): Intent {
+        val request = authRepository.buildAuthorizationRequest()
+        DebugLogger.log(
+            "Auth",
+            "Auth request launched — package=${context.packageName}, debug=${BuildConfig.DEBUG}, " +
+                "redirect=${request.redirectUri}, scopeCount=${request.scope?.split(' ')?.size ?: 0}, " +
+                "scopes=${request.scope}, codeVerifierPresent=${!request.codeVerifier.isNullOrBlank()}, " +
+                "clientIdConfigured=${AuthConfig.CLIENT_ID.isNotBlank()}"
+        )
+        return authService.getAuthorizationRequestIntent(request)
     }
 
     fun handleSignInResult(result: ActivityResult) {
@@ -110,7 +113,7 @@ class InboxViewModel @Inject constructor(
         DebugLogger.log(
             "Auth",
             "Redirect received — response=${response != null}, hasAuthCode=${!response?.authorizationCode.isNullOrBlank()}, " +
-                "hasState=${!response?.state.isNullOrBlank()}, exception=${exception?.toAuthDebugSummary()}"
+                "hasState=${!response?.state.isNullOrBlank()}, exception=${exception?.toDebugString()}"
         )
         if (response != null) {
             viewModelScope.launch {
@@ -145,7 +148,7 @@ class InboxViewModel @Inject constructor(
                 }
             }
         } else {
-            DebugLogger.log("Auth", "Sign-in failed — no auth response: ${exception?.toAuthDebugSummary()}")
+            DebugLogger.log("Auth", "Sign-in failed — no auth response: ${exception?.toDebugString()}")
             setAuthInProgress(false, "auth callback missing authorization response")
             val msg = "Sign-in failed: ${exception?.message}"
             _uiState.value = InboxUiState.Error(msg)
@@ -305,7 +308,7 @@ class InboxViewModel @Inject constructor(
         )
     }
 
-    private fun AuthorizationException.toAuthDebugSummary(): String =
+    private fun AuthorizationException.toDebugString(): String =
         "type=$type, code=$code, error=$error, description=$errorDescription, uri=$errorUri"
 }
 

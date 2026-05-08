@@ -32,7 +32,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         DebugLogger.log(
             "MainActivity",
-            "onCreate — taskId=$taskId, savedInstanceState=${savedInstanceState != null}, ${intent.toDebugSummary()}"
+            "onCreate — taskId=$taskId, savedInstanceState=${savedInstanceState != null}, ${intent.toDebugString()}"
         )
         setContent {
             VoiceGmailTheme {
@@ -73,7 +73,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
-        DebugLogger.log("MainActivity", "onResume — taskId=$taskId, ${intent.toDebugSummary()}")
+        DebugLogger.log("MainActivity", "onResume — taskId=$taskId, ${intent.toDebugString()}")
         // Keep the screen and CPU on while the app is active so the microphone
         // is never cut off during voice dictation.
         val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
@@ -105,7 +105,7 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        DebugLogger.log("MainActivity", "onNewIntent — ${intent.toDebugSummary()}")
+        DebugLogger.log("MainActivity", "onNewIntent — ${intent.toDebugString()}")
     }
 
     override fun onDestroy() {
@@ -117,6 +117,6 @@ class MainActivity : ComponentActivity() {
         voiceManager.shutdown()
     }
 
-    private fun Intent?.toDebugSummary(): String =
+    private fun Intent?.toDebugString(): String =
         "intentAction=${this?.action}, intentData=${this?.dataString}, extras=${this?.extras?.keySet()?.sorted()}"
 }
