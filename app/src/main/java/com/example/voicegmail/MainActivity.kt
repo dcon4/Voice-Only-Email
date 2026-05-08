@@ -14,6 +14,7 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.example.voicegmail.debug.DebugLogger
+import com.example.voicegmail.debug.toDebugString
 import com.example.voicegmail.ui.screens.ComposeEmailScreen
 import com.example.voicegmail.ui.screens.InboxScreen
 import com.example.voicegmail.ui.theme.VoiceGmailTheme
@@ -116,7 +117,4 @@ class MainActivity : ComponentActivity() {
         )
         voiceManager.shutdown()
     }
-
-    private fun Intent?.toDebugString(): String =
-        "intentAction=${this?.action}, intentData=${this?.dataString}, extras=${this?.extras?.keySet()?.sorted()}"
 }

@@ -9,6 +9,7 @@ import androidx.lifecycle.viewModelScope
 import com.example.voicegmail.BuildConfig
 import com.example.voicegmail.auth.AuthConfig
 import com.example.voicegmail.auth.AuthRepository
+import com.example.voicegmail.debug.toDebugString
 import com.example.voicegmail.debug.DebugLogger
 import com.example.voicegmail.gmail.EmailItem
 import com.example.voicegmail.gmail.GmailRepository
@@ -22,7 +23,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
-import net.openid.appauth.AuthorizationException
 import net.openid.appauth.AuthorizationResponse
 import net.openid.appauth.AuthorizationService
 import javax.inject.Inject
@@ -69,7 +69,7 @@ class InboxViewModel @Inject constructor(
     }
 
     fun launchSignIn(launch: (Intent) -> Unit) {
-        DebugLogger.log("Auth", "Sign-in requested — authInProgress=${_isAuthInProgress.value}")
+        DebugLogger.log("Auth", "Sign-in requested — isAuthInProgress=${_isAuthInProgress.value}")
         if (_isAuthInProgress.value) {
             DebugLogger.log("Auth", "Duplicate sign-in launch blocked")
             return
@@ -100,8 +100,8 @@ class InboxViewModel @Inject constructor(
         val data = result.data
         DebugLogger.log(
             "Auth",
-            "Sign-in activity result — resultCode=${result.resultCode}, authInProgress=${_isAuthInProgress.value}, hasData=${data != null}, " +
-                "action=${data?.action}, data=${data?.dataString}, extras=${data?.extras?.keySet()?.sorted()}"
+            "Sign-in activity result — resultCode=${result.resultCode}, isAuthInProgress=${_isAuthInProgress.value}, hasData=${data != null}, " +
+                data.toDebugString()
         )
         if (data == null) {
             DebugLogger.log("Auth", "Sign-in result returned without intent data")
@@ -109,7 +109,7 @@ class InboxViewModel @Inject constructor(
             return
         }
         val response = AuthorizationResponse.fromIntent(data)
-        val exception = AuthorizationException.fromIntent(data)
+        val exception = net.openid.appauth.AuthorizationException.fromIntent(data)
         DebugLogger.log(
             "Auth",
             "Redirect received — response=${response != null}, hasAuthCode=${!response?.authorizationCode.isNullOrBlank()}, " +
@@ -308,8 +308,6 @@ class InboxViewModel @Inject constructor(
         )
     }
 
-    private fun AuthorizationException.toDebugString(): String =
-        "type=$type, code=$code, error=$error, description=$errorDescription, uri=$errorUri"
 }
 
 sealed class InboxUiState {
