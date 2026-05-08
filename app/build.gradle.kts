@@ -5,29 +5,29 @@ plugins {
     kotlin("kapt")
 }
 
-fun resolveOauthValue(envName: String, propertyName: String, defaultValue: String): String =
+fun resolveOAuthValue(envName: String, propertyName: String, defaultValue: String): String =
     System.getenv(envName)?.takeIf { it.isNotBlank() }
         ?: (project.findProperty(propertyName) as String?)?.takeIf { it.isNotBlank() }
         ?: defaultValue
 
 val defaultOauthRedirectScheme = "com.googleusercontent.apps.359413552450-ifbmb206qrd37er7l56r0muoa80ck89g"
 val defaultOauthClientId = "359413552450-ifbmb206qrd37er7l56r0muoa80ck89g.apps.googleusercontent.com"
-val releaseOauthRedirectScheme = resolveOauthValue(
+val releaseOauthRedirectScheme = resolveOAuthValue(
     envName = "OAUTH_REDIRECT_SCHEME",
     propertyName = "oauthRedirectScheme",
     defaultValue = defaultOauthRedirectScheme
 )
-val releaseOauthClientId = resolveOauthValue(
+val releaseOauthClientId = resolveOAuthValue(
     envName = "OAUTH_CLIENT_ID",
     propertyName = "oauthClientId",
     defaultValue = defaultOauthClientId
 )
-val debugOauthRedirectScheme = resolveOauthValue(
+val debugOauthRedirectScheme = resolveOAuthValue(
     envName = "DEBUG_OAUTH_REDIRECT_SCHEME",
     propertyName = "debugOauthRedirectScheme",
     defaultValue = releaseOauthRedirectScheme
 )
-val debugOauthClientId = resolveOauthValue(
+val debugOauthClientId = resolveOAuthValue(
     envName = "DEBUG_OAUTH_CLIENT_ID",
     propertyName = "debugOauthClientId",
     defaultValue = releaseOauthClientId

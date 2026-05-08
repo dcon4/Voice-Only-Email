@@ -49,7 +49,7 @@ Important:
 
 - `app/build.gradle.kts` only customizes **release** signing
 - local **debug** builds use the default Android debug keystore unless you override it
-- if Google Cloud is configured only for a release SHA-1 and you install a debug APK, sign-in can fail with an AppAuth error like `User cancelled flow`
+- if Google Cloud is configured only for a release SHA-1 and you install a debug APK, sign-in can fail because of the SHA-1 mismatch, even if AppAuth misleadingly reports `User cancelled flow`
 
 ### 4. Configure the OAuth values used by the app
 After creating the Android OAuth client, Google will show a Client ID like this:
