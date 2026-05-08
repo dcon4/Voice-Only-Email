@@ -4,7 +4,7 @@ import android.content.Intent
 import net.openid.appauth.AuthorizationException
 
 internal fun Intent?.toDebugString(): String =
-    "intentAction=${this?.action}, intentData=${this?.dataString}, extras=${this?.extras?.keySet()?.toList()?.sorted()}"
+    "intentAction=${this?.action}, intentData=${this?.data?.toString()}, extras=${this?.extras?.keySet()?.toList()?.sorted()}"
 
 internal fun AuthorizationException?.toDebugString(): String =
     this?.let {

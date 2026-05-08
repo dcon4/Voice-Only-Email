@@ -23,6 +23,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
+import net.openid.appauth.AuthorizationException
 import net.openid.appauth.AuthorizationResponse
 import net.openid.appauth.AuthorizationService
 import javax.inject.Inject
@@ -109,7 +110,7 @@ class InboxViewModel @Inject constructor(
             return
         }
         val response = AuthorizationResponse.fromIntent(data)
-        val exception = net.openid.appauth.AuthorizationException.fromIntent(data)
+        val exception = AuthorizationException.fromIntent(data)
         DebugLogger.log(
             "Auth",
             "Redirect received — response=${response != null}, hasAuthCode=${!response?.authorizationCode.isNullOrBlank()}, " +
