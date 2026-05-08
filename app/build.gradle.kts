@@ -5,6 +5,34 @@ plugins {
     kotlin("kapt")
 }
 
+fun oauthValue(envName: String, propertyName: String, defaultValue: String): String =
+    System.getenv(envName)?.takeIf { it.isNotBlank() }
+        ?: (project.findProperty(propertyName) as String?)?.takeIf { it.isNotBlank() }
+        ?: defaultValue
+
+val defaultOauthRedirectScheme = "com.googleusercontent.apps.359413552450-ifbmb206qrd37er7l56r0muoa80ck89g"
+val defaultOauthClientId = "359413552450-ifbmb206qrd37er7l56r0muoa80ck89g.apps.googleusercontent.com"
+val releaseOauthRedirectScheme = oauthValue(
+    envName = "OAUTH_REDIRECT_SCHEME",
+    propertyName = "oauthRedirectScheme",
+    defaultValue = defaultOauthRedirectScheme
+)
+val releaseOauthClientId = oauthValue(
+    envName = "OAUTH_CLIENT_ID",
+    propertyName = "oauthClientId",
+    defaultValue = defaultOauthClientId
+)
+val debugOauthRedirectScheme = oauthValue(
+    envName = "DEBUG_OAUTH_REDIRECT_SCHEME",
+    propertyName = "debugOauthRedirectScheme",
+    defaultValue = releaseOauthRedirectScheme
+)
+val debugOauthClientId = oauthValue(
+    envName = "DEBUG_OAUTH_CLIENT_ID",
+    propertyName = "debugOauthClientId",
+    defaultValue = releaseOauthClientId
+)
+
 android {
     namespace = "com.example.voicegmail"
     compileSdk = 34
@@ -20,13 +48,12 @@ android {
             useSupportLibrary = true
         }
 
-        // OAuth values for the newly created Google Cloud Android client.
-        val oauthRedirectScheme = "com.googleusercontent.apps.359413552450-ifbmb206qrd37er7l56r0muoa80ck89g"
-        val oauthClientId = "359413552450-ifbmb206qrd37er7l56r0muoa80ck89g.apps.googleusercontent.com"
-
-        manifestPlaceholders["appAuthRedirectScheme"] = oauthRedirectScheme
-        buildConfigField("String", "OAUTH_REDIRECT_SCHEME", "\"$oauthRedirectScheme\"")
-        buildConfigField("String", "OAUTH_CLIENT_ID", "\"$oauthClientId\"")
+        // Release values can be overridden with OAUTH_* env vars or Gradle properties.
+        // Debug builds can override them separately with DEBUG_OAUTH_* values so local
+        // debug APKs can use a different Android OAuth client/SHA-1 than release builds.
+        manifestPlaceholders["appAuthRedirectScheme"] = releaseOauthRedirectScheme
+        buildConfigField("String", "OAUTH_REDIRECT_SCHEME", "\"$releaseOauthRedirectScheme\"")
+        buildConfigField("String", "OAUTH_CLIENT_ID", "\"$releaseOauthClientId\"")
     }
 
     signingConfigs {
@@ -52,6 +79,12 @@ android {
     }
 
     buildTypes {
+        debug {
+            manifestPlaceholders["appAuthRedirectScheme"] = debugOauthRedirectScheme
+            buildConfigField("String", "OAUTH_REDIRECT_SCHEME", "\"$debugOauthRedirectScheme\"")
+            buildConfigField("String", "OAUTH_CLIENT_ID", "\"$debugOauthClientId\"")
+        }
+
         release {
             isMinifyEnabled = false
             proguardFiles(
