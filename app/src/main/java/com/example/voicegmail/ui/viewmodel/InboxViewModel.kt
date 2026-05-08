@@ -69,7 +69,7 @@ class InboxViewModel @Inject constructor(
         }
     }
 
-    fun launchSignIn(launch: (Intent) -> Unit) {
+    fun launchSignIn(launchActivityIntent: (Intent) -> Unit) {
         DebugLogger.log("Auth", "Sign-in requested — isAuthInProgress=${_isAuthInProgress.value}")
         if (_isAuthInProgress.value) {
             DebugLogger.log("Auth", "Duplicate sign-in launch blocked")
@@ -78,7 +78,7 @@ class InboxViewModel @Inject constructor(
 
         try {
             setAuthInProgress(true, "sign-in intent requested")
-            launch(getSignInIntent())
+            launchActivityIntent(getSignInIntent())
         } catch (e: Exception) {
             setAuthInProgress(false, "sign-in intent creation failed")
             DebugLogger.logException("Auth", "Failed to create sign-in intent — verify OAuth configuration", e)
@@ -102,7 +102,7 @@ class InboxViewModel @Inject constructor(
         DebugLogger.log(
             "Auth",
             "Sign-in activity result — resultCode=${result.resultCode}, isAuthInProgress=${_isAuthInProgress.value}, hasData=${data != null}, " +
-                "${data.toDebugString()}"
+                data.toDebugString()
         )
         if (data == null) {
             DebugLogger.log("Auth", "Sign-in result returned without intent data")
