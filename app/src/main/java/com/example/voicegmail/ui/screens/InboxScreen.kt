@@ -156,18 +156,32 @@ fun InboxScreen(
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
                         Text(
-                            text = "Error: ${state.message}",
+                            text = state.message,
                             color = MaterialTheme.colorScheme.error,
                             modifier = Modifier.semantics {
-                                contentDescription = "Error: ${state.message}"
+                                contentDescription = "Sign-in error: ${state.message}"
                             }
                         )
-                        Spacer(Modifier.height(8.dp))
-                        Button(
-                            onClick = { viewModel.loadInbox() },
-                            modifier = Modifier.semantics { contentDescription = "Retry loading inbox" }
-                        ) {
-                            Text("Retry")
+                        Spacer(Modifier.height(12.dp))
+                        if (state.isAuthError) {
+                            Button(
+                                onClick = { viewModel.launchSignIn(signInLauncher::launch) },
+                                enabled = !isAuthInProgress,
+                                modifier = Modifier.semantics {
+                                    contentDescription = "Sign in with Google"
+                                }
+                            ) {
+                                Text(if (isAuthInProgress) "Signing in…" else "Sign in with Google")
+                            }
+                        } else {
+                            Button(
+                                onClick = { viewModel.loadInbox() },
+                                modifier = Modifier.semantics {
+                                    contentDescription = "Retry loading inbox"
+                                }
+                            ) {
+                                Text("Retry")
+                            }
                         }
                     }
                 }
