@@ -123,7 +123,7 @@ class InboxViewModel @Inject constructor(
         DebugLogger.log(
             "Auth",
             "Redirect received — response=${response != null}, hasAuthCode=${!response?.authorizationCode.isNullOrBlank()}, " +
-                "hasState=${!response?.state.isNullOrBlank()}, exception=${exception.toDebugString()}"
+                "hasState=${!response?.state.isNullOrBlank()}, exception=${exception?.toDebugString()}"
         )
         Log.d(TAG, "handleSignInResult: hasResponse=${response != null} hasException=${exception != null}")
 
@@ -182,8 +182,8 @@ class InboxViewModel @Inject constructor(
             }
 
             else -> {
-                DebugLogger.log("Auth", "Sign-in failed — neither auth response nor exception returned")
-                Log.e(TAG, "handleSignInResult: both response and exception are null; ${data.toDebugString()}")
+                DebugLogger.log("Auth", "Sign-in failed — unexpected state with neither auth response nor exception")
+                Log.e(TAG, "handleSignInResult: unexpected state with neither response nor exception; ${data.toDebugString()}")
                 setAuthInProgress(false, "auth callback missing authorization response and exception")
                 val msg = "Sign-in failed: no response received from Google. Please try again."
                 _uiState.value = InboxUiState.Error(msg, isAuthError = true)

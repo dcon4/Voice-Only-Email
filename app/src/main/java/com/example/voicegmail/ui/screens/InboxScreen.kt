@@ -159,7 +159,7 @@ fun InboxScreen(
                             text = state.message,
                             color = MaterialTheme.colorScheme.error,
                             modifier = Modifier.semantics {
-                                contentDescription = "Sign-in error: ${state.message}"
+                                contentDescription = state.message
                             }
                         )
                         Spacer(Modifier.height(12.dp))
