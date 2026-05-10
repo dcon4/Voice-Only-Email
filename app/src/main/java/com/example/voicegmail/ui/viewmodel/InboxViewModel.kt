@@ -8,10 +8,10 @@ import androidx.core.content.FileProvider
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.voicegmail.BuildConfig
-import com.example.voicegmail.auth.AuthConfig
-import com.example.voicegmail.auth.AuthRepository
 import com.example.voicegmail.debug.DebugLogger
 import com.example.voicegmail.debug.toDebugString
+import com.example.voicegmail.auth.AuthConfig
+import com.example.voicegmail.auth.AuthRepository
 import com.example.voicegmail.auth.OAuthDiagnostics
 import com.example.voicegmail.gmail.EmailItem
 import com.example.voicegmail.gmail.GmailRepository
@@ -167,7 +167,7 @@ class InboxViewModel @Inject constructor(
                         setAuthInProgress(false, "token exchange threw exception")
                         DebugLogger.logException("Auth", "Token exchange exception", e)
                         Log.e(TAG, "Unexpected error during token exchange", e)
-                        val msg = "Sign-in failed: ${e.message ?: "unexpected error during token exchange"}. Please try again."
+                        val msg = "Sign-in failed: ${e.message ?: "an unexpected error occurred"}. Please try again."
                         _uiState.value = InboxUiState.Error(msg, isAuthError = true)
                         voiceManager.speak(msg)
                     }
