@@ -1,6 +1,7 @@
 package com.example.voicegmail
 
 import android.content.Context
+import android.content.Intent
 import android.os.Bundle
 import android.os.PowerManager
 import androidx.activity.ComponentActivity
@@ -13,6 +14,7 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.example.voicegmail.debug.DebugLogger
+import com.example.voicegmail.debug.toDebugString
 import com.example.voicegmail.ui.screens.ComposeEmailScreen
 import com.example.voicegmail.ui.screens.InboxScreen
 import com.example.voicegmail.ui.theme.VoiceGmailTheme
@@ -29,7 +31,10 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        DebugLogger.log("MainActivity", "onCreate")
+        DebugLogger.log(
+            "MainActivity",
+            "onCreate — taskId=$taskId, savedInstanceState=${savedInstanceState != null}, ${intent.toDebugString()}"
+        )
         setContent {
             VoiceGmailTheme {
                 Surface(
@@ -57,9 +62,19 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun onStart() {
+        super.onStart()
+        DebugLogger.log("MainActivity", "onStart — taskId=$taskId")
+    }
+
+    override fun onRestart() {
+        super.onRestart()
+        DebugLogger.log("MainActivity", "onRestart — taskId=$taskId")
+    }
+
     override fun onResume() {
         super.onResume()
-        DebugLogger.log("MainActivity", "onResume")
+        DebugLogger.log("MainActivity", "onResume — taskId=$taskId, ${intent.toDebugString()}")
         // Keep the screen and CPU on while the app is active so the microphone
         // is never cut off during voice dictation.
         val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
@@ -71,12 +86,35 @@ class MainActivity : ComponentActivity() {
 
     override fun onPause() {
         super.onPause()
+        DebugLogger.log(
+            "MainActivity",
+            "onPause — wakeLockHeld=${wakeLock?.isHeld == true}, isFinishing=$isFinishing, " +
+                "isChangingConfigurations=$isChangingConfigurations"
+        )
         wakeLock?.let { if (it.isHeld) it.release() }
         wakeLock = null
     }
 
+    override fun onStop() {
+        super.onStop()
+        DebugLogger.log(
+            "MainActivity",
+            "onStop — isFinishing=$isFinishing, isChangingConfigurations=$isChangingConfigurations"
+        )
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        DebugLogger.log("MainActivity", "onNewIntent — ${intent.toDebugString()}")
+    }
+
     override fun onDestroy() {
         super.onDestroy()
+        DebugLogger.log(
+            "MainActivity",
+            "onDestroy — isFinishing=$isFinishing, isChangingConfigurations=$isChangingConfigurations"
+        )
         voiceManager.shutdown()
     }
 }

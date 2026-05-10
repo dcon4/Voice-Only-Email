@@ -8,9 +8,11 @@ import androidx.core.content.FileProvider
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.voicegmail.BuildConfig
+import com.example.voicegmail.debug.DebugLogger
+import com.example.voicegmail.debug.toDebugString
+import com.example.voicegmail.auth.AuthConfig
 import com.example.voicegmail.auth.AuthRepository
 import com.example.voicegmail.auth.OAuthDiagnostics
-import com.example.voicegmail.debug.DebugLogger
 import com.example.voicegmail.gmail.EmailItem
 import com.example.voicegmail.gmail.GmailRepository
 import com.example.voicegmail.voice.VoiceCommand
@@ -45,6 +47,9 @@ class InboxViewModel @Inject constructor(
     private val _isSignedIn = MutableStateFlow(false)
     val isSignedIn: StateFlow<Boolean> = _isSignedIn
 
+    private val _isAuthInProgress = MutableStateFlow(false)
+    val isAuthInProgress: StateFlow<Boolean> = _isAuthInProgress
+
     private val _currentEmailIndex = MutableStateFlow(0)
     val currentEmailIndex: StateFlow<Int> = _currentEmailIndex
 
@@ -68,47 +73,84 @@ class InboxViewModel @Inject constructor(
         }
     }
 
-    fun getSignInIntent(): Intent {
-        DebugLogger.log("Auth", "Sign-in button pressed")
+    fun launchSignIn(launchActivityIntent: (Intent) -> Unit) {
+        DebugLogger.log("Auth", "Sign-in requested — isAuthInProgress=${_isAuthInProgress.value}")
+        if (_isAuthInProgress.value) {
+            DebugLogger.log("Auth", "Duplicate sign-in launch blocked")
+            return
+        }
+
+        try {
+            setAuthInProgress(true, "sign-in intent requested")
+            launchActivityIntent(getSignInIntent())
+        } catch (e: Exception) {
+            setAuthInProgress(false, "sign-in intent creation failed")
+            DebugLogger.logException("Auth", "Failed to create sign-in intent — verify OAuth configuration", e)
+        }
+    }
+
+    private fun getSignInIntent(): Intent {
         val request = authRepository.buildAuthorizationRequest()
-        DebugLogger.log("Auth", "Auth request launched — redirect: ${request.redirectUri}")
+        DebugLogger.log(
+            "Auth",
+            "Auth request launched — package=${context.packageName}, debug=${BuildConfig.DEBUG}, " +
+                "redirect=${request.redirectUri}, scopeCount=${request.scope?.split(' ')?.size ?: 0}, " +
+                "scopes=${request.scope}, codeVerifierPresent=${!request.codeVerifier.isNullOrBlank()}, " +
+                "clientIdConfigured=${AuthConfig.CLIENT_ID.isNotBlank()}"
+        )
         return authService.getAuthorizationRequestIntent(request)
     }
 
     fun handleSignInResult(result: ActivityResult) {
-        // result.data is null when the user cancels the Chrome Custom Tab (back
-        // button) or when the OS kills the tab before a redirect is delivered.
-        // Previously this returned silently, leaving the UI in SignedOut state
-        // without any explanation.
-        if (result.data == null) {
+        val data = result.data
+        DebugLogger.log(
+            "Auth",
+            "Sign-in activity result — resultCode=${result.resultCode}, isAuthInProgress=${_isAuthInProgress.value}, hasData=${data != null}, " +
+                data.toDebugString()
+        )
+        if (data == null) {
+            DebugLogger.log("Auth", "Sign-in result returned without intent data")
             Log.w(TAG, "handleSignInResult: result.data is null (resultCode=${result.resultCode}); sign-in flow was interrupted or canceled")
+            setAuthInProgress(false, "sign-in result missing intent data")
             val msg = "Sign-in was canceled. Tap 'Sign in with Google' to try again."
             _uiState.value = InboxUiState.Error(msg, isAuthError = true)
             voiceManager.speak(msg)
             return
         }
 
-        val data = result.data!!
         val response = AuthorizationResponse.fromIntent(data)
         val exception = AuthorizationException.fromIntent(data)
-        DebugLogger.log("Auth", "Redirect received — response=${response != null}, exception=${exception?.message}")
+        DebugLogger.log(
+            "Auth",
+            "Redirect received — response=${response != null}, hasAuthCode=${!response?.authorizationCode.isNullOrBlank()}, " +
+                "hasState=${!response?.state.isNullOrBlank()}, exception=${exception?.toDebugString()}"
+        )
         Log.d(TAG, "handleSignInResult: hasResponse=${response != null} hasException=${exception != null}")
 
         when {
             response != null -> {
-                // Authorization code received — exchange it for tokens.
                 viewModelScope.launch {
                     try {
+                        DebugLogger.log(
+                            "Auth",
+                            "Starting token exchange — grantType=authorization_code, hasAuthCode=${!response.authorizationCode.isNullOrBlank()}"
+                        )
                         Log.d(TAG, "Exchanging authorization code for tokens")
                         val (accessToken, refreshToken) = authRepository.exchangeCodeForTokens(authService, response)
                         if (accessToken != null) {
-                            DebugLogger.log("Auth", "Token exchange success — accessToken present, refreshToken=${refreshToken != null}")
+                            DebugLogger.log(
+                                "Auth",
+                                "Token exchange success — accessTokenPresent=true, accessTokenLength=${accessToken.length}, " +
+                                    "refreshTokenPresent=${refreshToken != null}, refreshTokenLength=${refreshToken?.length ?: 0}"
+                            )
                             Log.i(TAG, "Token exchange succeeded; saving tokens and loading inbox")
+                            setAuthInProgress(false, "token exchange succeeded")
                             authRepository.saveTokens(accessToken, refreshToken)
                             loadInbox()
                         } else {
                             DebugLogger.log("Auth", "Token exchange failed — null access token")
                             Log.e(TAG, "Token exchange returned no access token (hasRefreshToken=${refreshToken != null})")
+                            setAuthInProgress(false, "token exchange returned null access token")
                             val msg = "Sign-in failed: Google returned no access token. " +
                                 "Verify that the Gmail API is enabled and the OAuth scopes " +
                                 "are approved in Google Cloud Console."
@@ -116,14 +158,16 @@ class InboxViewModel @Inject constructor(
                             voiceManager.speak(msg)
                         }
                     } catch (e: AuthorizationException) {
+                        setAuthInProgress(false, "token exchange authorization exception")
                         DebugLogger.logException("Auth", "Token exchange AuthorizationException", e)
                         val msg = OAuthDiagnostics.friendlyMessage(e)
                         _uiState.value = InboxUiState.Error(msg, isAuthError = true)
                         voiceManager.speak(msg)
                     } catch (e: Exception) {
+                        setAuthInProgress(false, "token exchange threw exception")
                         DebugLogger.logException("Auth", "Token exchange exception", e)
                         Log.e(TAG, "Unexpected error during token exchange", e)
-                        val msg = "Sign-in failed: ${e.message ?: "unexpected error during token exchange"}. Please try again."
+                        val msg = "Sign-in failed: ${e.message ?: "an unexpected error occurred"}. Please try again."
                         _uiState.value = InboxUiState.Error(msg, isAuthError = true)
                         voiceManager.speak(msg)
                     }
@@ -131,17 +175,17 @@ class InboxViewModel @Inject constructor(
             }
 
             exception != null -> {
-                // Authorization endpoint returned an error (e.g. access_denied,
-                // user canceled, redirect mismatch).
-                DebugLogger.log("Auth", "Sign-in failed — no auth response: ${exception.message}")
+                DebugLogger.log("Auth", "Sign-in failed — no auth response: ${exception.toDebugString()}")
+                setAuthInProgress(false, "auth callback returned authorization exception")
                 val msg = OAuthDiagnostics.friendlyMessage(exception)
                 _uiState.value = InboxUiState.Error(msg, isAuthError = true)
                 voiceManager.speak(msg)
             }
 
             else -> {
-                // Neither a response nor an exception — should be extremely rare.
-                Log.e(TAG, "handleSignInResult: both response and exception are null; intent=$data")
+                DebugLogger.log("Auth", "Sign-in failed — unexpected state with neither auth response nor exception")
+                Log.e(TAG, "handleSignInResult: unexpected state with neither response nor exception; ${data.toDebugString()}")
+                setAuthInProgress(false, "auth callback missing authorization response and exception")
                 val msg = "Sign-in failed: no response received from Google. Please try again."
                 _uiState.value = InboxUiState.Error(msg, isAuthError = true)
                 voiceManager.speak(msg)
@@ -290,6 +334,15 @@ class InboxViewModel @Inject constructor(
     override fun onCleared() {
         super.onCleared()
         authService.dispose()
+    }
+
+    private fun setAuthInProgress(inProgress: Boolean, reason: String) {
+        val previous = _isAuthInProgress.value
+        _isAuthInProgress.value = inProgress
+        DebugLogger.log(
+            "Auth",
+            "Auth in progress changed — previous=$previous, current=$inProgress, reason=$reason"
+        )
     }
 }
 
