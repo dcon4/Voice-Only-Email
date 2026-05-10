@@ -2,12 +2,14 @@ package com.example.voicegmail.ui.viewmodel
 
 import android.content.Context
 import android.content.Intent
+import android.util.Log
 import androidx.activity.result.ActivityResult
 import androidx.core.content.FileProvider
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.voicegmail.BuildConfig
 import com.example.voicegmail.auth.AuthRepository
+import com.example.voicegmail.auth.OAuthDiagnostics
 import com.example.voicegmail.debug.DebugLogger
 import com.example.voicegmail.gmail.EmailItem
 import com.example.voicegmail.gmail.GmailRepository
@@ -25,6 +27,8 @@ import net.openid.appauth.AuthorizationException
 import net.openid.appauth.AuthorizationResponse
 import net.openid.appauth.AuthorizationService
 import javax.inject.Inject
+
+private const val TAG = "VoiceGmail.Auth"
 
 @HiltViewModel
 class InboxViewModel @Inject constructor(
@@ -72,36 +76,76 @@ class InboxViewModel @Inject constructor(
     }
 
     fun handleSignInResult(result: ActivityResult) {
-        val data = result.data ?: return
+        // result.data is null when the user cancels the Chrome Custom Tab (back
+        // button) or when the OS kills the tab before a redirect is delivered.
+        // Previously this returned silently, leaving the UI in SignedOut state
+        // without any explanation.
+        if (result.data == null) {
+            Log.w(TAG, "handleSignInResult: result.data is null (resultCode=${result.resultCode}); sign-in flow was interrupted or canceled")
+            val msg = "Sign-in was canceled. Tap 'Sign in with Google' to try again."
+            _uiState.value = InboxUiState.Error(msg, isAuthError = true)
+            voiceManager.speak(msg)
+            return
+        }
+
+        val data = result.data!!
         val response = AuthorizationResponse.fromIntent(data)
         val exception = AuthorizationException.fromIntent(data)
         DebugLogger.log("Auth", "Redirect received — response=${response != null}, exception=${exception?.message}")
-        if (response != null) {
-            viewModelScope.launch {
-                try {
-                    val (accessToken, refreshToken) = authRepository.exchangeCodeForTokens(authService, response)
-                    if (accessToken != null) {
-                        DebugLogger.log("Auth", "Token exchange success — accessToken present, refreshToken=${refreshToken != null}")
-                        authRepository.saveTokens(accessToken, refreshToken)
-                        loadInbox()
-                    } else {
-                        DebugLogger.log("Auth", "Token exchange failed — null access token")
-                        val msg = "Sign-in failed: could not get access token"
-                        _uiState.value = InboxUiState.Error(msg)
+        Log.d(TAG, "handleSignInResult: hasResponse=${response != null} hasException=${exception != null}")
+
+        when {
+            response != null -> {
+                // Authorization code received — exchange it for tokens.
+                viewModelScope.launch {
+                    try {
+                        Log.d(TAG, "Exchanging authorization code for tokens")
+                        val (accessToken, refreshToken) = authRepository.exchangeCodeForTokens(authService, response)
+                        if (accessToken != null) {
+                            DebugLogger.log("Auth", "Token exchange success — accessToken present, refreshToken=${refreshToken != null}")
+                            Log.i(TAG, "Token exchange succeeded; saving tokens and loading inbox")
+                            authRepository.saveTokens(accessToken, refreshToken)
+                            loadInbox()
+                        } else {
+                            DebugLogger.log("Auth", "Token exchange failed — null access token")
+                            Log.e(TAG, "Token exchange returned no access token (hasRefreshToken=${refreshToken != null})")
+                            val msg = "Sign-in failed: Google returned no access token. " +
+                                "Verify that the Gmail API is enabled and the OAuth scopes " +
+                                "are approved in Google Cloud Console."
+                            _uiState.value = InboxUiState.Error(msg, isAuthError = true)
+                            voiceManager.speak(msg)
+                        }
+                    } catch (e: AuthorizationException) {
+                        DebugLogger.logException("Auth", "Token exchange AuthorizationException", e)
+                        val msg = OAuthDiagnostics.friendlyMessage(e)
+                        _uiState.value = InboxUiState.Error(msg, isAuthError = true)
+                        voiceManager.speak(msg)
+                    } catch (e: Exception) {
+                        DebugLogger.logException("Auth", "Token exchange exception", e)
+                        Log.e(TAG, "Unexpected error during token exchange", e)
+                        val msg = "Sign-in failed: ${e.message ?: "unexpected error during token exchange"}. Please try again."
+                        _uiState.value = InboxUiState.Error(msg, isAuthError = true)
                         voiceManager.speak(msg)
                     }
-                } catch (e: Exception) {
-                    DebugLogger.logException("Auth", "Token exchange exception", e)
-                    val msg = "Sign-in failed: ${e.message}"
-                    _uiState.value = InboxUiState.Error(msg)
-                    voiceManager.speak(msg)
                 }
             }
-        } else {
-            DebugLogger.log("Auth", "Sign-in failed — no auth response: ${exception?.message}")
-            val msg = "Sign-in failed: ${exception?.message}"
-            _uiState.value = InboxUiState.Error(msg)
-            voiceManager.speak(msg)
+
+            exception != null -> {
+                // Authorization endpoint returned an error (e.g. access_denied,
+                // user canceled, redirect mismatch).
+                DebugLogger.log("Auth", "Sign-in failed — no auth response: ${exception.message}")
+                val msg = OAuthDiagnostics.friendlyMessage(exception)
+                _uiState.value = InboxUiState.Error(msg, isAuthError = true)
+                voiceManager.speak(msg)
+            }
+
+            else -> {
+                // Neither a response nor an exception — should be extremely rare.
+                Log.e(TAG, "handleSignInResult: both response and exception are null; intent=$data")
+                val msg = "Sign-in failed: no response received from Google. Please try again."
+                _uiState.value = InboxUiState.Error(msg, isAuthError = true)
+                voiceManager.speak(msg)
+            }
         }
     }
 
@@ -253,7 +297,7 @@ sealed class InboxUiState {
     object Loading : InboxUiState()
     object SignedOut : InboxUiState()
     data class Success(val emails: List<EmailItem>) : InboxUiState()
-    data class Error(val message: String) : InboxUiState()
+    data class Error(val message: String, val isAuthError: Boolean = false) : InboxUiState()
 }
 
 sealed class InboxNavEvent {
