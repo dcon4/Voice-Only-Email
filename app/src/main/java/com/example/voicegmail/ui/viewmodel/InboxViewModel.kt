@@ -10,9 +10,9 @@ import androidx.lifecycle.viewModelScope
 import com.example.voicegmail.BuildConfig
 import com.example.voicegmail.auth.AuthConfig
 import com.example.voicegmail.auth.AuthRepository
-import com.example.voicegmail.auth.OAuthDiagnostics
 import com.example.voicegmail.debug.DebugLogger
 import com.example.voicegmail.debug.toDebugString
+import com.example.voicegmail.auth.OAuthDiagnostics
 import com.example.voicegmail.gmail.EmailItem
 import com.example.voicegmail.gmail.GmailRepository
 import com.example.voicegmail.voice.VoiceCommand
@@ -140,7 +140,8 @@ class InboxViewModel @Inject constructor(
                         if (accessToken != null) {
                             DebugLogger.log(
                                 "Auth",
-                                "Token exchange success — accessTokenPresent=true, refreshTokenPresent=${refreshToken != null}"
+                                "Token exchange success — accessTokenPresent=true, accessTokenLength=${accessToken.length}, " +
+                                    "refreshTokenPresent=${refreshToken != null}, refreshTokenLength=${refreshToken?.length ?: 0}"
                             )
                             Log.i(TAG, "Token exchange succeeded; saving tokens and loading inbox")
                             setAuthInProgress(false, "token exchange succeeded")
