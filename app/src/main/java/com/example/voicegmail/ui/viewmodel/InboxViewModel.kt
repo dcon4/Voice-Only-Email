@@ -72,6 +72,9 @@ class InboxViewModel @Inject constructor(
         DebugLogger.log("Auth", "Sign-in button pressed")
         val request = authRepository.buildAuthorizationRequest()
         DebugLogger.log("Auth", "Auth request launched — redirect: ${request.redirectUri}")
+        DebugLogger.log("Auth", "Client ID: ${request.clientId}")
+        DebugLogger.log("Auth", "Scopes: ${request.scopes}")
+        DebugLogger.log("Auth", "State: ${request.state}")
         return authService.getAuthorizationRequestIntent(request)
     }
 
@@ -82,6 +85,7 @@ class InboxViewModel @Inject constructor(
         // without any explanation.
         if (result.data == null) {
             Log.w(TAG, "handleSignInResult: result.data is null (resultCode=${result.resultCode}); sign-in flow was interrupted or canceled")
+            DebugLogger.log("Auth", "Sign-in flow interrupted — result.data is null (resultCode=${result.resultCode})")
             val msg = "Sign-in was canceled. Tap 'Sign in with Google' to try again."
             _uiState.value = InboxUiState.Error(msg, isAuthError = true)
             voiceManager.speak(msg)
@@ -91,7 +95,27 @@ class InboxViewModel @Inject constructor(
         val data = result.data!!
         val response = AuthorizationResponse.fromIntent(data)
         val exception = AuthorizationException.fromIntent(data)
-        DebugLogger.log("Auth", "Redirect received — response=${response != null}, exception=${exception?.message}")
+        
+        // Log comprehensive redirect details
+        DebugLogger.log("Auth", "Redirect received — hasResponse=${response != null}, hasException=${exception != null}")
+        
+        if (response != null) {
+            DebugLogger.log("Auth", "Authorization response:")
+            DebugLogger.log("Auth", "  - Authorization code: ${if (response.authorizationCode != null) "PRESENT" else "NULL"}")
+            DebugLogger.log("Auth", "  - Redirect URI: ${response.redirectUri}")
+            DebugLogger.log("Auth", "  - State: ${response.state}")
+            DebugLogger.log("Auth", "  - Additional parameters: ${response.additionalParameters}")
+        }
+        
+        if (exception != null) {
+            DebugLogger.log("Auth", "Authorization exception:")
+            DebugLogger.log("Auth", "  - Message: ${exception.message}")
+            DebugLogger.log("Auth", "  - Error: ${exception.error}")
+            DebugLogger.log("Auth", "  - Error URI: ${exception.errorUri}")
+            DebugLogger.log("Auth", "  - Error description: ${exception.errorDescription}")
+            DebugLogger.log("Auth", "  - Type: ${exception.type}")
+        }
+        
         Log.d(TAG, "handleSignInResult: hasResponse=${response != null} hasException=${exception != null}")
 
         when {
@@ -100,6 +124,7 @@ class InboxViewModel @Inject constructor(
                 viewModelScope.launch {
                     try {
                         Log.d(TAG, "Exchanging authorization code for tokens")
+                        DebugLogger.log("Auth", "Exchanging authorization code for tokens...")
                         val (accessToken, refreshToken) = authRepository.exchangeCodeForTokens(authService, response)
                         if (accessToken != null) {
                             DebugLogger.log("Auth", "Token exchange success — accessToken present, refreshToken=${refreshToken != null}")
@@ -117,6 +142,7 @@ class InboxViewModel @Inject constructor(
                         }
                     } catch (e: AuthorizationException) {
                         DebugLogger.logException("Auth", "Token exchange AuthorizationException", e)
+                        Log.e(TAG, "AuthorizationException during token exchange: error=${e.error}, message=${e.message}")
                         val msg = OAuthDiagnostics.friendlyMessage(e)
                         _uiState.value = InboxUiState.Error(msg, isAuthError = true)
                         voiceManager.speak(msg)
@@ -133,7 +159,8 @@ class InboxViewModel @Inject constructor(
             exception != null -> {
                 // Authorization endpoint returned an error (e.g. access_denied,
                 // user canceled, redirect mismatch).
-                DebugLogger.log("Auth", "Sign-in failed — no auth response: ${exception.message}")
+                DebugLogger.log("Auth", "Sign-in failed — authorization exception: ${exception.message}")
+                DebugLogger.log("Auth", "Exception error code: ${exception.error}")
                 val msg = OAuthDiagnostics.friendlyMessage(exception)
                 _uiState.value = InboxUiState.Error(msg, isAuthError = true)
                 voiceManager.speak(msg)
@@ -142,6 +169,7 @@ class InboxViewModel @Inject constructor(
             else -> {
                 // Neither a response nor an exception — should be extremely rare.
                 Log.e(TAG, "handleSignInResult: both response and exception are null; intent=$data")
+                DebugLogger.log("Auth", "Sign-in failed — neither response nor exception received")
                 val msg = "Sign-in failed: no response received from Google. Please try again."
                 _uiState.value = InboxUiState.Error(msg, isAuthError = true)
                 voiceManager.speak(msg)
