@@ -115,3 +115,6 @@ If you want to build locally for development, then run:
 
 ## CI
 GitHub Actions builds a debug APK on every push. See `.github/workflows/android.yml`.
+
+## Recent Fixes
+- Fixed compilation error in `InboxViewModel.kt` line 105: Changed `redirectUrl` to `redirectUri`
