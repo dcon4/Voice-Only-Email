@@ -73,7 +73,7 @@ class InboxViewModel @Inject constructor(
         val request = authRepository.buildAuthorizationRequest()
         DebugLogger.log("Auth", "Auth request launched — redirect: ${request.redirectUri}")
         DebugLogger.log("Auth", "Client ID: ${request.clientId}")
-        DebugLogger.log("Auth", "Scopes: ${request.scopes}")
+        DebugLogger.log("Auth", "Scopes: ${request.scope}")
         DebugLogger.log("Auth", "State: ${request.state}")
         return authService.getAuthorizationRequestIntent(request)
     }
@@ -102,7 +102,7 @@ class InboxViewModel @Inject constructor(
         if (response != null) {
             DebugLogger.log("Auth", "Authorization response:")
             DebugLogger.log("Auth", "  - Authorization code: ${if (response.authorizationCode != null) "PRESENT" else "NULL"}")
-            DebugLogger.log("Auth", "  - Redirect URI: ${response.redirectUri}")
+            DebugLogger.log("Auth", "  - Redirect URI: ${response.request?.redirectUrl}")
             DebugLogger.log("Auth", "  - State: ${response.state}")
             DebugLogger.log("Auth", "  - Additional parameters: ${response.additionalParameters}")
         }
