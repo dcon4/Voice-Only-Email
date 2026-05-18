@@ -102,7 +102,7 @@ class InboxViewModel @Inject constructor(
         if (response != null) {
             DebugLogger.log("Auth", "Authorization response:")
             DebugLogger.log("Auth", "  - Authorization code: ${if (response.authorizationCode != null) "PRESENT" else "NULL"}")
-            DebugLogger.log("Auth", "  - Redirect URI: ${response.request?.redirectUrl}")
+            DebugLogger.log("Auth", "  - Redirect URI: ${response.request?.redirectUri}")
             DebugLogger.log("Auth", "  - State: ${response.state}")
             DebugLogger.log("Auth", "  - Additional parameters: ${response.additionalParameters}")
         }
