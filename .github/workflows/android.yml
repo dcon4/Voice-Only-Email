@@ -27,7 +27,30 @@ jobs:
       - name: Make gradlew executable
         run: chmod +x ./gradlew
 
-      - name: Build Debug APK
+      - name: Decode and prepare debug keystore
+        if: ${{ secrets.DEBUG_KEYSTORE_BASE64 != '' }}
+        env:
+          DEBUG_KEYSTORE_BASE64: ${{ secrets.DEBUG_KEYSTORE_BASE64 }}
+        run: |
+          echo "$DEBUG_KEYSTORE_BASE64" | base64 --decode > ${{ runner.temp }}/debug.keystore
+          cat > local.properties << EOF
+          sdk.dir=$ANDROID_HOME
+          EOF
+
+      - name: Build Debug APK (with phone keystore if available)
+        if: ${{ secrets.DEBUG_KEYSTORE_BASE64 != '' }}
+        env:
+          DEBUG_KEYSTORE_PATH: ${{ runner.temp }}/debug.keystore
+        run: |
+          ./gradlew :app:assembleDebug \
+            -Pandroid.injected.signing.store.file=$DEBUG_KEYSTORE_PATH \
+            -Pandroid.injected.signing.store.password=android \
+            -Pandroid.injected.signing.key.alias=androiddebugkey \
+            -Pandroid.injected.signing.key.password=android \
+            --stacktrace
+
+      - name: Build Debug APK (default keystore if secret not set)
+        if: ${{ secrets.DEBUG_KEYSTORE_BASE64 == '' }}
         run: ./gradlew :app:assembleDebug --stacktrace
 
       - name: Verify debug APK certificate (SHA-1 for Google OAuth)
