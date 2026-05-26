@@ -13,6 +13,7 @@ sealed class VoiceCommand {
     object Previous : VoiceCommand()
     object Refresh : VoiceCommand()
     object Compose : VoiceCommand()
+    object Reply : VoiceCommand()
     object Repeat : VoiceCommand()
     object GoBack : VoiceCommand()
     object Send : VoiceCommand()
@@ -72,6 +73,8 @@ class VoiceCommandEngine @Inject constructor(
             lower.contains("new email") -> VoiceCommand.Compose
             lower.matches(Regex("(go back( one)?|previous|prior|last)")) -> VoiceCommand.Previous
             lower.matches(Regex("(read( next)?|hear( it)?)")) -> VoiceCommand.Read
+            // "reply" before "repeat" and "refresh" to avoid false matches
+            lower.contains("reply") -> VoiceCommand.Reply
             lower.contains("send") -> VoiceCommand.Send
             lower.contains("next") -> VoiceCommand.Next
             lower.contains("refresh") || lower.contains("reload") -> VoiceCommand.Refresh
