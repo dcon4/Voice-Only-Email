@@ -112,24 +112,20 @@ class InboxViewModel @Inject constructor(
 
         when {
             response != null -> {
-                // Authorization code received — exchange it for tokens.
                 viewModelScope.launch {
                     try {
                         Log.d(TAG, "Exchanging authorization code for tokens")
                         DebugLogger.log("Auth", "Exchanging authorization code for tokens...")
-                        // AuthorizationService is now owned by AuthRepository.
                         val (accessToken, refreshToken) = authRepository.exchangeCodeForTokens(response)
                         if (accessToken != null) {
                             DebugLogger.log("Auth", "Token exchange success — accessToken present, refreshToken=${refreshToken != null}")
                             Log.i(TAG, "Token exchange succeeded; saving tokens and loading inbox")
                             authRepository.saveTokens(accessToken, refreshToken)
-                            // Update sign-in state and load inbox directly — do NOT rely on the
-                            // DataStore Flow emitting again, which would cause a loop.
                             _isSignedIn.value = true
                             loadInbox()
                         } else {
                             DebugLogger.log("Auth", "Token exchange failed — null access token")
-                            Log.e(TAG, "Token exchange returned no access token (hasRefreshToken=${refreshToken != null})")
+                            Log.e(TAG, "Token exchange returned no access token")
                             val msg = "Sign-in failed: Google returned no access token. " +
                                 "Verify that the Gmail API is enabled and the OAuth scopes " +
                                 "are approved in Google Cloud Console."
@@ -153,19 +149,14 @@ class InboxViewModel @Inject constructor(
             }
 
             exception != null -> {
-                // Authorization endpoint returned an error (e.g. access_denied,
-                // user canceled, redirect mismatch).
                 DebugLogger.log("Auth", "Sign-in failed — authorization exception: ${exception.message}")
-                DebugLogger.log("Auth", "Exception error code: ${exception.error}")
                 val msg = OAuthDiagnostics.friendlyMessage(exception)
                 _uiState.value = InboxUiState.Error(msg, isAuthError = true)
                 voiceManager.speak(msg)
             }
 
             else -> {
-                // Neither a response nor an exception — should be extremely rare.
                 Log.e(TAG, "handleSignInResult: both response and exception are null; intent=$data")
-                DebugLogger.log("Auth", "Sign-in failed — neither response nor exception received")
                 val msg = "Sign-in failed: no response received from Google. Please try again."
                 _uiState.value = InboxUiState.Error(msg, isAuthError = true)
                 voiceManager.speak(msg)
@@ -182,8 +173,8 @@ class InboxViewModel @Inject constructor(
                 _uiState.value = InboxUiState.Success(emails)
                 if (emails.isNotEmpty()) {
                     val prompt = "You have ${emails.size} email${if (emails.size == 1) "" else "s"}. " +
-                        "Say 'read' to hear the first one, 'next' to move to the second email, " +
-                        "'previous' to go back, 'refresh' to reload, or 'compose' to write a new email."
+                        "Say 'read' to hear the first one, 'next' to move to the next email, " +
+                        "'previous' to go back, 'reply' to reply, 'refresh' to reload, or 'compose' to write a new email."
                     voiceCommandEngine.speakThenListen(prompt) { cmd -> handleCommand(cmd, emails) }
                 } else {
                     voiceCommandEngine.speakThenListen(
@@ -193,8 +184,8 @@ class InboxViewModel @Inject constructor(
             } catch (e: Exception) {
                 val msg = e.message ?: "Failed to load inbox"
                 // GmailRepository already attempted a silent token refresh on 401/403.
-                // If we still get an auth error here, the refresh token itself is invalid
-                // and the user must sign in again.
+                // If we still get an auth error here, the refresh token is invalid —
+                // send the user back to the sign-in screen.
                 val isAuthError = msg.contains("401", ignoreCase = true) ||
                     msg.contains("403", ignoreCase = true) ||
                     msg.contains("Not authenticated", ignoreCase = true) ||
@@ -224,11 +215,24 @@ class InboxViewModel @Inject constructor(
                 val email = emails.getOrNull(_currentEmailIndex.value)
                 if (email != null) {
                     val text = "Email ${_currentEmailIndex.value + 1} of ${emails.size}. " +
-                        "From ${email.from}. Subject: ${email.subject}. ${email.body.take(500)}"
+                        "From ${email.from}. Subject: ${email.subject}. ${email.body.take(500)}. " +
+                        "Say 'reply' to reply, 'next' for the next email, or 'repeat' to hear this again."
                     voiceCommandEngine.speakThenListen(text) { cmd -> handleCommand(cmd, emails) }
                 } else {
                     voiceCommandEngine.speakThenListen(
                         "No more emails. Say 'refresh' or 'compose'."
+                    ) { cmd -> handleCommand(cmd, emails) }
+                }
+            }
+            is VoiceCommand.Reply -> {
+                val email = emails.getOrNull(_currentEmailIndex.value)
+                if (email != null) {
+                    viewModelScope.launch {
+                        _navigationEvent.emit(InboxNavEvent.NavigateToCompose(replyTo = email.from))
+                    }
+                } else {
+                    voiceCommandEngine.speakThenListen(
+                        "No email selected to reply to. Say 'read' to hear the current email first."
                     ) { cmd -> handleCommand(cmd, emails) }
                 }
             }
@@ -238,7 +242,8 @@ class InboxViewModel @Inject constructor(
                 if (email != null) {
                     _currentEmailIndex.value = nextIndex
                     voiceCommandEngine.speakThenListen(
-                        "Email ${nextIndex + 1} of ${emails.size}. From ${email.from}: ${email.subject}. Say 'read' to hear the full message."
+                        "Email ${nextIndex + 1} of ${emails.size}. From ${email.from}: ${email.subject}. " +
+                            "Say 'read' to hear the full message, or 'reply' to reply."
                     ) { cmd -> handleCommand(cmd, emails) }
                 } else {
                     voiceCommandEngine.speakThenListen(
@@ -252,7 +257,8 @@ class InboxViewModel @Inject constructor(
                 if (email != null) {
                     _currentEmailIndex.value = prevIndex
                     voiceCommandEngine.speakThenListen(
-                        "Email ${prevIndex + 1} of ${emails.size}. From ${email.from}: ${email.subject}. Say 'read' to hear the full message."
+                        "Email ${prevIndex + 1} of ${emails.size}. From ${email.from}: ${email.subject}. " +
+                            "Say 'read' to hear the full message, or 'reply' to reply."
                     ) { cmd -> handleCommand(cmd, emails) }
                 } else {
                     voiceCommandEngine.speakThenListen(
@@ -274,12 +280,13 @@ class InboxViewModel @Inject constructor(
             }
             is VoiceCommand.Refresh -> loadInbox()
             is VoiceCommand.Compose -> {
-                viewModelScope.launch { _navigationEvent.emit(InboxNavEvent.NavigateToCompose) }
+                viewModelScope.launch {
+                    _navigationEvent.emit(InboxNavEvent.NavigateToCompose(replyTo = null))
+                }
             }
             else -> {
-                // Unrecognised — prompt again
                 voiceCommandEngine.speakThenListen(
-                    "Sorry, I didn't understand. Say 'read', 'next', 'previous', 'refresh', or 'compose'."
+                    "Sorry, I didn't understand. Say 'read', 'reply', 'next', 'previous', 'refresh', or 'compose'."
                 ) { cmd -> handleCommand(cmd, emails) }
             }
         }
@@ -290,7 +297,8 @@ class InboxViewModel @Inject constructor(
         val emails = currentEmails()
         val idx = emails.indexOf(email).takeIf { it >= 0 } ?: _currentEmailIndex.value
         _currentEmailIndex.value = idx
-        val text = "From ${email.from}. Subject: ${email.subject}. ${email.body.take(500)}"
+        val text = "From ${email.from}. Subject: ${email.subject}. ${email.body.take(500)}. " +
+            "Say 'reply' to reply."
         voiceCommandEngine.speakThenListen(text) { cmd -> handleCommand(cmd, emails) }
     }
 
@@ -305,11 +313,6 @@ class InboxViewModel @Inject constructor(
     /** Stops all audio — useful when navigating away from the inbox. */
     fun stopVoice() = voiceCommandEngine.stopAll()
 
-    /**
-     * Builds a share [Intent] for the debug log file.
-     * Returns null in release builds (where [DebugLogger.getLogFile] is always null)
-     * or when the log file does not yet exist.
-     */
     fun getShareLogIntent(): Intent? {
         val file = DebugLogger.getLogFile()?.takeIf { it.exists() } ?: return null
         val uri = FileProvider.getUriForFile(
@@ -336,5 +339,6 @@ sealed class InboxUiState {
 }
 
 sealed class InboxNavEvent {
-    object NavigateToCompose : InboxNavEvent()
+    /** Navigate to the compose screen. [replyTo] is pre-filled when replying. */
+    data class NavigateToCompose(val replyTo: String? = null) : InboxNavEvent()
 }
