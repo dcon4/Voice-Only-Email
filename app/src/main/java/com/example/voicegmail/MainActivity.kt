@@ -1,14 +1,18 @@
 package com.example.voicegmail
 
+import android.Manifest
 import android.content.Context
+import android.content.pm.PackageManager
 import android.os.Bundle
 import android.os.PowerManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.ui.Modifier
+import androidx.core.content.ContextCompat
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
@@ -27,9 +31,31 @@ class MainActivity : ComponentActivity() {
 
     private var wakeLock: PowerManager.WakeLock? = null
 
+    // Request the RECORD_AUDIO permission at startup. The app cannot function
+    // without it — speech recognition will silently fail or crash if it is missing.
+    private val micPermissionLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+            if (granted) {
+                DebugLogger.log("MainActivity", "RECORD_AUDIO permission granted")
+            } else {
+                DebugLogger.log("MainActivity", "RECORD_AUDIO permission DENIED — voice input will not work")
+                voiceManager.speak(
+                    "Microphone permission was denied. Voice commands will not work. " +
+                        "Please grant the microphone permission in your device settings."
+                )
+            }
+        }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         DebugLogger.log("MainActivity", "onCreate")
+
+        // Ask for microphone permission if we don't already have it.
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
+                != PackageManager.PERMISSION_GRANTED) {
+            micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+        }
+
         setContent {
             VoiceGmailTheme {
                 Surface(
@@ -63,6 +89,7 @@ class MainActivity : ComponentActivity() {
         // Keep the screen and CPU on while the app is active so the microphone
         // is never cut off during voice dictation.
         val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
+        @Suppress("DEPRECATION")
         wakeLock = pm.newWakeLock(
             PowerManager.SCREEN_DIM_WAKE_LOCK or PowerManager.ACQUIRE_CAUSES_WAKEUP,
             "VoiceGmail:ListeningWakeLock"
