@@ -41,7 +41,6 @@ class GmailRepository @Inject constructor(
                     Log.i(TAG, "Token refreshed — retrying request")
                     block("Bearer $newToken")
                 } else {
-                    // Refresh failed — propagate so ViewModel shows sign-in screen.
                     throw e
                 }
             } else {
@@ -66,6 +65,14 @@ class GmailRepository @Inject constructor(
             Base64.URL_SAFE or Base64.NO_WRAP
         )
         gmailApiService.sendMessage(auth, SendMessageRequest(raw = encoded))
+    }
+
+    /**
+     * Moves [messageId] to the user's Trash. The email disappears from the inbox
+     * immediately and can be recovered from Trash for 30 days.
+     */
+    suspend fun trashEmail(messageId: String) = withAutoRefresh { auth ->
+        gmailApiService.trashMessage(auth, messageId)
     }
 
     private fun buildMimeMessage(to: String, subject: String, body: String): String {
