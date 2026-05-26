@@ -14,6 +14,8 @@ sealed class VoiceCommand {
     object Refresh : VoiceCommand()
     object Compose : VoiceCommand()
     object Reply : VoiceCommand()
+    object Delete : VoiceCommand()
+    object Confirm : VoiceCommand()
     object Repeat : VoiceCommand()
     object GoBack : VoiceCommand()
     object Send : VoiceCommand()
@@ -68,13 +70,18 @@ class VoiceCommandEngine @Inject constructor(
     private fun parse(text: String): VoiceCommand {
         val lower = text.trim().lowercase()
         return when {
-            // Multi-word phrases checked before single-word substring matches
+            // Multi-word / longer phrases before single-word checks
             lower.contains("try again") || lower.contains("retry") -> VoiceCommand.TryAgain
             lower.contains("new email") -> VoiceCommand.Compose
             lower.matches(Regex("(go back( one)?|previous|prior|last)")) -> VoiceCommand.Previous
             lower.matches(Regex("(read( next)?|hear( it)?)")) -> VoiceCommand.Read
-            // "reply" before "repeat" and "refresh" to avoid false matches
+            // "reply" before "repeat"
             lower.contains("reply") -> VoiceCommand.Reply
+            // "delete" / "trash" / "remove" — checked before "repeat" and "refresh"
+            lower.contains("delete") || lower.contains("trash") ||
+                lower.contains("remove") || lower.contains("erase") -> VoiceCommand.Delete
+            // Confirmation for destructive actions
+            lower.matches(Regex("(yes|yeah|yep|confirm|sure|do it|ok|okay)")) -> VoiceCommand.Confirm
             lower.contains("send") -> VoiceCommand.Send
             lower.contains("next") -> VoiceCommand.Next
             lower.contains("refresh") || lower.contains("reload") -> VoiceCommand.Refresh
