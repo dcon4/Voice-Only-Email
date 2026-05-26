@@ -3,6 +3,7 @@ package com.example.voicegmail
 import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Bundle
 import android.os.PowerManager
 import androidx.activity.ComponentActivity
@@ -13,9 +14,11 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.ui.Modifier
 import androidx.core.content.ContextCompat
+import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import androidx.navigation.navArgument
 import com.example.voicegmail.debug.DebugLogger
 import com.example.voicegmail.ui.screens.ComposeEmailScreen
 import com.example.voicegmail.ui.screens.InboxScreen
@@ -69,12 +72,31 @@ class MainActivity : ComponentActivity() {
                     ) {
                         composable("inbox") {
                             InboxScreen(
-                                onCompose = { navController.navigate("compose") }
+                                onCompose = { replyTo ->
+                                    if (!replyTo.isNullOrBlank()) {
+                                        navController.navigate(
+                                            "compose?replyTo=${Uri.encode(replyTo)}"
+                                        )
+                                    } else {
+                                        navController.navigate("compose")
+                                    }
+                                }
                             )
                         }
-                        composable("compose") {
+                        composable(
+                            route = "compose?replyTo={replyTo}",
+                            arguments = listOf(
+                                navArgument("replyTo") {
+                                    type = NavType.StringType
+                                    nullable = true
+                                    defaultValue = null
+                                }
+                            )
+                        ) { backStackEntry ->
+                            val replyTo = backStackEntry.arguments?.getString("replyTo")
                             ComposeEmailScreen(
-                                onBack = { navController.popBackStack() }
+                                onBack = { navController.popBackStack() },
+                                replyTo = replyTo
                             )
                         }
                     }
