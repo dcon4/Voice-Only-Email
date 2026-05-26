@@ -26,7 +26,6 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import net.openid.appauth.AuthorizationException
 import net.openid.appauth.AuthorizationResponse
-import net.openid.appauth.AuthorizationService
 import javax.inject.Inject
 
 private const val TAG = "VoiceGmail.Auth"
@@ -53,8 +52,6 @@ class InboxViewModel @Inject constructor(
     private val _navigationEvent = MutableSharedFlow<InboxNavEvent>(extraBufferCapacity = 1)
     val navigationEvent: SharedFlow<InboxNavEvent> = _navigationEvent
 
-    private val authService = AuthorizationService(context)
-
     init {
         // Read the token state once on startup — do NOT collect() the full
         // Flow here, because saveTokens() emits a new value and would re-trigger
@@ -73,19 +70,14 @@ class InboxViewModel @Inject constructor(
 
     fun getSignInIntent(): Intent {
         DebugLogger.log("Auth", "Sign-in button pressed")
-        val request = authRepository.buildAuthorizationRequest()
-        DebugLogger.log("Auth", "Auth request launched — redirect: ${request.redirectUri}")
-        DebugLogger.log("Auth", "Client ID: ${request.clientId}")
-        DebugLogger.log("Auth", "Scopes: ${request.scope}")
-        DebugLogger.log("Auth", "State: ${request.state}")
-        return authService.getAuthorizationRequestIntent(request)
+        return authRepository.buildSignInIntent()
     }
 
     fun handleSignInResult(result: ActivityResult) {
         // result.data is null when the user cancels the Chrome Custom Tab (back
         // button) or when the OS kills the tab before a redirect is delivered.
         if (result.data == null) {
-            Log.w(TAG, "handleSignInResult: result.data is null (resultCode=${result.resultCode}); sign-in flow was interrupted or canceled")
+            Log.w(TAG, "handleSignInResult: result.data is null (resultCode=${result.resultCode})")
             DebugLogger.log("Auth", "Sign-in flow interrupted — result.data is null (resultCode=${result.resultCode})")
             val msg = "Sign-in was canceled. Tap 'Sign in with Google' to try again."
             _uiState.value = InboxUiState.Error(msg, isAuthError = true)
@@ -125,7 +117,8 @@ class InboxViewModel @Inject constructor(
                     try {
                         Log.d(TAG, "Exchanging authorization code for tokens")
                         DebugLogger.log("Auth", "Exchanging authorization code for tokens...")
-                        val (accessToken, refreshToken) = authRepository.exchangeCodeForTokens(authService, response)
+                        // AuthorizationService is now owned by AuthRepository.
+                        val (accessToken, refreshToken) = authRepository.exchangeCodeForTokens(response)
                         if (accessToken != null) {
                             DebugLogger.log("Auth", "Token exchange success — accessToken present, refreshToken=${refreshToken != null}")
                             Log.i(TAG, "Token exchange succeeded; saving tokens and loading inbox")
@@ -199,9 +192,9 @@ class InboxViewModel @Inject constructor(
                 }
             } catch (e: Exception) {
                 val msg = e.message ?: "Failed to load inbox"
-                // If the error looks like an auth failure (401/403 or "Not authenticated"),
-                // clear tokens and return to the sign-in screen so the user can sign in again
-                // rather than being stuck in a crash loop.
+                // GmailRepository already attempted a silent token refresh on 401/403.
+                // If we still get an auth error here, the refresh token itself is invalid
+                // and the user must sign in again.
                 val isAuthError = msg.contains("401", ignoreCase = true) ||
                     msg.contains("403", ignoreCase = true) ||
                     msg.contains("Not authenticated", ignoreCase = true) ||
@@ -333,11 +326,6 @@ class InboxViewModel @Inject constructor(
 
     private fun currentEmails(): List<EmailItem> =
         (_uiState.value as? InboxUiState.Success)?.emails ?: emptyList()
-
-    override fun onCleared() {
-        super.onCleared()
-        authService.dispose()
-    }
 }
 
 sealed class InboxUiState {
