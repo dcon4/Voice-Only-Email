@@ -29,7 +29,7 @@ import com.example.voicegmail.ui.viewmodel.InboxViewModel
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun InboxScreen(
-    onCompose: () -> Unit,
+    onCompose: (replyTo: String?) -> Unit,
     viewModel: InboxViewModel = hiltViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsState()
@@ -42,11 +42,11 @@ fun InboxScreen(
         viewModel.handleSignInResult(result)
     }
 
-    // Observe one-shot navigation events from voice commands (e.g. "compose")
+    // Observe one-shot navigation events from voice commands
     LaunchedEffect(Unit) {
         viewModel.navigationEvent.collect { event ->
             when (event) {
-                is InboxNavEvent.NavigateToCompose -> onCompose()
+                is InboxNavEvent.NavigateToCompose -> onCompose(event.replyTo)
             }
         }
     }
@@ -96,7 +96,7 @@ fun InboxScreen(
         floatingActionButton = {
             if (isSignedIn) {
                 FloatingActionButton(
-                    onClick = onCompose,
+                    onClick = { onCompose(null) },
                     modifier = Modifier.semantics {
                         contentDescription = "Compose new email"
                     }
@@ -157,7 +157,7 @@ fun InboxScreen(
                             text = state.message,
                             color = MaterialTheme.colorScheme.error,
                             modifier = Modifier.semantics {
-                                contentDescription = "Sign-in error: ${state.message}"
+                                contentDescription = "Error: ${state.message}"
                             }
                         )
                         Spacer(Modifier.height(12.dp))
