@@ -45,15 +45,36 @@ class ComposeViewModel @Inject constructor(
     // ------------------------------------------------------------------
 
     /**
-     * Starts the hands-free guided compose flow. Called once when the screen
-     * is entered by a blind user. Steps:
-     * 1. Capture recipient ("To")
-     * 2. Capture subject
-     * 3. Capture body
-     * 4. Ask "send or cancel"
+     * Pre-fills the recipient for a reply and marks it so the guided flow
+     * skips asking "Who would you like to send to?". Call this before
+     * [startGuidedVoiceFlow].
+     */
+    fun initReplyTo(address: String) {
+        _to.value = address
+    }
+
+    /**
+     * Starts the hands-free guided compose flow.
+     *
+     * If [_to] is already set (reply mode), skips the "To" step and opens
+     * with "Replying to {address}. What is the subject?"
+     *
+     * For a fresh compose, the flow goes:
+     *   1. Capture recipient ("To")
+     *   2. Capture subject
+     *   3. Capture body
+     *   4. Confirm and send
      */
     fun startGuidedVoiceFlow() {
-        askForTo()
+        val existingTo = _to.value
+        if (existingTo.isNotBlank()) {
+            // Reply mode — recipient is pre-filled; jump straight to subject.
+            voiceCommandEngine.speakThenListen(
+                "Replying to $existingTo. What is the subject of your reply?"
+            ) { cmd -> handleSubjectResult(cmd) }
+        } else {
+            askForTo()
+        }
     }
 
     private fun askForTo() {
@@ -71,8 +92,6 @@ class ComposeViewModel @Inject constructor(
                 askForSubject()
             }
             else -> {
-                // The raw recognized text may still be a valid email address even
-                // if it matched a command keyword — use it directly.
                 val raw = voiceManager.recognizedText.value ?: ""
                 if (raw.isNotBlank()) {
                     _to.value = raw
