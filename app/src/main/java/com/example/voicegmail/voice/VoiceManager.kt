@@ -5,6 +5,8 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
@@ -26,8 +28,14 @@ class VoiceManager @Inject constructor(
     private val tag = "VoiceManager"
     private val utteranceId = "vm_utterance"
 
+    // All SpeechRecognizer interactions MUST happen on the main thread.
+    private val mainHandler = Handler(Looper.getMainLooper())
+
     private var tts: TextToSpeech? = null
     private var ttsReady = false
+
+    // SpeechRecognizer is created once and reused to avoid recreation cost.
+    // It must only be touched from the main thread.
     private var speechRecognizer: SpeechRecognizer? = null
 
     private val _recognizedText = MutableStateFlow<String?>(null)
@@ -37,7 +45,9 @@ class VoiceManager @Inject constructor(
     val isListening: StateFlow<Boolean> = _isListening
 
     init {
-        initTts()
+        // TTS can be initialised from any thread; the callback also arrives on
+        // the main thread in practice, but we post back to be safe.
+        mainHandler.post { initTts() }
     }
 
     private fun initTts() {
@@ -52,39 +62,55 @@ class VoiceManager @Inject constructor(
     }
 
     fun speak(text: String) {
-        if (ttsReady) {
-            tts?.setOnUtteranceProgressListener(null)
-            tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, utteranceId)
+        mainHandler.post {
+            if (ttsReady) {
+                tts?.setOnUtteranceProgressListener(null)
+                tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, utteranceId)
+            }
         }
     }
 
     /**
-     * Speaks [prompt] via TTS, then automatically starts listening once speech completes.
-     * The recognized text is delivered to [onResult]. This serializes speech and listening so
-     * they never overlap.
+     * Speaks [prompt] via TTS, then automatically starts listening once speech
+     * completes. The recognised text is delivered to [onResult].
+     *
+     * Both TTS and SpeechRecognizer are driven on the main thread so Android
+     * does not throw a "SpeechRecognizer must be created on the main thread"
+     * exception.
      */
     fun speakAndThenListen(prompt: String, onResult: (String) -> Unit) {
-        if (!ttsReady) {
-            Log.w(tag, "TTS not ready; falling back to immediate listen")
-            startListening(onResult)
-            return
+        mainHandler.post {
+            if (!ttsReady) {
+                Log.w(tag, "TTS not ready; falling back to immediate listen")
+                startListeningOnMainThread(onResult)
+                return@post
+            }
+            tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
+                override fun onStart(utteranceId: String?) {}
+                override fun onDone(utteranceId: String?) {
+                    tts?.setOnUtteranceProgressListener(null)
+                    // The UtteranceProgressListener callback can arrive on a
+                    // background thread — post to main to keep SpeechRecognizer happy.
+                    mainHandler.post { startListeningOnMainThread(onResult) }
+                }
+                @Deprecated("Deprecated in API 21")
+                override fun onError(utteranceId: String?) {
+                    tts?.setOnUtteranceProgressListener(null)
+                    mainHandler.post { startListeningOnMainThread(onResult) }
+                }
+            })
+            tts?.speak(prompt, TextToSpeech.QUEUE_FLUSH, null, utteranceId)
         }
-        tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
-            override fun onStart(utteranceId: String?) {}
-            override fun onDone(utteranceId: String?) {
-                tts?.setOnUtteranceProgressListener(null)
-                startListening(onResult)
-            }
-            @Deprecated("Deprecated in API 21", ReplaceWith("onError(utteranceId, errorCode)"))
-            override fun onError(utteranceId: String?) {
-                tts?.setOnUtteranceProgressListener(null)
-                startListening(onResult)
-            }
-        })
-        tts?.speak(prompt, TextToSpeech.QUEUE_FLUSH, null, utteranceId)
     }
 
     fun startListening(onResult: (String) -> Unit) {
+        mainHandler.post { startListeningOnMainThread(onResult) }
+    }
+
+    /**
+     * Internal helper — MUST be called from the main thread.
+     */
+    private fun startListeningOnMainThread(onResult: (String) -> Unit) {
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO)
                 != PackageManager.PERMISSION_GRANTED) {
             Log.w(tag, "RECORD_AUDIO permission not granted; cannot start listening")
@@ -94,6 +120,9 @@ class VoiceManager @Inject constructor(
             Log.w(tag, "Speech recognition not available")
             return
         }
+
+        // Recreate recogniser each time — reusing a stopped recogniser causes
+        // ERROR_RECOGNIZER_BUSY on some devices.
         speechRecognizer?.destroy()
         speechRecognizer = SpeechRecognizer.createSpeechRecognizer(context).apply {
             setRecognitionListener(object : RecognitionListener {
@@ -119,6 +148,7 @@ class VoiceManager @Inject constructor(
                 override fun onRmsChanged(rmsdB: Float) {}
             })
         }
+
         val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
             putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.US.toString())
@@ -128,20 +158,27 @@ class VoiceManager @Inject constructor(
     }
 
     fun stopListening() {
-        speechRecognizer?.stopListening()
-        _isListening.value = false
+        mainHandler.post {
+            speechRecognizer?.stopListening()
+            _isListening.value = false
+        }
     }
 
     /** Stops both TTS and speech recognition immediately. */
     fun stopAll() {
-        tts?.stop()
-        speechRecognizer?.stopListening()
-        _isListening.value = false
+        mainHandler.post {
+            tts?.stop()
+            speechRecognizer?.stopListening()
+            _isListening.value = false
+        }
     }
 
     fun shutdown() {
-        tts?.stop()
-        tts?.shutdown()
-        speechRecognizer?.destroy()
+        mainHandler.post {
+            tts?.stop()
+            tts?.shutdown()
+            speechRecognizer?.destroy()
+            speechRecognizer = null
+        }
     }
 }
