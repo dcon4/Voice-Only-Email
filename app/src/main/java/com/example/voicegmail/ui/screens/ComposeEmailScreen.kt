@@ -26,9 +26,9 @@ import com.example.voicegmail.ui.viewmodel.SendState
 @Composable
 fun ComposeEmailScreen(
     onBack: () -> Unit,
+    replyTo: String? = null,
     viewModel: ComposeViewModel = hiltViewModel()
 ) {
-    // Bind UI text to ViewModel state so both voice and manual entry stay in sync
     val to by viewModel.to.collectAsState()
     val subject by viewModel.subject.collectAsState()
     val body by viewModel.body.collectAsState()
@@ -48,8 +48,8 @@ fun ComposeEmailScreen(
         onDispose { viewModel.stopAll() }
     }
 
-    // Start the guided voice flow as soon as the screen is entered (permission check first)
-    var permissionChecked by remember { mutableStateOf(false) }
+    // Pre-fill recipient if replying, then start the guided flow
+    var flowStarted by remember { mutableStateOf(false) }
     val micPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { isGranted ->
@@ -57,8 +57,12 @@ fun ComposeEmailScreen(
     }
 
     LaunchedEffect(Unit) {
-        if (!permissionChecked) {
-            permissionChecked = true
+        if (!flowStarted) {
+            flowStarted = true
+            // Pre-fill the To field for replies before starting the guided flow.
+            if (!replyTo.isNullOrBlank()) {
+                viewModel.initReplyTo(replyTo)
+            }
             if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO)
                     == PackageManager.PERMISSION_GRANTED) {
                 viewModel.startGuidedVoiceFlow()
@@ -68,9 +72,7 @@ fun ComposeEmailScreen(
         }
     }
 
-    // Tracks which field is waiting for RECORD_AUDIO permission for manual mic buttons
     var pendingPermissionField by remember { mutableStateOf<String?>(null) }
-
     val manualMicPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { isGranted ->
@@ -95,12 +97,14 @@ fun ComposeEmailScreen(
         }
     }
 
+    val screenTitle = if (!replyTo.isNullOrBlank()) "Reply" else "Compose"
+
     Scaffold(
         topBar = {
             TopAppBar(
                 title = {
                     Text(
-                        "Compose",
+                        screenTitle,
                         modifier = Modifier.semantics { heading() }
                     )
                 },
