@@ -22,6 +22,7 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import net.openid.appauth.AuthorizationException
 import net.openid.appauth.AuthorizationResponse
@@ -55,15 +56,17 @@ class InboxViewModel @Inject constructor(
     private val authService = AuthorizationService(context)
 
     init {
+        // Read the token state once on startup — do NOT collect() the full
+        // Flow here, because saveTokens() emits a new value and would re-trigger
+        // loadInbox() in an infinite loop.
         viewModelScope.launch {
-            authRepository.hasAccessToken().collect { hasToken ->
-                _isSignedIn.value = hasToken
-                if (hasToken) {
-                    loadInbox()
-                } else {
-                    _uiState.value = InboxUiState.SignedOut
-                    voiceManager.speak("Please sign in to access your Gmail inbox.")
-                }
+            val hasToken = authRepository.hasAccessToken().first()
+            _isSignedIn.value = hasToken
+            if (hasToken) {
+                loadInbox()
+            } else {
+                _uiState.value = InboxUiState.SignedOut
+                voiceManager.speak("Please sign in to access your Gmail inbox.")
             }
         }
     }
@@ -81,8 +84,6 @@ class InboxViewModel @Inject constructor(
     fun handleSignInResult(result: ActivityResult) {
         // result.data is null when the user cancels the Chrome Custom Tab (back
         // button) or when the OS kills the tab before a redirect is delivered.
-        // Previously this returned silently, leaving the UI in SignedOut state
-        // without any explanation.
         if (result.data == null) {
             Log.w(TAG, "handleSignInResult: result.data is null (resultCode=${result.resultCode}); sign-in flow was interrupted or canceled")
             DebugLogger.log("Auth", "Sign-in flow interrupted — result.data is null (resultCode=${result.resultCode})")
@@ -95,10 +96,9 @@ class InboxViewModel @Inject constructor(
         val data = result.data!!
         val response = AuthorizationResponse.fromIntent(data)
         val exception = AuthorizationException.fromIntent(data)
-        
-        // Log comprehensive redirect details
+
         DebugLogger.log("Auth", "Redirect received — hasResponse=${response != null}, hasException=${exception != null}")
-        
+
         if (response != null) {
             DebugLogger.log("Auth", "Authorization response:")
             DebugLogger.log("Auth", "  - Authorization code: ${if (response.authorizationCode != null) "PRESENT" else "NULL"}")
@@ -106,7 +106,7 @@ class InboxViewModel @Inject constructor(
             DebugLogger.log("Auth", "  - State: ${response.state}")
             DebugLogger.log("Auth", "  - Additional parameters: ${response.additionalParameters}")
         }
-        
+
         if (exception != null) {
             DebugLogger.log("Auth", "Authorization exception:")
             DebugLogger.log("Auth", "  - Message: ${exception.message}")
@@ -115,7 +115,7 @@ class InboxViewModel @Inject constructor(
             DebugLogger.log("Auth", "  - Error description: ${exception.errorDescription}")
             DebugLogger.log("Auth", "  - Type: ${exception.type}")
         }
-        
+
         Log.d(TAG, "handleSignInResult: hasResponse=${response != null} hasException=${exception != null}")
 
         when {
@@ -130,6 +130,9 @@ class InboxViewModel @Inject constructor(
                             DebugLogger.log("Auth", "Token exchange success — accessToken present, refreshToken=${refreshToken != null}")
                             Log.i(TAG, "Token exchange succeeded; saving tokens and loading inbox")
                             authRepository.saveTokens(accessToken, refreshToken)
+                            // Update sign-in state and load inbox directly — do NOT rely on the
+                            // DataStore Flow emitting again, which would cause a loop.
+                            _isSignedIn.value = true
                             loadInbox()
                         } else {
                             DebugLogger.log("Auth", "Token exchange failed — null access token")
@@ -196,8 +199,23 @@ class InboxViewModel @Inject constructor(
                 }
             } catch (e: Exception) {
                 val msg = e.message ?: "Failed to load inbox"
-                _uiState.value = InboxUiState.Error(msg)
-                voiceManager.speak("Error loading inbox. $msg")
+                // If the error looks like an auth failure (401/403 or "Not authenticated"),
+                // clear tokens and return to the sign-in screen so the user can sign in again
+                // rather than being stuck in a crash loop.
+                val isAuthError = msg.contains("401", ignoreCase = true) ||
+                    msg.contains("403", ignoreCase = true) ||
+                    msg.contains("Not authenticated", ignoreCase = true) ||
+                    msg.contains("Unauthorized", ignoreCase = true)
+                if (isAuthError) {
+                    authRepository.clearTokens()
+                    _isSignedIn.value = false
+                    val authMsg = "Your session has expired. Please sign in again."
+                    _uiState.value = InboxUiState.Error(authMsg, isAuthError = true)
+                    voiceManager.speak(authMsg)
+                } else {
+                    _uiState.value = InboxUiState.Error(msg)
+                    voiceManager.speak("Error loading inbox. $msg")
+                }
             }
         }
     }
@@ -286,6 +304,7 @@ class InboxViewModel @Inject constructor(
     fun signOut() {
         viewModelScope.launch {
             authRepository.clearTokens()
+            _isSignedIn.value = false
             _uiState.value = InboxUiState.SignedOut
         }
     }
