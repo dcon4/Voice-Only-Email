@@ -28,4 +28,11 @@ interface GmailApiService {
         @Header("Authorization") auth: String,
         @Body message: SendMessageRequest
     ): GmailMessage
+
+    /** Moves the message to the user's Trash. Google's API requires no request body. */
+    @POST("gmail/v1/users/me/messages/{id}/trash")
+    suspend fun trashMessage(
+        @Header("Authorization") auth: String,
+        @Path("id") id: String
+    ): GmailMessage
 }
