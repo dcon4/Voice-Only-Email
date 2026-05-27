@@ -35,14 +35,24 @@ jobs:
       - name: List APK outputs
         run: ls -R app/build/outputs/apk
 
-      - name: Print debug APK signing certificate SHA-1 and SHA-256
+      - name: Print release keystore SHA-1 and SHA-256 (for Google Console)
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
         run: |
-          keytool -printcert -jarfile app/build/outputs/apk/debug/app-debug.apk 2>/dev/null \
-            | grep -E "SHA1|SHA256" \
-            || echo "keytool -printcert not supported; trying apksigner:"
-          $ANDROID_HOME/build-tools/$(ls $ANDROID_HOME/build-tools | sort -V | tail -1)/apksigner verify \
-            --print-certs app/build/outputs/apk/debug/app-debug.apk 2>/dev/null \
-            | grep -E "certificate.*digest" || true
+          if [ -z "${ANDROID_KEYSTORE_BASE64:-}" ]; then
+            echo "ANDROID_KEYSTORE_BASE64 secret not set — skipping."
+          else
+            echo "$ANDROID_KEYSTORE_BASE64" | base64 --decode > /tmp/release.keystore.jks
+            echo "=== RELEASE KEYSTORE FINGERPRINTS (use these in Google Console) ==="
+            keytool -list -v \
+              -keystore /tmp/release.keystore.jks \
+              -storepass "${ANDROID_KEYSTORE_PASSWORD}" \
+              -alias "${ANDROID_KEY_ALIAS}" \
+              | grep -E "SHA1|SHA256|Owner|Issuer|Valid"
+            rm -f /tmp/release.keystore.jks
+          fi
 
       - name: Upload Debug APK
         uses: actions/upload-artifact@v4
