@@ -305,8 +305,27 @@ class InboxViewModel @Inject constructor(
                 voiceCommandEngine.speakThenListen(
                     "Commands: reed, next, previous, repeat, reply, forward, delete, compose, " +
                         "search, refresh, reed unread, mark as read, list attachments, " +
-                        "voice settings, instructions. Say a command."
+                        "read slower, read faster, voice settings, instructions. Say a command."
                 ) { cmd -> handleCommand(cmd, emails) }
+            is VoiceCommand.ReadSlower -> {
+                voiceManager.adjustEmailReadRate(-0.05f)
+                val pct = voiceManager.getEmailReadRatePct()
+                voiceCommandEngine.speakThenListen(
+                    "Email reading speed reduced to $pct percent."
+                ) { cmd -> handleCommand(cmd, emails) }
+            }
+            is VoiceCommand.ReadFaster -> {
+                voiceManager.adjustEmailReadRate(+0.05f)
+                val pct = voiceManager.getEmailReadRatePct()
+                voiceCommandEngine.speakThenListen(
+                    "Email reading speed increased to $pct percent."
+                ) { cmd -> handleCommand(cmd, emails) }
+            }
+            is VoiceCommand.SessionTimeout -> {
+                // Mic has timed out after repeated no-speech cycles.
+                // Go silent and wait for the next power-button wake event.
+                voiceManager.speak("Going to sleep. Press the power button to wake me.")
+            }
             is VoiceCommand.VoiceSettings -> handleVoiceSettings(emails)
             is VoiceCommand.Instructions  -> handleInstructions(emails)
             else ->
@@ -317,7 +336,7 @@ class InboxViewModel @Inject constructor(
     }
 
     // ------------------------------------------------------------------
-    // Reading
+    // Reading — uses speakEmailThenListen so speed follows user preference
     // ------------------------------------------------------------------
 
     private fun readCurrentEmail(emails: List<EmailItem>) {
@@ -334,7 +353,7 @@ class InboxViewModel @Inject constructor(
             else -> "This email has ${email.attachments.size} attachments. Say 'list attachments' to hear them. "
         }
         val readAttachHint = if (email.attachments.isNotEmpty()) "'read attachment one' to read the first, " else ""
-        voiceCommandEngine.speakThenListen(
+        voiceCommandEngine.speakEmailThenListen(
             "${unreadPrefix}Email ${_currentEmailIndex.value + 1} of ${emails.size}. " +
                 "From ${email.from}. Subject: ${email.subject}. ${email.body.take(500)}. " +
                 attachNote + "Say 'reply', 'forward', 'delete', ${readAttachHint}'next', or 'repeat'."
@@ -346,6 +365,7 @@ class InboxViewModel @Inject constructor(
         val email  = emails.getOrNull(newIdx)
         if (email != null) {
             _currentEmailIndex.value = newIdx
+            // Subject/from preview is a brief navigation prompt — normal rate.
             voiceCommandEngine.speakThenListen(
                 "Email ${newIdx + 1} of ${emails.size}. From ${email.from}: ${email.subject}. " +
                     "Say 'reed' to hear the full message, 'reply', 'delete', or '${if (delta > 0) "next" else "previous"}'."
@@ -361,7 +381,7 @@ class InboxViewModel @Inject constructor(
     private fun repeatCurrentEmail(emails: List<EmailItem>) {
         val email = emails.getOrNull(_currentEmailIndex.value)
         if (email != null)
-            voiceCommandEngine.speakThenListen(
+            voiceCommandEngine.speakEmailThenListen(
                 "Repeating email ${_currentEmailIndex.value + 1}. From ${email.from}. " +
                     "Subject: ${email.subject}. ${email.body.take(500)}"
             ) { cmd -> handleCommand(cmd, emails) }
@@ -381,7 +401,7 @@ class InboxViewModel @Inject constructor(
         val idx = emails.indexOf(unread.first()).coerceAtLeast(0)
         _currentEmailIndex.value = idx
         val email = unread.first()
-        voiceCommandEngine.speakThenListen(
+        voiceCommandEngine.speakEmailThenListen(
             "You have ${unread.size} unread email${if (unread.size == 1) "" else "s"}. " +
                 "First unread: From ${email.from}. Subject: ${email.subject}. " +
                 "Say 'reed' to hear it in full, or 'next' for the next email."
@@ -392,14 +412,14 @@ class InboxViewModel @Inject constructor(
         val emails = currentEmails()
         val idx = emails.indexOf(email).takeIf { it >= 0 } ?: _currentEmailIndex.value
         _currentEmailIndex.value = idx
-        voiceCommandEngine.speakThenListen(
+        voiceCommandEngine.speakEmailThenListen(
             "From ${email.from}. Subject: ${email.subject}. ${email.body.take(500)}. " +
                 "Say 'reply', 'delete', 'next', or 'repeat'."
         ) { cmd -> handleCommand(cmd, emails) }
     }
 
     // ------------------------------------------------------------------
-    // Attachments
+    // Attachments — content read at email rate
     // ------------------------------------------------------------------
 
     private fun listAttachments(emails: List<EmailItem>) {
@@ -429,7 +449,8 @@ class InboxViewModel @Inject constructor(
             voiceManager.speak("Reading ${attachment.filename}. Please wait.")
             try {
                 val text = attachmentReader.readAttachment(email.id, attachment)
-                voiceCommandEngine.speakThenListen(text) { cmd -> handleCommand(cmd, emails) }
+                // Attachment content read at email rate.
+                voiceCommandEngine.speakEmailThenListen(text) { cmd -> handleCommand(cmd, emails) }
             } catch (e: Exception) {
                 voiceCommandEngine.speakThenListen(
                     "Could not read attachment. ${e.message ?: "Unknown error."}"
@@ -628,18 +649,6 @@ class InboxViewModel @Inject constructor(
     // Voice settings — linear single-pass voice chooser
     // ------------------------------------------------------------------
 
-    /**
-     * Starts the voice chooser. Filters to English US voices only and
-     * begins a single linear pass: each voice plays its own sample, then
-     * the mic opens for one response.
-     *
-     *   "keep it" / "yes" / similar → save that voice and exit.
-     *   "cancel" / "stop" / "go back" / similar → restore original and exit.
-     *   Anything else (silence, "next", unrecognised) → advance automatically.
-     *
-     * After all voices have been presented once the chooser exits on its own.
-     * There is no looping.
-     */
     private fun handleVoiceSettings(emails: List<EmailItem>) {
         val voices = voiceManager.getAvailableVoices().filter { voice ->
             voice.locale.language == Locale.US.language &&
@@ -663,21 +672,12 @@ class InboxViewModel @Inject constructor(
         ) { _ -> browseVoice(voices, 0, originalVoiceName, emails) }
     }
 
-    /**
-     * Presents voice at [index] in its own voice, then listens once.
-     *
-     * Advances to [index]+1 on any non-keep, non-cancel response (including
-     * silence). Exits cleanly when [index] reaches the end of the list.
-     * This guarantees the loop is always finite — exactly one pass through
-     * all voices.
-     */
     private fun browseVoice(
         voices: List<Voice>,
         index: Int,
         originalVoiceName: String?,
         emails: List<EmailItem>
     ) {
-        // All voices presented — exit without saving.
         if (index >= voices.size) {
             restoreOriginalVoice(originalVoiceName)
             voiceCommandEngine.speakThenListen(
@@ -685,11 +685,9 @@ class InboxViewModel @Inject constructor(
             ) { c -> handleCommand(c, emails) }
             return
         }
-
         val voice  = voices[index]
         val total  = voices.size
         val sample = "Hello. This is English U.S.A. voice ${index + 1} of $total. What do you think?"
-
         voiceCommandEngine.speakWithVoiceAndListen(sample, voice) { cmd ->
             val raw = ((cmd as? VoiceCommand.FreeText)?.text ?: "").lowercase()
             when {
@@ -705,10 +703,7 @@ class InboxViewModel @Inject constructor(
                         "Voice unchanged."
                     ) { c -> handleCommand(c, emails) }
                 }
-                else -> {
-                    // Silence, "next", unrecognised — advance to next voice.
-                    browseVoice(voices, index + 1, originalVoiceName, emails)
-                }
+                else -> browseVoice(voices, index + 1, originalVoiceName, emails)
             }
         }
     }
@@ -818,15 +813,16 @@ class InboxViewModel @Inject constructor(
                 "Say 'list attachments' to hear what files are attached. " +
                 "Say 'reed attachment one' to have the first attachment read aloud. " +
                 "P D F, Word, and plain text files are supported. Say 'next' to continue.",
-            "Section 7 of 8: Voice settings. " +
-                "Say 'voice settings' to browse English U.S. voices by voice command. " +
-                "Each voice introduces itself in its own voice. " +
-                "Say 'keep it' to save, or 'cancel' to exit. " +
-                "Silence moves to the next voice automatically. Say 'next' to continue.",
-            "Section 8 of 8: Wake from lock screen. " +
+            "Section 7 of 8: Voice and speed settings. " +
+                "Say 'voice settings' to browse English U.S. voices. " +
+                "Say 'read slower' or 'slow down' to decrease email reading speed by 5 percent. " +
+                "Say 'read faster' or 'speed up' to increase it. " +
+                "Speed changes apply only to email and attachment reading, not to app prompts. Say 'next' to continue.",
+            "Section 8 of 8: Wake from lock screen and sleep. " +
                 "Press the power button to wake your device. " +
                 "VoiceGmail appears on screen and says: VoiceGmail ready, say a command. " +
-                "You do not need to unlock your phone. " +
+                "If you do not respond, the app will go to sleep after 5 unanswered mic openings. " +
+                "Press the power button again to wake it. " +
                 "That is the end of the instructions. " +
                 "Say 'previous', 'repeat', or any command to return to your inbox."
         )
