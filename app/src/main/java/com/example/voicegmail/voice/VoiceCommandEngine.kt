@@ -22,19 +22,20 @@ sealed class VoiceCommand {
     object ReadAllUnread : VoiceCommand()
     object Help : VoiceCommand()
     object ListAttachments : VoiceCommand()
-    /** Read aloud the attachment at zero-based [index]. Defaults to the first. */
-    data class ReadAttachment(val index: Int = 0) : VoiceCommand()
-    /** User wants to attach a file to the outgoing email they are composing. */
+    /** Read aloud the attachment at 1-based [index] (parser fills this). */
+    data class ReadAttachment(val index: Int = 1) : VoiceCommand()
     object AttachFile : VoiceCommand()
-    /** Read back the composed To, Subject, body, and attachments before sending. */
     object ReadBack : VoiceCommand()
-    /** Remove a staged attachment at zero-based [index] before sending. */
-    data class RemoveAttachment(val index: Int = 0) : VoiceCommand()
+    data class RemoveAttachment(val index: Int = 1) : VoiceCommand()
     object Repeat : VoiceCommand()
     object GoBack : VoiceCommand()
     object Send : VoiceCommand()
     object TryAgain : VoiceCommand()
     object Cancel : VoiceCommand()
+    /** Open the voice/TTS settings dialog. */
+    object VoiceSettings : VoiceCommand()
+    /** Play the multi-section spoken user guide. */
+    object Instructions : VoiceCommand()
     /** Raw text that was recognised but did not match a navigation command. */
     data class FreeText(val text: String) : VoiceCommand()
 }
@@ -51,10 +52,6 @@ class VoiceCommandEngine @Inject constructor(
     private val _lastCommand = MutableStateFlow<VoiceCommand>(VoiceCommand.None)
     val lastCommand: StateFlow<VoiceCommand> = _lastCommand
 
-    /**
-     * Speak [prompt] and then open the microphone. The recognised text is
-     * parsed into a [VoiceCommand]; [onCommand] is called with the result.
-     */
     fun speakThenListen(prompt: String, onCommand: (VoiceCommand) -> Unit) {
         voiceManager.speakAndThenListen(prompt) { recognizedText ->
             val cmd = parse(recognizedText)
@@ -63,10 +60,6 @@ class VoiceCommandEngine @Inject constructor(
         }
     }
 
-    /**
-     * Start listening immediately (no TTS preamble). Useful for re-arming
-     * the microphone after handling a command.
-     */
     fun listen(onCommand: (VoiceCommand) -> Unit) {
         voiceManager.startListening { recognizedText ->
             val cmd = parse(recognizedText)
@@ -78,83 +71,118 @@ class VoiceCommandEngine @Inject constructor(
     fun stopAll() = voiceManager.stopAll()
 
     // ------------------------------------------------------------------
-    // Command parsing
+    // Command parsing — longer/more-specific phrases are checked first
+    // to avoid substring collisions with shorter patterns.
     // ------------------------------------------------------------------
 
     private fun parse(text: String): VoiceCommand {
         val lower = text.trim().lowercase()
         return when {
-            // Multi-word / longer phrases before single-word checks
+            // ---- Instructions / guide (before "help" to capture "full help") -----
+            lower.contains("instructions") || lower.contains("user guide") ||
+                lower.contains("help guide") || lower.contains("full guide") ||
+                lower.contains("tutorial") || lower.contains("guide me") -> VoiceCommand.Instructions
+
+            // ---- Voice / TTS settings -------------------------------------------
+            lower.contains("voice setting") || lower.contains("change voice") ||
+                lower.contains("change tts") || lower.contains("speech setting") ||
+                lower.contains("choose voice") || lower.contains("select voice") ||
+                lower.contains("pick voice") || lower.contains("different voice") ||
+                lower.contains("tts setting") -> VoiceCommand.VoiceSettings
+
+            // ---- Retry / try again ----------------------------------------------
             lower.contains("try again") || lower.contains("retry") -> VoiceCommand.TryAgain
+
+            // ---- Compose new email ----------------------------------------------
             lower.contains("new email") -> VoiceCommand.Compose
+
+            // ---- Previous / back ------------------------------------------------
             lower.matches(Regex("(go back( one)?|previous|prior|last)")) -> VoiceCommand.Previous
+
+            // ---- Read -----------------------------------------------------------
             lower.matches(Regex("(read( next)?|hear( it)?)")) -> VoiceCommand.Read
-            // "reply" before "repeat"
+
+            // ---- Reply (before repeat) ------------------------------------------
             lower.contains("reply") -> VoiceCommand.Reply
-            // "mark as read" before generic "read" to avoid substring collision
+
+            // ---- Mark as read ---------------------------------------------------
             lower.contains("mark as read") || lower.contains("mark read") ||
                 lower.contains("mark it read") || lower.contains("mark this read") -> VoiceCommand.MarkAsRead
-            // "forward" — checked before "refresh"
+
+            // ---- Forward (before refresh) ---------------------------------------
             lower.contains("forward") -> VoiceCommand.Forward
-            // "read unread" / "check unread" — checked before generic "read"
+
+            // ---- Read unread (before generic read) ------------------------------
             lower.contains("read unread") || lower.contains("read all unread") ||
                 lower.contains("unread emails") || lower.contains("check unread") ||
                 lower.contains("hear unread") || lower.contains("show unread") -> VoiceCommand.ReadAllUnread
-            // "help" — checked before other single-word commands
+
+            // ---- Help -----------------------------------------------------------
             lower.contains("help") || lower.contains("what can i say") ||
                 lower.contains("commands") || lower.contains("what are my options") -> VoiceCommand.Help
-            // "read back" — must come before the generic "read" exact-match rule
+
+            // ---- Read back (before generic read) --------------------------------
             lower.contains("read back") || lower.contains("read my message") ||
                 lower.contains("what did i say") || lower.contains("review message") ||
                 lower.contains("review my message") -> VoiceCommand.ReadBack
-            // "attach file" / "add file" — checked BEFORE attachment-reading rules so that
-            // "add attachment" is routed here rather than to ReadAttachment.
+
+            // ---- Attach file (before remove attachment) -------------------------
             lower.contains("attach file") || lower.contains("add file") ||
                 lower.contains("add attachment") -> VoiceCommand.AttachFile
-            // "remove/delete/cancel attachment" — checked BEFORE the generic delete rule so
-            // that "delete attachment one" isn't swallowed by VoiceCommand.Delete.
-            (lower.contains("remove attachment") || lower.contains("delete attachment") ||
-                lower.contains("cancel attachment")) ->
-                VoiceCommand.RemoveAttachment(extractOrdinalFromPhrase(lower))
-            // Attachments — "list" before "read attachment" to avoid collision
+
+            // ---- Remove attachment (before generic delete) ----------------------
+            lower.contains("remove attachment") || lower.contains("delete attachment") ||
+                lower.contains("cancel attachment") ->
+                VoiceCommand.RemoveAttachment(extractOrdinal(lower))
+
+            // ---- List attachments -----------------------------------------------
             lower.contains("list attachment") || lower.contains("what attachment") ||
                 lower.contains("which attachment") || lower.contains("show attachment") -> VoiceCommand.ListAttachments
-            // "read attachment [ordinal]" or just "attachment"
-            lower.contains("attachment") -> VoiceCommand.ReadAttachment(extractOrdinalFromPhrase(lower))
-            // "search" before "send" to avoid substring collision
+
+            // ---- Read attachment [ordinal] --------------------------------------
+            lower.contains("attachment") -> VoiceCommand.ReadAttachment(extractOrdinal(lower))
+
+            // ---- Search ---------------------------------------------------------
             lower.contains("search") || lower.contains("find") ||
                 lower.contains("look for") -> VoiceCommand.Search
-            // "delete" / "trash" / "remove" — checked before "repeat" and "refresh"
+
+            // ---- Delete ---------------------------------------------------------
             lower.contains("delete") || lower.contains("trash") ||
                 lower.contains("remove") || lower.contains("erase") -> VoiceCommand.Delete
-            // Confirmation for destructive actions
+
+            // ---- Confirmation ---------------------------------------------------
             lower.matches(Regex("(yes|yeah|yep|confirm|sure|do it|ok|okay)")) -> VoiceCommand.Confirm
+
+            // ---- Send -----------------------------------------------------------
             lower.contains("send") -> VoiceCommand.Send
+
+            // ---- Navigation -----------------------------------------------------
             lower.contains("next") -> VoiceCommand.Next
             lower.contains("refresh") || lower.contains("reload") -> VoiceCommand.Refresh
             lower.contains("compose") || lower.contains("write") -> VoiceCommand.Compose
             lower.contains("repeat") || lower.contains("again") -> VoiceCommand.Repeat
             lower.matches(Regex("(back|cancel|exit|stop|never mind)")) -> VoiceCommand.Cancel
+
             else -> VoiceCommand.FreeText(text)
         }
     }
 
     /**
-     * Extracts a zero-based attachment index from a spoken phrase.
-     * Recognises ordinals ("first", "second" …) and digits ("1", "2" …).
-     * Returns 0 (first attachment) when no ordinal is found.
+     * Extracts a 1-based attachment index from a spoken phrase.
+     * "read attachment one" → 1, "read attachment two" → 2, etc.
+     * Returns 1 (first attachment) when no ordinal is found.
      */
-    private fun extractOrdinalFromPhrase(phrase: String): Int {
+    private fun extractOrdinal(phrase: String): Int {
         val ordinals = mapOf(
-            "first"  to 0, "one"   to 0, "1" to 0,
-            "second" to 1, "two"   to 1, "2" to 1,
-            "third"  to 2, "three" to 2, "3" to 2,
-            "fourth" to 3, "four"  to 3, "4" to 3,
-            "fifth"  to 4, "five"  to 4, "5" to 4
+            "first"  to 1, "one"   to 1, "1" to 1,
+            "second" to 2, "two"   to 2, "2" to 2,
+            "third"  to 3, "three" to 3, "3" to 3,
+            "fourth" to 4, "four"  to 4, "4" to 4,
+            "fifth"  to 5, "five"  to 5, "5" to 5
         )
         for ((word, idx) in ordinals) {
             if (Regex("\\b${Regex.escape(word)}\\b").containsMatchIn(phrase)) return idx
         }
-        return 0
+        return 1
     }
 }
