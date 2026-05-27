@@ -96,6 +96,14 @@ class GmailRepository @Inject constructor(
         )
     }
 
+    suspend fun markAsUnread(messageId: String) = withAutoRefresh { auth ->
+        gmailApiService.modifyMessage(
+            auth    = auth,
+            id      = messageId,
+            request = ModifyLabelsRequest(addLabelIds = listOf("UNREAD"))
+        )
+    }
+
     suspend fun trashEmail(messageId: String) = withAutoRefresh { auth ->
         gmailApiService.trashMessage(auth, messageId)
     }
