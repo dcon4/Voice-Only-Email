@@ -3,6 +3,7 @@ package com.example.voicegmail.ui.viewmodel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.voicegmail.gmail.GmailRepository
+import com.example.voicegmail.gmail.OutgoingAttachment
 import com.example.voicegmail.voice.ForwardDraft
 import com.example.voicegmail.voice.VoiceCommand
 import com.example.voicegmail.voice.VoiceCommandEngine
@@ -14,6 +15,12 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import javax.inject.Inject
+
+/** One-shot events emitted from the ViewModel to the UI layer. */
+sealed class ComposeEvent {
+    /** Request the UI to open the system file picker. */
+    object OpenFilePicker : ComposeEvent()
+}
 
 @HiltViewModel
 class ComposeViewModel @Inject constructor(
@@ -38,9 +45,17 @@ class ComposeViewModel @Inject constructor(
     private val _body = MutableStateFlow("")
     val body: StateFlow<String> = _body
 
+    /** Files staged for the outgoing message. Populated by [attachmentSelected]. */
+    private val _attachments = MutableStateFlow<List<OutgoingAttachment>>(emptyList())
+    val attachments: StateFlow<List<OutgoingAttachment>> = _attachments
+
     /** Signals the UI to navigate back (after successful send or voice cancel). */
     private val _navigateBack = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
     val navigateBack: SharedFlow<Unit> = _navigateBack
+
+    /** One-shot events for the UI layer (e.g. open file picker). */
+    private val _composeEvent = MutableSharedFlow<ComposeEvent>(extraBufferCapacity = 1)
+    val composeEvent: SharedFlow<ComposeEvent> = _composeEvent
 
     // ------------------------------------------------------------------
     // Guided voice flow
@@ -86,7 +101,6 @@ class ComposeViewModel @Inject constructor(
         }
         val existingTo = _to.value
         if (existingTo.isNotBlank()) {
-            // Reply mode — recipient is pre-filled; jump straight to subject.
             voiceCommandEngine.speakThenListen(
                 "Replying to $existingTo. What is the subject of your reply?"
             ) { cmd -> handleSubjectResult(cmd) }
@@ -103,16 +117,16 @@ class ComposeViewModel @Inject constructor(
         voiceCommandEngine.speakThenListen(
             "Forwarding to ${_to.value}. Subject: ${_subject.value}. " +
                 "Say your additional message to add before the forwarded email, " +
-                "or say 'send' to forward it as is."
+                "'attach file' to add a file, or 'send' to forward it as is."
         ) { cmd -> handleForwardExtraResult(cmd) }
     }
 
     private fun handleForwardExtraResult(cmd: VoiceCommand) {
         when (cmd) {
             is VoiceCommand.Send -> confirmAndSend()
+            is VoiceCommand.AttachFile -> requestFilePicker()
             is VoiceCommand.Cancel -> cancel()
             is VoiceCommand.FreeText -> {
-                // Prepend the extra note before the forwarded content.
                 _body.value = "${cmd.text}\n${_body.value}"
                 confirmAndSend()
             }
@@ -123,7 +137,7 @@ class ComposeViewModel @Inject constructor(
                     confirmAndSend()
                 } else {
                     voiceCommandEngine.speakThenListen(
-                        "I didn't catch that. Say your message, 'send' to forward as is, or 'cancel'."
+                        "I didn't catch that. Say your message, 'attach file', 'send', or 'cancel'."
                     ) { retry -> handleForwardExtraResult(retry) }
                 }
             }
@@ -187,14 +201,16 @@ class ComposeViewModel @Inject constructor(
     }
 
     private fun askForBody() {
-        voiceCommandEngine.speakThenListen("Say your message now.") { cmd ->
-            handleBodyResult(cmd)
-        }
+        voiceCommandEngine.speakThenListen(
+            "Say your message now, or say 'attach file' to add a file first."
+        ) { cmd -> handleBodyResult(cmd) }
     }
 
     private fun handleBodyResult(cmd: VoiceCommand) {
         when (cmd) {
             is VoiceCommand.Cancel -> cancel()
+            is VoiceCommand.AttachFile -> requestFilePicker()
+            is VoiceCommand.Send -> confirmAndSend()
             is VoiceCommand.FreeText -> {
                 _body.value = cmd.text
                 confirmAndSend()
@@ -206,7 +222,7 @@ class ComposeViewModel @Inject constructor(
                     confirmAndSend()
                 } else {
                     voiceCommandEngine.speakThenListen(
-                        "I didn't catch that. Please say your message, or say cancel to go back."
+                        "I didn't catch that. Please say your message, 'attach file', or say cancel to go back."
                     ) { retry -> handleBodyResult(retry) }
                 }
             }
@@ -214,24 +230,66 @@ class ComposeViewModel @Inject constructor(
     }
 
     private fun confirmAndSend() {
+        val attNote = when (_attachments.value.size) {
+            0 -> ""
+            1 -> "1 attachment: ${_attachments.value[0].filename}. "
+            else -> "${_attachments.value.size} attachments. "
+        }
         voiceCommandEngine.speakThenListen(
-            "Your message is ready to send. Say 'send' to send it, or 'cancel' to go back."
+            "${attNote}Say 'send' to send, 'attach file' to add a file, or 'cancel' to go back."
         ) { cmd ->
             when (cmd) {
                 is VoiceCommand.Send -> sendEmail(_to.value, _subject.value, _body.value)
+                is VoiceCommand.AttachFile -> requestFilePicker()
                 is VoiceCommand.Cancel -> cancel()
                 else -> {
                     voiceCommandEngine.speakThenListen(
-                        "Say 'send' to send, or 'cancel' to go back."
+                        "Say 'send' to send, 'attach file' to add a file, or 'cancel'."
                     ) { retry ->
                         when (retry) {
                             is VoiceCommand.Send -> sendEmail(_to.value, _subject.value, _body.value)
+                            is VoiceCommand.AttachFile -> requestFilePicker()
                             else -> cancel()
                         }
                     }
                 }
             }
         }
+    }
+
+    // ------------------------------------------------------------------
+    // Attachment helpers
+    // ------------------------------------------------------------------
+
+    /**
+     * Emits [ComposeEvent.OpenFilePicker] so the UI layer can launch the
+     * system file chooser. Call this whenever the user says "attach file".
+     */
+    fun requestFilePicker() {
+        viewModelScope.launch { _composeEvent.emit(ComposeEvent.OpenFilePicker) }
+    }
+
+    /**
+     * Called by the UI after the user selects a file. Adds the file to the
+     * pending attachment list and announces the result via TTS.
+     */
+    fun attachmentSelected(filename: String, mimeType: String, bytes: ByteArray) {
+        _attachments.value = _attachments.value + OutgoingAttachment(filename, mimeType, bytes)
+        val count = _attachments.value.size
+        val countNote = if (count > 1) " You now have $count attachments." else ""
+        voiceCommandEngine.speakThenListen(
+            "Attached: $filename.$countNote " +
+                "Say 'send' to send, 'attach file' to add another, or 'cancel' to go back."
+        ) { cmd -> confirmAndSend() }
+    }
+
+    /**
+     * Announces that the chosen file exceeded the size limit (10 MB).
+     */
+    fun attachmentTooLarge() {
+        voiceManager.speak(
+            "That file is too large. Please choose a file under 10 megabytes."
+        )
     }
 
     private fun cancel() {
@@ -251,7 +309,7 @@ class ComposeViewModel @Inject constructor(
         viewModelScope.launch {
             _sendState.value = SendState.Sending
             try {
-                gmailRepository.sendEmail(to, subject, body)
+                gmailRepository.sendEmail(to, subject, body, _attachments.value)
                 _sendState.value = SendState.Success
                 voiceManager.speak("Email sent successfully.")
                 _navigateBack.emit(Unit)
