@@ -87,6 +87,18 @@ class GmailRepository @Inject constructor(
     }
 
     /**
+     * Removes the UNREAD label from [messageId], marking it as read.
+     * This is reflected in Gmail across all clients immediately.
+     */
+    suspend fun markAsRead(messageId: String) = withAutoRefresh { auth ->
+        gmailApiService.modifyMessage(
+            auth = auth,
+            id = messageId,
+            request = ModifyLabelsRequest(removeLabelIds = listOf("UNREAD"))
+        )
+    }
+
+    /**
      * Moves [messageId] to the user's Trash. The email disappears from the inbox
      * immediately and can be recovered from Trash for 30 days.
      */
