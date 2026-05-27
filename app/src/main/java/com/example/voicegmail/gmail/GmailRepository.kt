@@ -68,6 +68,25 @@ class GmailRepository @Inject constructor(
     }
 
     /**
+     * Searches the user's mailbox using Gmail query syntax (e.g. "from:david",
+     * "subject:meeting", "is:unread"). Returns up to 20 matching messages with
+     * full detail, ordered by Gmail's default relevance ranking.
+     */
+    suspend fun searchEmails(query: String): List<EmailItem> = withAutoRefresh { auth ->
+        val refs = gmailApiService.listMessages(
+            auth = auth,
+            maxResults = 20,
+            labelIds = "",  // empty — search all labels, not just INBOX
+            query = query
+        ).messages ?: return@withAutoRefresh emptyList()
+        coroutineScope {
+            refs.map { ref ->
+                async { gmailApiService.getMessage(auth, ref.id).toEmailItem() }
+            }.awaitAll()
+        }
+    }
+
+    /**
      * Moves [messageId] to the user's Trash. The email disappears from the inbox
      * immediately and can be recovered from Trash for 30 days.
      */
