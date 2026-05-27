@@ -6,6 +6,19 @@
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!--
+        Required to run VoiceWakeService as a foreground service.
+        FOREGROUND_SERVICE_SPECIAL_USE is needed for apps targeting API 34+
+        that use a foreground service whose purpose (screen-on monitoring for
+        accessibility) does not map to a more specific foreground service type.
+    -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <!--
+        On Android 13+ the user must grant notification permission for the
+        foreground service notification to appear in the status bar.
+    -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <application
         android:name=".VoiceGmailApp"
@@ -20,6 +33,8 @@
             android:name=".MainActivity"
             android:exported="true"
             android:launchMode="singleTask"
+            android:showWhenLocked="true"
+            android:turnScreenOn="true"
             android:windowSoftInputMode="adjustResize">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -30,8 +45,6 @@
                   - When the process is alive, onNewIntent() fires on the existing instance.
                   - When the process was killed while Chrome was open, Android starts a fresh
                     MainActivity and calls onCreate() with the redirect URI in intent.data.
-                This completely bypasses AppAuth's AuthorizationManagementActivity result
-                delivery, which silently drops the auth code when the app process has died.
             -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
@@ -42,15 +55,27 @@
         </activity>
 
         <!--
-            Disable AppAuth's built-in RedirectUriReceiverActivity.
-            We intercept the redirect in MainActivity directly (see intent-filter above).
-            Empty declaration (tools:node="replace", no intent-filter) stops the library
-            component from competing for the redirect URI.
+            Disable AppAuth's built-in RedirectUriReceiverActivity so it cannot
+            compete with MainActivity for the OAuth redirect URI.
         -->
         <activity
             android:name="net.openid.appauth.RedirectUriReceiverActivity"
             android:exported="true"
             tools:node="replace" />
+
+        <!--
+            Foreground service that monitors ACTION_SCREEN_ON and brings
+            MainActivity to the front, enabling a totally blind user to start
+            giving voice commands simply by pressing the power button.
+        -->
+        <service
+            android:name=".VoiceWakeService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Accessibility wake service — surfaces VoiceGmail over the lock screen when the power button is pressed, enabling hands-free voice control for blind users without requiring screen unlock." />
+        </service>
 
     </application>
 
