@@ -18,7 +18,6 @@ import net.openid.appauth.AuthorizationRequest
 import net.openid.appauth.AuthorizationResponse
 import net.openid.appauth.AuthorizationService
 import net.openid.appauth.AuthorizationServiceConfiguration
-import net.openid.appauth.ClientSecretBasic
 import net.openid.appauth.CodeVerifierUtil
 import net.openid.appauth.GrantTypeValues
 import net.openid.appauth.ResponseTypeValues
@@ -29,6 +28,8 @@ import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
 private const val TAG = "VoiceGmail.Auth"
+private const val PREFS_AUTH_PENDING = "auth_pending"
+private const val PREF_CODE_VERIFIER = "code_verifier"
 private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "auth_prefs")
 
 @Singleton
@@ -67,6 +68,15 @@ class AuthRepository @Inject constructor(
     // Sign-in flow
     // ------------------------------------------------------------------
 
+    /**
+     * Builds and returns the AppAuth intent that launches AuthorizationManagementActivity,
+     * which opens a Chrome Custom Tab at Google's auth endpoint.
+     *
+     * The PKCE code verifier is persisted to SharedPreferences BEFORE the Chrome Tab
+     * opens so it survives a process death (Android may kill the app while Chrome is in
+     * the foreground). It is retrieved in [exchangeCodeFromRedirect] when the redirect
+     * arrives back at MainActivity.onNewIntent.
+     */
     fun buildSignInIntent(): android.content.Intent {
         val clientIdPrefix = AuthConfig.CLIENT_ID.take(12) + "…"
         DebugLogger.log(
@@ -76,7 +86,55 @@ class AuthRepository @Inject constructor(
                 "redirectUri=${AuthConfig.REDIRECT_URI} " +
                 "scopes=${AuthConfig.SCOPES.joinToString()}"
         )
-        return authService.getAuthorizationRequestIntent(buildAuthorizationRequest())
+        val request = buildAuthorizationRequest()
+        // Persist the code verifier so it survives process death.
+        // When the OAuth redirect arrives at MainActivity.onNewIntent the process may
+        // have been killed and restarted, making any in-memory state unavailable.
+        val prefs = context.getSharedPreferences(PREFS_AUTH_PENDING, Context.MODE_PRIVATE)
+        prefs.edit().putString(PREF_CODE_VERIFIER, request.codeVerifier).apply()
+        DebugLogger.log("Auth", "Code verifier persisted to SharedPreferences")
+        return authService.getAuthorizationRequestIntent(request)
+    }
+
+    /**
+     * Exchanges the authorization code carried in [redirectUri] for access + refresh
+     * tokens by building a direct TokenRequest — bypassing AppAuth's
+     * AuthorizationManagementActivity entirely.
+     *
+     * This is called from MainActivity.onNewIntent via OAuthRedirectBus and is the
+     * only path that works correctly when the app process dies while Chrome is open:
+     * AppAuth's setResult() delivery would otherwise be silently dropped because
+     * the new AuthorizationManagementActivity instance has no completedIntent.
+     */
+    suspend fun exchangeCodeFromRedirect(redirectUri: Uri): Pair<String?, String?> {
+        val code = redirectUri.getQueryParameter("code")
+            ?: error("No authorization code in redirect URI: $redirectUri")
+
+        DebugLogger.log("Auth", "Exchanging code from MainActivity redirect")
+
+        val prefs = context.getSharedPreferences(PREFS_AUTH_PENDING, Context.MODE_PRIVATE)
+        val codeVerifier = prefs.getString(PREF_CODE_VERIFIER, null)
+        DebugLogger.log("Auth", "Code verifier present=${codeVerifier != null}")
+
+        val serviceConfig = AuthorizationServiceConfiguration(
+            Uri.parse(AuthConfig.AUTHORIZATION_ENDPOINT),
+            Uri.parse(AuthConfig.TOKEN_ENDPOINT)
+        )
+        val tokenRequest = TokenRequest.Builder(serviceConfig, AuthConfig.CLIENT_ID)
+            .setGrantType(GrantTypeValues.AUTHORIZATION_CODE)
+            .setAuthorizationCode(code)
+            .setRedirectUri(Uri.parse(AuthConfig.REDIRECT_URI))
+            .setCodeVerifier(codeVerifier)
+            .build()
+
+        return suspendCancellableCoroutine { cont ->
+            authService.performTokenRequest(tokenRequest) { tokenResponse, ex ->
+                when {
+                    ex != null -> cont.resumeWithException(ex)
+                    else -> cont.resume(Pair(tokenResponse?.accessToken, tokenResponse?.refreshToken))
+                }
+            }
+        }
     }
 
     private fun buildAuthorizationRequest(): AuthorizationRequest {
@@ -112,13 +170,6 @@ class AuthRepository @Inject constructor(
     // Silent token refresh
     // ------------------------------------------------------------------
 
-    /**
-     * Uses the stored refresh token to silently obtain a new access token from
-     * Google. Saves the new tokens to DataStore and returns the fresh access
-     * token, or null if no refresh token is stored or the refresh fails.
-     *
-     * Call this whenever an API request returns 401 Unauthorized.
-     */
     suspend fun refreshAccessToken(): String? {
         val refreshToken = context.dataStore.data.map { it[refreshTokenKey] }.first()
         if (refreshToken.isNullOrBlank()) {
@@ -145,8 +196,6 @@ class AuthRepository @Inject constructor(
                         }
                         else -> {
                             val newAccess = tokenResponse?.accessToken
-                            // Google may or may not issue a new refresh token — keep the old
-                            // one if a new one is not provided.
                             val newRefresh = tokenResponse?.refreshToken ?: refreshToken
                             cont.resume(Pair(newAccess, newRefresh))
                         }
@@ -168,7 +217,6 @@ class AuthRepository @Inject constructor(
         }
     }
 
-    /** Must be called when the owning component is destroyed (e.g. Application.onTerminate). */
     fun dispose() {
         authService.dispose()
     }
