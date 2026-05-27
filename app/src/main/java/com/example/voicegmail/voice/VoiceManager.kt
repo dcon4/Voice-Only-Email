@@ -51,6 +51,13 @@ class VoiceManager @Inject constructor(
     private val _isListening = MutableStateFlow(false)
     val isListening: StateFlow<Boolean> = _isListening
 
+    /**
+     * Separate speech rate used only for reading email bodies and attachments.
+     * Adjusted by "read slower" / "read faster" commands (+/- 0.05).
+     * All other TTS (prompts, instructions, confirmations) always runs at 1.0.
+     */
+    private var emailReadRate: Float = ttsSettings.getEmailReadRate()
+
     init {
         mainHandler.post { initTts() }
     }
@@ -153,17 +160,26 @@ class VoiceManager @Inject constructor(
     }
 
     // ------------------------------------------------------------------
+    // Email reading rate
+    // ------------------------------------------------------------------
+
+    /** Current email-reading rate as a percentage string, e.g. "95". */
+    fun getEmailReadRatePct(): Int = (emailReadRate * 100).toInt()
+
+    /**
+     * Adjusts the email reading rate by [delta] (e.g. -0.05 or +0.05).
+     * Clamped to [0.25, 3.0]. Persisted immediately.
+     */
+    fun adjustEmailReadRate(delta: Float) {
+        emailReadRate = (emailReadRate + delta).coerceIn(0.25f, 3.0f)
+        ttsSettings.saveEmailReadRate(emailReadRate)
+        Log.d(tag, "Email read rate → ${getEmailReadRatePct()}%")
+    }
+
+    // ------------------------------------------------------------------
     // Phonetic correction — applied to every TTS string
     // ------------------------------------------------------------------
 
-    /**
-     * Forces the command verb "read" (meaning "listen to now") to be
-     * pronounced "reed" instead of "red".
-     *
-     * Strategy: protect compound forms where "red" is correct
-     * (unread, mark as read, …) with null-byte tokens, replace every
-     * remaining standalone "read" with "reed", then restore the tokens.
-     */
     private fun phoneticize(text: String): String {
         val protections = listOf(
             "unread"         to "\u0000A\u0000",
@@ -187,12 +203,13 @@ class VoiceManager @Inject constructor(
     }
 
     // ------------------------------------------------------------------
-    // TTS output — all speak paths run through phoneticize()
+    // TTS output — normal rate (prompts, confirmations, instructions)
     // ------------------------------------------------------------------
 
     fun speak(text: String) {
         mainHandler.post {
             if (ttsReady) {
+                tts?.setSpeechRate(1.0f)
                 tts?.setOnUtteranceProgressListener(null)
                 tts?.speak(phoneticize(text), TextToSpeech.QUEUE_FLUSH, null, utteranceId)
             }
@@ -200,13 +217,8 @@ class VoiceManager @Inject constructor(
     }
 
     /**
-     * Speaks [prompt] then opens the mic after [TTS_TO_MIC_GAP_MS].
-     *
-     * The gap is deliberately generous: the TTS engine's `onDone` fires when
-     * the last audio packet is *sent*, not when it has finished *playing*.
-     * On most hardware the speaker adds another 200–400 ms of reverberation.
-     * Without enough headroom the recogniser picks up TTS echo and times out
-     * immediately before the user can speak.
+     * Speaks [prompt] at the normal UI rate (1.0), then opens the mic.
+     * Use for all prompts, instructions, and confirmations.
      */
     fun speakAndThenListen(prompt: String, onResults: (List<String>) -> Unit) {
         mainHandler.post {
@@ -214,6 +226,7 @@ class VoiceManager @Inject constructor(
                 startListeningOnMainThread(onResults)
                 return@post
             }
+            tts?.setSpeechRate(1.0f)
             tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
                 override fun onStart(uid: String?) {}
                 override fun onDone(uid: String?) {
@@ -230,17 +243,51 @@ class VoiceManager @Inject constructor(
         }
     }
 
+    // ------------------------------------------------------------------
+    // TTS output — email rate (email bodies and attachments only)
+    // ------------------------------------------------------------------
+
     /**
-     * Speaks [text] in [voice] so the user can audition it, then opens the
-     * microphone. The voice stays set — caller is responsible for committing
-     * or reverting via [setVoiceByName] / [clearVoicePreference].
+     * Speaks [text] at the user's chosen email-reading rate, then opens the mic.
+     * Restores rate to 1.0 after playback so all subsequent prompts sound normal.
+     * Use only for reading email content and attachment text.
      */
+    fun speakEmailAndThenListen(text: String, onResults: (List<String>) -> Unit) {
+        mainHandler.post {
+            if (!ttsReady) {
+                startListeningOnMainThread(onResults)
+                return@post
+            }
+            tts?.setSpeechRate(emailReadRate)
+            tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
+                override fun onStart(uid: String?) {}
+                override fun onDone(uid: String?) {
+                    tts?.setSpeechRate(1.0f)
+                    tts?.setOnUtteranceProgressListener(null)
+                    mainHandler.postDelayed({ startListeningOnMainThread(onResults) }, TTS_TO_MIC_GAP_MS)
+                }
+                @Deprecated("Deprecated in API 21")
+                override fun onError(uid: String?) {
+                    tts?.setSpeechRate(1.0f)
+                    tts?.setOnUtteranceProgressListener(null)
+                    mainHandler.postDelayed({ startListeningOnMainThread(onResults) }, TTS_TO_MIC_GAP_MS)
+                }
+            })
+            tts?.speak(phoneticize(text), TextToSpeech.QUEUE_FLUSH, null, utteranceId)
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // TTS output — voice audition (voice chooser, always rate 1.0)
+    // ------------------------------------------------------------------
+
     fun speakWithVoiceAndThenListen(text: String, voice: Voice, onResults: (List<String>) -> Unit) {
         mainHandler.post {
             if (!ttsReady) {
                 startListeningOnMainThread(onResults)
                 return@post
             }
+            tts?.setSpeechRate(1.0f)
             tts?.voice = voice
             tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
                 override fun onStart(uid: String?) {}
@@ -267,13 +314,13 @@ class VoiceManager @Inject constructor(
     // ------------------------------------------------------------------
 
     /**
-     * @param retryCount   How many times we've retried after the user DID
-     *                     begin speaking but we couldn't understand. Capped
-     *                     at [MAX_RETRIES] before giving up with "sorry".
-     * @param noSpeechRetries  How many times we've silently restarted because
-     *                     the recogniser fired before the user could begin
-     *                     speaking at all. Capped at [NO_SPEECH_MAX_RETRIES]
-     *                     — these are transparent to the user (no "sorry").
+     * @param retryCount       Retries after the user spoke but wasn't understood.
+     *                         Capped at [MAX_RETRIES] before returning empty results.
+     * @param noSpeechRetries  Silent restarts when the recogniser fired before the
+     *                         user began speaking. Capped at [NO_SPEECH_MAX_RETRIES].
+     *                         When the cap is hit the session times out and the
+     *                         sentinel "SESSION_TIMEOUT" is returned so the app can
+     *                         go silent and wait for the next power-button wake.
      */
     private fun startListeningOnMainThread(
         onResults: (List<String>) -> Unit,
@@ -291,7 +338,6 @@ class VoiceManager @Inject constructor(
         acquireRecognitionWakeLock()
         muteRecognitionBeep()
 
-        // Track whether the user's voice was detected in this attempt.
         var speechBegan = false
 
         speechRecognizer?.destroy()
@@ -304,13 +350,11 @@ class VoiceManager @Inject constructor(
                 }
 
                 override fun onBeginningOfSpeech() {
-                    // The VAD confirmed the user started speaking.
                     speechBegan = true
                     Log.d(tag, "Speech began (retry=$retryCount noSpeech=$noSpeechRetries)")
                 }
 
                 override fun onPartialResults(partial: Bundle?) {
-                    // Partial text arriving → user is definitely speaking.
                     val text = partial
                         ?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                         ?.firstOrNull { it.isNotBlank() }
@@ -334,11 +378,15 @@ class VoiceManager @Inject constructor(
                             onResults(candidates)
                         }
                         !speechBegan && noSpeechRetries < NO_SPEECH_MAX_RETRIES -> {
-                            // Recogniser fired before user had a chance to speak.
-                            Log.d(tag, "No speech detected — silent retry ${noSpeechRetries + 1}/$NO_SPEECH_MAX_RETRIES")
+                            Log.d(tag, "No speech — silent retry ${noSpeechRetries + 1}/$NO_SPEECH_MAX_RETRIES")
                             mainHandler.postDelayed({
                                 startListeningOnMainThread(onResults, retryCount, noSpeechRetries + 1)
                             }, NO_SPEECH_RETRY_DELAY_MS)
+                        }
+                        !speechBegan -> {
+                            // Hit the no-speech cap — session timeout.
+                            Log.d(tag, "Session timeout after $NO_SPEECH_MAX_RETRIES no-speech retries")
+                            onResults(listOf("SESSION_TIMEOUT"))
                         }
                         else -> retryOrFail(SpeechRecognizer.ERROR_NO_MATCH, onResults, retryCount)
                     }
@@ -350,13 +398,17 @@ class VoiceManager @Inject constructor(
                     unmuteRecognitionBeep()
                     Log.w(tag, "Recognition error $error speechBegan=$speechBegan retry=$retryCount noSpeech=$noSpeechRetries")
 
-                    if (!speechBegan && noSpeechRetries < NO_SPEECH_MAX_RETRIES) {
-                        // User hadn't spoken yet — give them more time silently.
-                        mainHandler.postDelayed({
-                            startListeningOnMainThread(onResults, retryCount, noSpeechRetries + 1)
-                        }, NO_SPEECH_RETRY_DELAY_MS)
-                    } else {
-                        retryOrFail(error, onResults, retryCount)
+                    when {
+                        !speechBegan && noSpeechRetries < NO_SPEECH_MAX_RETRIES -> {
+                            mainHandler.postDelayed({
+                                startListeningOnMainThread(onResults, retryCount, noSpeechRetries + 1)
+                            }, NO_SPEECH_RETRY_DELAY_MS)
+                        }
+                        !speechBegan -> {
+                            Log.d(tag, "Session timeout (error path) after $NO_SPEECH_MAX_RETRIES no-speech retries")
+                            onResults(listOf("SESSION_TIMEOUT"))
+                        }
+                        else -> retryOrFail(error, onResults, retryCount)
                     }
                 }
 
@@ -374,8 +426,6 @@ class VoiceManager @Inject constructor(
             putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 5)
             putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
             putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
-            // Ask for generous silence windows. Many OEM recognisers ignore
-            // these, which is why the speechBegan logic above is essential.
             putExtra("android.speech.extra.SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS", 5000L)
             putExtra("android.speech.extra.SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS", 2500L)
             putExtra("android.speech.extra.SPEECH_INPUT_MINIMUM_LENGTH_MILLIS", 500L)
@@ -443,6 +493,7 @@ class VoiceManager @Inject constructor(
     fun stopAll() {
         mainHandler.post {
             tts?.stop()
+            tts?.setSpeechRate(1.0f)
             speechRecognizer?.stopListening()
             _isListening.value = false
             unmuteRecognitionBeep()
@@ -458,23 +509,16 @@ class VoiceManager @Inject constructor(
     }
 
     private companion object {
-        /** Gap between TTS onDone and mic open. Generous to let speaker reverb decay. */
-        const val TTS_TO_MIC_GAP_MS = 1200L
-
+        const val TTS_TO_MIC_GAP_MS        = 1200L
+        const val MAX_RETRIES              = 3
         /**
-         * Retries after the user DID speak but we couldn't understand.
-         * Each retry re-opens the mic. After this many attempts "Sorry" is said.
+         * After this many consecutive no-speech mic openings the session times
+         * out and the sentinel "SESSION_TIMEOUT" is emitted. The app then goes
+         * silent and waits for the next power-button wake event.
+         * With the default value of 4 the user hears 5 beeps total
+         * (initial open + 4 silent retries) before the app goes quiet.
          */
-        const val MAX_RETRIES = 3
-
-        /**
-         * Silent mic restarts when the recogniser fires before the user has
-         * had a chance to begin speaking. These are invisible to the user —
-         * no "Sorry" is ever said for a no-speech failure.
-         */
-        const val NO_SPEECH_MAX_RETRIES = 4
-
-        /** Delay before a no-speech silent retry — lets the audio bus settle. */
+        const val NO_SPEECH_MAX_RETRIES    = 4
         const val NO_SPEECH_RETRY_DELAY_MS = 250L
     }
 }
