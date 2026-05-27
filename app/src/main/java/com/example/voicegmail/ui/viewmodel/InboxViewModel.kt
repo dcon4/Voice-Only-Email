@@ -104,6 +104,15 @@ class InboxViewModel @Inject constructor(
 
     private var pausedPosition: ReadingPosition? = null
 
+    /**
+     * Monotonically-incrementing counter for reading sessions.  Incremented at
+     * the start of every new read and on every wake event.  Passed into
+     * [readNextChunk] so that stale TTS onDone callbacks (from utterances
+     * flushed by QUEUE_FLUSH) can be detected and discarded without racing
+     * the new session.
+     */
+    private var readingGen = 0
+
     // ------------------------------------------------------------------
     // Init
     // ------------------------------------------------------------------
@@ -195,6 +204,7 @@ class InboxViewModel @Inject constructor(
         // cannot race with this new session. TTS is handled by QUEUE_FLUSH inside
         // the following speakThenListen call.
         voiceCommandEngine.cancelListening()
+        readingGen++ // invalidate any in-flight speakEmailChunk onDone callbacks
         when (val state = _uiState.value) {
             is InboxUiState.Success -> {
                 val pos = pausedPosition
@@ -479,20 +489,31 @@ class InboxViewModel @Inject constructor(
             ) { cmd -> handleCommand(cmd, emails) }
             return
         }
-        readNextChunk(email, emails, chunks, startChunkIndex)
+        readingGen++ // begin a new reading session
+        readNextChunk(email, emails, chunks, startChunkIndex, readingGen)
     }
 
     /**
-     * Speak chunk [index] at email reading rate, then open a brief listening
-     * window.  Updates [pausedPosition] *before* speaking so a power-button
-     * interrupt always captures the correct position.
+     * Speak chunk [index] at email reading rate then immediately advance to the
+     * next chunk — no mic session is opened between chunks, so there is no
+     * recognition beep or initialisation pause.
+     *
+     * Interrupt path: the power button fires [handleWakeEvent], which increments
+     * [readingGen] and calls [cancelListening].  The [gen] guard below discards
+     * any stale TTS onDone callback that fires after the utterance was flushed.
+     *
+     * [pausedPosition] is updated *before* each chunk so a power-button wake
+     * always finds the correct position.
      */
     private fun readNextChunk(
         email: EmailItem,
         emails: List<EmailItem>,
         chunks: List<String>,
-        index: Int
+        index: Int,
+        gen: Int = readingGen
     ) {
+        if (gen != readingGen) return // stale callback — a newer session is now active
+
         if (index >= chunks.size) {
             // Reached the end — clear the bookmark
             pausedPosition = null
@@ -517,65 +538,8 @@ class InboxViewModel @Inject constructor(
             chunkIndex = index
         )
 
-        voiceCommandEngine.speakEmailSentenceAndListen(chunks[index]) { cmd ->
-            when (cmd) {
-                is VoiceCommand.Pause -> {
-                    // Explicit pause command — bookmark already set
-                    voiceCommandEngine.speakThenListen(
-                        "Reading paused. Say 'continue' to resume or give another command."
-                    ) { c ->
-                        when (c) {
-                            is VoiceCommand.ContinueReading -> resumeFromPause(emails)
-                            is VoiceCommand.SessionTimeout  ->
-                                voiceManager.speak(
-                                    "Going to sleep. Press the power button and say 'continue' to resume."
-                                )
-                            else -> { pausedPosition = null; handleCommand(c, emails) }
-                        }
-                    }
-                }
-
-                is VoiceCommand.SessionTimeout -> {
-                    // Timed out mid-read — bookmark already set, just sleep
-                    voiceManager.speak(
-                        "Going to sleep. Press the power button and say 'continue' to resume reading."
-                    )
-                }
-
-                is VoiceCommand.ContinueReading, is VoiceCommand.None ->
-                    // Explicit "continue" or no-op — advance to next chunk
-                    readNextChunk(email, emails, chunks, index + 1)
-
-                is VoiceCommand.FreeText ->
-                    if (cmd.text.isBlank())
-                        // Silence between chunks — continue automatically
-                        readNextChunk(email, emails, chunks, index + 1)
-                    else {
-                        // Unrecognised speech — treat as an unknown command
-                        pausedPosition = null
-                        handleCommand(cmd, emails)
-                    }
-
-                is VoiceCommand.Repeat ->
-                    // Re-read this chunk
-                    readNextChunk(email, emails, chunks, index)
-
-                is VoiceCommand.Cancel, is VoiceCommand.GoBack -> {
-                    // Cancel during reading = soft pause
-                    voiceCommandEngine.speakThenListen(
-                        "Reading stopped. Say 'continue' to resume or give another command."
-                    ) { c ->
-                        when (c) {
-                            is VoiceCommand.ContinueReading -> resumeFromPause(emails)
-                            else -> { pausedPosition = null; handleCommand(c, emails) }
-                        }
-                    }
-                }
-
-                else ->
-                    // Any other command (next, reply, delete, etc.) — bookmark already set, handle it
-                    handleCommand(cmd, emails)
-            }
+        voiceCommandEngine.speakEmailChunk(chunks[index]) {
+            readNextChunk(email, emails, chunks, index + 1, gen)
         }
     }
 
@@ -601,7 +565,8 @@ class InboxViewModel @Inject constructor(
             return
         }
         _currentEmailIndex.value = pos.emailIndex
-        readNextChunk(email, emails, pos.chunks, pos.chunkIndex)
+        readingGen++ // new session for resume — clears any stale flushed-chunk callbacks
+        readNextChunk(email, emails, pos.chunks, pos.chunkIndex, readingGen)
     }
 
     // ------------------------------------------------------------------
