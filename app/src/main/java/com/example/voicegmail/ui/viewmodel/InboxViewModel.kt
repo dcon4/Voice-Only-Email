@@ -286,6 +286,7 @@ class InboxViewModel @Inject constructor(
             is VoiceCommand.MarkAsRead -> markCurrentEmailAsRead(emails)
             is VoiceCommand.Forward -> forwardCurrentEmail(emails)
             is VoiceCommand.ReadAllUnread -> readUnreadFlow(emails)
+            is VoiceCommand.Help -> announceHelp(emails)
             is VoiceCommand.Search -> startSearch(emails)
             is VoiceCommand.Refresh -> loadInbox()
             is VoiceCommand.Compose -> {
@@ -416,6 +417,40 @@ class InboxViewModel @Inject constructor(
                 }
             }
         }
+    }
+
+    /**
+     * Reads out every available inbox command grouped by topic, then
+     * re-arms the microphone so the user can act immediately.
+     *
+     * Split into two parts so TTS does not time out on very long strings:
+     * Part 1 covers reading and navigation; Part 2 covers actions and finding.
+     */
+    private fun announceHelp(emails: List<EmailItem>) {
+        val part1 = buildString {
+            append("Here are all the things you can say. ")
+            append("Reading and navigation: ")
+            append("Say 'read' to hear the current email. ")
+            append("Say 'next' to move to the next email. ")
+            append("Say 'previous' to go back one. ")
+            append("Say 'repeat' to hear the current email again. ")
+        }
+        val part2 = buildString {
+            append("Email actions: ")
+            append("Say 'reply' to reply. ")
+            append("Say 'forward' to forward to someone else. ")
+            append("Say 'delete' to move an email to trash. ")
+            append("Say 'mark as read' to clear the unread badge. ")
+            append("Finding emails: ")
+            append("Say 'read unread' to hear only your unread messages. ")
+            append("Say 'search' followed by what you are looking for. ")
+            append("Say 'refresh' to reload your inbox. ")
+            append("Writing: say 'compose' to start a new email. ")
+            append("And say 'help' at any time to hear this list again.")
+        }
+        // Speak part 1, then chain into part 2, then re-arm the mic.
+        voiceManager.speak(part1)
+        voiceCommandEngine.speakThenListen(part2) { cmd -> handleCommand(cmd, emails) }
     }
 
     /**
