@@ -153,14 +153,56 @@ class VoiceManager @Inject constructor(
     }
 
     // ------------------------------------------------------------------
-    // TTS output
+    // Phonetic correction
+    // ------------------------------------------------------------------
+
+    /**
+     * Fixes TTS mispronunciations before any text is handed to the speech
+     * engine.  The primary correction is the command verb "read" (meaning
+     * "read aloud now") which must be pronounced "reed", not "red".
+     *
+     * Strategy — protect compound forms where "red" is the correct
+     * pronunciation (unread, mark as read, already read, …), then replace
+     * every remaining standalone "read" with "reed".
+     */
+    private fun phoneticize(text: String): String {
+        // Phrases where "read" is an adjective/past-tense and must stay "red".
+        // Null-byte tokens are used as placeholders because they cannot appear
+        // in natural TTS strings.
+        val protections = listOf(
+            "unread"         to "\u0000A\u0000",
+            "marked as read" to "\u0000B\u0000",
+            "mark as read"   to "\u0000C\u0000",
+            "already read"   to "\u0000D\u0000",
+            "been read"      to "\u0000E\u0000",
+            "was read"       to "\u0000F\u0000",
+            "is read"        to "\u0000G\u0000",
+            "not read"       to "\u0000H\u0000"
+        )
+
+        var result = text
+        // Protect — case-insensitive so "Unread", "MARK AS READ", etc. are covered.
+        for ((phrase, token) in protections) {
+            result = result.replace(phrase, token, ignoreCase = true)
+        }
+        // Replace the command verb "read" → "reed".
+        result = result.replace(Regex("\\bread\\b", RegexOption.IGNORE_CASE), "reed")
+        // Restore protected phrases (lowercase is fine for TTS).
+        for ((phrase, token) in protections) {
+            result = result.replace(token, phrase)
+        }
+        return result
+    }
+
+    // ------------------------------------------------------------------
+    // TTS output — all three speak paths run through phoneticize()
     // ------------------------------------------------------------------
 
     fun speak(text: String) {
         mainHandler.post {
             if (ttsReady) {
                 tts?.setOnUtteranceProgressListener(null)
-                tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, utteranceId)
+                tts?.speak(phoneticize(text), TextToSpeech.QUEUE_FLUSH, null, utteranceId)
             }
         }
     }
@@ -187,7 +229,7 @@ class VoiceManager @Inject constructor(
                     mainHandler.postDelayed({ startListeningOnMainThread(onResults) }, 300)
                 }
             })
-            tts?.speak(prompt, TextToSpeech.QUEUE_FLUSH, null, utteranceId)
+            tts?.speak(phoneticize(prompt), TextToSpeech.QUEUE_FLUSH, null, utteranceId)
         }
     }
 
@@ -195,9 +237,9 @@ class VoiceManager @Inject constructor(
      * Temporarily switches TTS to [voice], speaks [text] in that voice so the
      * user can audition it, then opens the microphone.
      *
-     * The voice **stays set** after the sample — the caller is responsible for
-     * calling [setVoiceByName] to commit the choice or [clearVoicePreference] /
-     * [setVoiceByName] with the original name to revert.
+     * The voice stays set after the sample — the caller is responsible for
+     * calling [setVoiceByName] to commit the choice or [clearVoicePreference]
+     * to revert.
      */
     fun speakWithVoiceAndThenListen(text: String, voice: Voice, onResults: (List<String>) -> Unit) {
         mainHandler.post {
@@ -205,7 +247,6 @@ class VoiceManager @Inject constructor(
                 startListeningOnMainThread(onResults)
                 return@post
             }
-            // Switch to the candidate voice so the sample is heard in that voice.
             tts?.voice = voice
             tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
                 override fun onStart(uid: String?) {}
@@ -219,6 +260,8 @@ class VoiceManager @Inject constructor(
                     mainHandler.postDelayed({ startListeningOnMainThread(onResults) }, 300)
                 }
             })
+            // No phoneticize here — voice-chooser samples are natural sentences,
+            // not command lists, so "read" won't appear in them.
             tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, utteranceId)
         }
     }
