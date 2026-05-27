@@ -35,6 +35,15 @@ jobs:
       - name: List APK outputs
         run: ls -R app/build/outputs/apk
 
+      - name: Print debug APK signing certificate SHA-1 and SHA-256
+        run: |
+          keytool -printcert -jarfile app/build/outputs/apk/debug/app-debug.apk 2>/dev/null \
+            | grep -E "SHA1|SHA256" \
+            || echo "keytool -printcert not supported; trying apksigner:"
+          $ANDROID_HOME/build-tools/$(ls $ANDROID_HOME/build-tools | sort -V | tail -1)/apksigner verify \
+            --print-certs app/build/outputs/apk/debug/app-debug.apk 2>/dev/null \
+            | grep -E "certificate.*digest" || true
+
       - name: Upload Debug APK
         uses: actions/upload-artifact@v4
         with:
