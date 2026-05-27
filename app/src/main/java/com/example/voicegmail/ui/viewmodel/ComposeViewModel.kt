@@ -124,6 +124,7 @@ class ComposeViewModel @Inject constructor(
     private fun handleForwardExtraResult(cmd: VoiceCommand) {
         when (cmd) {
             is VoiceCommand.Send -> confirmAndSend()
+            is VoiceCommand.ReadBack -> readBackMessage()
             is VoiceCommand.AttachFile -> requestFilePicker()
             is VoiceCommand.RemoveAttachment -> removeAttachment(cmd.index) { confirmAndSend() }
             is VoiceCommand.Cancel -> cancel()
@@ -210,6 +211,7 @@ class ComposeViewModel @Inject constructor(
     private fun handleBodyResult(cmd: VoiceCommand) {
         when (cmd) {
             is VoiceCommand.Cancel -> cancel()
+            is VoiceCommand.ReadBack -> readBackMessage()
             is VoiceCommand.AttachFile -> requestFilePicker()
             is VoiceCommand.RemoveAttachment -> removeAttachment(cmd.index) { confirmAndSend() }
             is VoiceCommand.Send -> confirmAndSend()
@@ -240,21 +242,23 @@ class ComposeViewModel @Inject constructor(
         val removeHint = if (_attachments.value.isNotEmpty())
             "'remove attachment one' to remove a file, " else ""
         voiceCommandEngine.speakThenListen(
-            "${attNote}Say 'send' to send, 'attach file' to add a file, " +
-                "${removeHint}or 'cancel' to go back."
+            "${attNote}Say 'send' to send, 'read back' to hear your message, " +
+                "'attach file' to add a file, ${removeHint}or 'cancel' to go back."
         ) { cmd ->
             when (cmd) {
                 is VoiceCommand.Send -> sendEmail(_to.value, _subject.value, _body.value)
+                is VoiceCommand.ReadBack -> readBackMessage()
                 is VoiceCommand.AttachFile -> requestFilePicker()
                 is VoiceCommand.RemoveAttachment -> removeAttachment(cmd.index) { confirmAndSend() }
                 is VoiceCommand.Cancel -> cancel()
                 else -> {
                     voiceCommandEngine.speakThenListen(
-                        "Say 'send' to send, 'attach file' to add a file, " +
-                            "${removeHint}or 'cancel'."
+                        "Say 'send' to send, 'read back' to hear your message, " +
+                            "'attach file' to add a file, ${removeHint}or 'cancel'."
                     ) { retry ->
                         when (retry) {
                             is VoiceCommand.Send -> sendEmail(_to.value, _subject.value, _body.value)
+                            is VoiceCommand.ReadBack -> readBackMessage()
                             is VoiceCommand.AttachFile -> requestFilePicker()
                             is VoiceCommand.RemoveAttachment ->
                                 removeAttachment(retry.index) { confirmAndSend() }
@@ -291,6 +295,37 @@ class ComposeViewModel @Inject constructor(
                 "Say 'send' to send, 'attach file' to add another, " +
                 "'remove attachment one' to remove it, or 'cancel' to go back."
         ) { cmd -> confirmAndSend() }
+    }
+
+    /**
+     * Reads the full composed message (To, Subject, body, attachments) aloud so
+     * the user can verify before sending. Acts as its own confirm prompt —
+     * the user can say 'send', 'read back' again, 'attach file', or 'cancel'
+     * without an extra confirmation step.
+     */
+    private fun readBackMessage() {
+        val bodyText = _body.value.takeIf { it.isNotBlank() } ?: "no message body"
+        val attNote = when (_attachments.value.size) {
+            0 -> ""
+            1 -> " Attachment: ${_attachments.value[0].filename}."
+            else -> " Attachments: ${_attachments.value.joinToString(", ") { it.filename }}."
+        }
+        val removeHint = if (_attachments.value.isNotEmpty())
+            "'remove attachment one' to remove a file, " else ""
+        voiceCommandEngine.speakThenListen(
+            "To: ${_to.value}. Subject: ${_subject.value}. Message: $bodyText.$attNote " +
+                "Say 'send' to send, 'read back' to hear it again, " +
+                "'attach file' to add a file, ${removeHint}or 'cancel' to go back."
+        ) { cmd ->
+            when (cmd) {
+                is VoiceCommand.Send -> sendEmail(_to.value, _subject.value, _body.value)
+                is VoiceCommand.ReadBack -> readBackMessage()
+                is VoiceCommand.AttachFile -> requestFilePicker()
+                is VoiceCommand.RemoveAttachment -> removeAttachment(cmd.index) { readBackMessage() }
+                is VoiceCommand.Cancel -> cancel()
+                else -> confirmAndSend()
+            }
+        }
     }
 
     /**
