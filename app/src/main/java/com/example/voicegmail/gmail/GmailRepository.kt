@@ -58,8 +58,13 @@ class GmailRepository @Inject constructor(
         }
     }
 
-    suspend fun sendEmail(to: String, subject: String, body: String) = withAutoRefresh { auth ->
-        val rawMime = buildMimeMessage(to, subject, body)
+    suspend fun sendEmail(
+        to: String,
+        subject: String,
+        body: String,
+        attachments: List<OutgoingAttachment> = emptyList()
+    ) = withAutoRefresh { auth ->
+        val rawMime = buildMimeMessage(to, subject, body, attachments)
         val encoded = Base64.encodeToString(
             rawMime.toByteArray(Charsets.UTF_8),
             Base64.URL_SAFE or Base64.NO_WRAP
@@ -117,13 +122,53 @@ class GmailRepository @Inject constructor(
         gmailApiService.trashMessage(auth, messageId)
     }
 
-    private fun buildMimeMessage(to: String, subject: String, body: String): String {
+    /**
+     * Builds a RFC-2822 / MIME message string.
+     *
+     * When [attachments] is empty the message is a simple `text/plain` part.
+     * When attachments are present it becomes `multipart/mixed`, with the body
+     * as the first text part followed by each attachment base64-encoded.
+     */
+    private fun buildMimeMessage(
+        to: String,
+        subject: String,
+        body: String,
+        attachments: List<OutgoingAttachment>
+    ): String {
+        if (attachments.isEmpty()) {
+            return buildString {
+                append("To: $to\r\n")
+                append("Subject: $subject\r\n")
+                append("Content-Type: text/plain; charset=utf-8\r\n")
+                append("\r\n")
+                append(body)
+            }
+        }
+        val boundary = "----voicegmail_${System.currentTimeMillis()}"
         return buildString {
+            append("MIME-Version: 1.0\r\n")
             append("To: $to\r\n")
             append("Subject: $subject\r\n")
+            append("Content-Type: multipart/mixed; boundary=\"$boundary\"\r\n")
+            append("\r\n")
+            // ── text/plain body ──────────────────────────────────────────────
+            append("--$boundary\r\n")
             append("Content-Type: text/plain; charset=utf-8\r\n")
             append("\r\n")
             append(body)
+            append("\r\n")
+            // ── one part per attachment ──────────────────────────────────────
+            for (att in attachments) {
+                append("--$boundary\r\n")
+                append("Content-Type: ${att.mimeType}; name=\"${att.filename}\"\r\n")
+                append("Content-Disposition: attachment; filename=\"${att.filename}\"\r\n")
+                append("Content-Transfer-Encoding: base64\r\n")
+                append("\r\n")
+                // Base64.DEFAULT wraps at 76 chars/line as required by MIME.
+                append(Base64.encodeToString(att.bytes, Base64.DEFAULT))
+                append("\r\n")
+            }
+            append("--$boundary--\r\n")
         }
     }
 }
