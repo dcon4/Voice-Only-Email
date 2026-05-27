@@ -48,7 +48,6 @@ data class SendMessageRequest(
     @SerializedName("raw") val raw: String
 )
 
-/** Metadata for one email attachment — use [id] to download its content. */
 data class Attachment(
     val id: String,
     val filename: String,
@@ -56,15 +55,12 @@ data class Attachment(
     val size: Int
 )
 
-/** Response from `GET …/messages/{id}/attachments/{attachmentId}`. */
 data class AttachmentResponse(
     @SerializedName("attachmentId") val attachmentId: String = "",
     @SerializedName("size") val size: Int = 0,
-    /** Base64url-encoded attachment bytes. */
     @SerializedName("data") val data: String = ""
 )
 
-/** A file to be included when *sending* an outgoing email (compose/reply/forward). */
 class OutgoingAttachment(
     val filename: String,
     val mimeType: String,
@@ -82,26 +78,78 @@ data class EmailItem(
     val subject: String,
     val snippet: String,
     val body: String,
-    /** True when the Gmail UNREAD label is present on this message. */
     val isUnread: Boolean = false,
-    /** Non-empty when the message carries file attachments. */
     val attachments: List<Attachment> = emptyList()
 )
 
+// ── Draft data classes ────────────────────────────────────────────────────
+
+/** Body for POST /drafts and PUT /drafts/{id}. */
+data class DraftCreateRequest(
+    @SerializedName("message") val message: SendMessageRequest
+)
+
+/** The object Gmail returns from GET/POST/PUT /drafts[/{id}]. */
+data class DraftResponse(
+    @SerializedName("id") val id: String = "",
+    @SerializedName("message") val message: GmailMessage? = null
+)
+
+/** One entry in the list returned by GET /drafts. */
+data class DraftRef(
+    @SerializedName("id") val id: String,
+    /** Sparse message — only id and threadId are populated in list responses. */
+    @SerializedName("message") val message: GmailMessage? = null
+)
+
+data class ListDraftsResponse(
+    @SerializedName("drafts") val drafts: List<DraftRef>? = null,
+    @SerializedName("nextPageToken") val nextPageToken: String? = null
+)
+
+/** Body for POST /drafts/send. */
+data class SendDraftRequest(
+    @SerializedName("id") val id: String
+)
+
+/** App-internal draft model (decoupled from the raw API objects). */
+data class DraftItem(
+    /** Gmail draft ID (needed for update / send / delete). */
+    val id: String,
+    val to: String,
+    val subject: String,
+    val body: String
+)
+
+// ── Extension helpers ─────────────────────────────────────────────────────
+
 fun GmailMessage.toEmailItem(): EmailItem {
     val headers = payload?.headers ?: emptyList()
-    val from = headers.find { it.name.equals("From", ignoreCase = true) }?.value ?: "Unknown"
+    val from    = headers.find { it.name.equals("From",    ignoreCase = true) }?.value ?: "Unknown"
     val subject = headers.find { it.name.equals("Subject", ignoreCase = true) }?.value ?: "(no subject)"
-    val body = extractBody(payload)
+    val body    = extractBody(payload)
     return EmailItem(
-        id = id,
-        from = from,
-        subject = subject,
-        snippet = snippet,
-        body = body,
-        isUnread = labelIds?.contains("UNREAD") == true,
+        id          = id,
+        from        = from,
+        subject     = subject,
+        snippet     = snippet,
+        body        = body,
+        isUnread    = labelIds?.contains("UNREAD") == true,
         attachments = extractAttachments(payload)
     )
+}
+
+/**
+ * Converts a Gmail draft API response to our [DraftItem].
+ * Extracts the To and Subject from the outgoing message headers.
+ */
+fun DraftResponse.toDraftItem(): DraftItem? {
+    val msg = message ?: return null
+    val headers = msg.payload?.headers ?: emptyList()
+    val to      = headers.find { it.name.equals("To",      ignoreCase = true) }?.value ?: ""
+    val subject = headers.find { it.name.equals("Subject", ignoreCase = true) }?.value ?: ""
+    val body    = extractBody(msg.payload)
+    return DraftItem(id = id, to = to, subject = subject, body = body)
 }
 
 private fun extractAttachments(payload: MessagePayload?): List<Attachment> {
@@ -112,30 +160,21 @@ private fun extractAttachments(payload: MessagePayload?): List<Attachment> {
 
 private fun collectAttachments(parts: List<MessagePart>?, result: MutableList<Attachment>) {
     parts?.forEach { part ->
-        val filename = part.filename
+        val filename     = part.filename
         val attachmentId = part.body?.attachmentId
         if (!filename.isNullOrBlank() && !attachmentId.isNullOrBlank()) {
-            result.add(
-                Attachment(
-                    id = attachmentId,
-                    filename = filename,
-                    mimeType = part.mimeType,
-                    size = part.body?.size ?: 0
-                )
-            )
+            result.add(Attachment(id = attachmentId, filename = filename,
+                mimeType = part.mimeType, size = part.body?.size ?: 0))
         }
-        // Recurse — attachments can be nested inside multipart/* parts.
         collectAttachments(part.parts, result)
     }
 }
 
-private fun extractBody(payload: MessagePayload?): String {
+internal fun extractBody(payload: MessagePayload?): String {
     if (payload == null) return ""
-    // Try direct body first
     payload.body?.data?.let { data ->
         if (data.isNotBlank()) return decodeBase64(data)
     }
-    // Try text/plain part
     payload.parts?.forEach { part ->
         if (part.mimeType == "text/plain") {
             part.body?.data?.let { data ->
@@ -143,7 +182,6 @@ private fun extractBody(payload: MessagePayload?): String {
             }
         }
     }
-    // Try nested parts
     payload.parts?.forEach { part ->
         val nested = extractBody(MessagePayload(body = part.body, parts = part.parts))
         if (nested.isNotBlank()) return nested
