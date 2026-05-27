@@ -16,6 +16,7 @@ sealed class VoiceCommand {
     object Reply : VoiceCommand()
     object Delete : VoiceCommand()
     object Confirm : VoiceCommand()
+    object Search : VoiceCommand()
     object Repeat : VoiceCommand()
     object GoBack : VoiceCommand()
     object Send : VoiceCommand()
@@ -77,6 +78,9 @@ class VoiceCommandEngine @Inject constructor(
             lower.matches(Regex("(read( next)?|hear( it)?)")) -> VoiceCommand.Read
             // "reply" before "repeat"
             lower.contains("reply") -> VoiceCommand.Reply
+            // "search" before "send" to avoid substring collision
+            lower.contains("search") || lower.contains("find") ||
+                lower.contains("look for") -> VoiceCommand.Search
             // "delete" / "trash" / "remove" — checked before "repeat" and "refresh"
             lower.contains("delete") || lower.contains("trash") ||
                 lower.contains("remove") || lower.contains("erase") -> VoiceCommand.Delete
