@@ -61,10 +61,7 @@ jobs:
           if-no-files-found: error
           path: app/build/outputs/apk/debug/app-debug.apk
 
-      - name: Build Release APK (optional — only when signing secrets are set)
-        if: >
-          github.event_name == 'push' &&
-          vars.ANDROID_KEYSTORE_BASE64 != ''
+      - name: Build Release APK
         env:
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
@@ -75,14 +72,13 @@ jobs:
         run: |
           set -euo pipefail
           if [ -z "${ANDROID_KEYSTORE_BASE64:-}" ]; then
-            echo "Skipping release build: signing secrets not configured."
+            echo "Skipping release build: ANDROID_KEYSTORE_BASE64 secret not set."
             exit 0
           fi
           echo "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$ANDROID_KEYSTORE_PATH"
           ./gradlew :app:assembleRelease --stacktrace
 
-      - name: Upload Release APK (optional)
-        if: github.event_name == 'push'
+      - name: Upload Release APK
         uses: actions/upload-artifact@v4
         with:
           name: release-apk
