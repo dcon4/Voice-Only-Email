@@ -1,6 +1,7 @@
 package com.example.voicegmail.auth
 
 import android.util.Log
+import com.example.voicegmail.debug.DebugLogger
 import net.openid.appauth.AuthorizationException
 
 private const val TAG = "VoiceGmail.Auth"
@@ -8,7 +9,7 @@ private const val TAG = "VoiceGmail.Auth"
 /**
  * Maps AppAuth [AuthorizationException] values to user-friendly diagnostic
  * messages and logs structured error details so failures can be triaged from
- * logcat without needing a debugger.
+ * both logcat and the on-device DebugLogger file without needing a debugger.
  *
  * Common root causes and their error codes:
  *  - `access_denied`  → the Gmail account is not in the OAuth test-user list
@@ -20,16 +21,24 @@ internal object OAuthDiagnostics {
 
     /**
      * Returns a plain-language message suitable for display in the UI and for
-     * being spoken aloud, and emits a structured logcat error entry.
+     * being spoken aloud, and emits a structured entry to both logcat and the
+     * on-device DebugLogger file.
      */
     fun friendlyMessage(ex: AuthorizationException): String {
-        Log.e(
-            TAG,
-            "OAuth failure — type=${ex.type} code=${ex.code} " +
-                "error='${ex.error}' description='${ex.errorDescription}'",
-            ex
-        )
-        return when {
+        val typeName = when (ex.type) {
+            AuthorizationException.TYPE_OAUTH_AUTHORIZATION_ERROR -> "authorization"
+            AuthorizationException.TYPE_OAUTH_TOKEN_ERROR         -> "token_exchange"
+            AuthorizationException.TYPE_GENERAL_ERROR             -> "general"
+            else                                                  -> "unknown(${ex.type})"
+        }
+        val detail = "type=$typeName code=${ex.code} " +
+            "error='${ex.error ?: "none"}' " +
+            "description='${ex.errorDescription ?: "none"}'"
+
+        Log.e(TAG, "OAuth failure — $detail", ex)
+        DebugLogger.logException("Auth", "OAuth failure — $detail", ex)
+
+        val msg = when {
             isUserCanceled(ex) ->
                 "Sign-in was canceled. Tap 'Sign in with Google' to try again."
 
@@ -68,6 +77,9 @@ internal object OAuthDiagnostics {
             // copy-paste or read it to a developer.
             else -> buildFallbackMessage(ex)
         }
+
+        DebugLogger.log("Auth", "OAuth spoken message: $msg")
+        return msg
     }
 
     // -------------------------------------------------------------------------
