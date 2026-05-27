@@ -27,7 +27,12 @@ import javax.inject.Singleton
 @Singleton
 class VoiceManager @Inject constructor(
     @ApplicationContext private val context: Context,
-    private val ttsSettings: TtsSettingsRepository
+    private val ttsSettings: TtsSettingsRepository,
+    /**
+     * Manages Bluetooth SCO routing in the "bt" product-flavor build.
+     * In the "standard" build every method is a no-op so injection is always safe.
+     */
+    private val bluetoothRouter: BluetoothAudioRouter
 ) {
     private val tag = "VoiceManager"
     private val utteranceId = "vm_utterance"
@@ -51,11 +56,6 @@ class VoiceManager @Inject constructor(
     private val _isListening = MutableStateFlow(false)
     val isListening: StateFlow<Boolean> = _isListening
 
-    /**
-     * Separate speech rate used only for reading email bodies and attachments.
-     * Adjusted by "read slower" / "read faster" commands (+/- 0.05).
-     * All other TTS (prompts, instructions, confirmations) always runs at 1.0.
-     */
     private var emailReadRate: Float = ttsSettings.getEmailReadRate()
 
     init {
@@ -163,13 +163,8 @@ class VoiceManager @Inject constructor(
     // Email reading rate
     // ------------------------------------------------------------------
 
-    /** Current email-reading rate as a percentage string, e.g. "95". */
     fun getEmailReadRatePct(): Int = (emailReadRate * 100).toInt()
 
-    /**
-     * Adjusts the email reading rate by [delta] (e.g. -0.05 or +0.05).
-     * Clamped to [0.25, 3.0]. Persisted immediately.
-     */
     fun adjustEmailReadRate(delta: Float) {
         emailReadRate = (emailReadRate + delta).coerceIn(0.25f, 3.0f)
         ttsSettings.saveEmailReadRate(emailReadRate)
@@ -177,7 +172,7 @@ class VoiceManager @Inject constructor(
     }
 
     // ------------------------------------------------------------------
-    // Phonetic correction — applied to every TTS string
+    // Phonetic correction
     // ------------------------------------------------------------------
 
     private fun phoneticize(text: String): String {
@@ -216,15 +211,10 @@ class VoiceManager @Inject constructor(
         }
     }
 
-    /**
-     * Speaks [prompt] at the normal UI rate (1.0), then opens the mic.
-     * Use for all prompts, instructions, and confirmations.
-     */
     fun speakAndThenListen(prompt: String, onResults: (List<String>) -> Unit) {
         mainHandler.post {
             if (!ttsReady) {
-                startListeningOnMainThread(onResults)
-                return@post
+                startListeningOnMainThread(onResults); return@post
             }
             tts?.setSpeechRate(1.0f)
             tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
@@ -247,16 +237,10 @@ class VoiceManager @Inject constructor(
     // TTS output — email rate (email bodies and attachments only)
     // ------------------------------------------------------------------
 
-    /**
-     * Speaks [text] at the user's chosen email-reading rate, then opens the mic.
-     * Restores rate to 1.0 after playback so all subsequent prompts sound normal.
-     * Use only for reading email content and attachment text.
-     */
     fun speakEmailAndThenListen(text: String, onResults: (List<String>) -> Unit) {
         mainHandler.post {
             if (!ttsReady) {
-                startListeningOnMainThread(onResults)
-                return@post
+                startListeningOnMainThread(onResults); return@post
             }
             tts?.setSpeechRate(emailReadRate)
             tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
@@ -278,14 +262,13 @@ class VoiceManager @Inject constructor(
     }
 
     // ------------------------------------------------------------------
-    // TTS output — voice audition (voice chooser, always rate 1.0)
+    // TTS output — voice audition (always rate 1.0)
     // ------------------------------------------------------------------
 
     fun speakWithVoiceAndThenListen(text: String, voice: Voice, onResults: (List<String>) -> Unit) {
         mainHandler.post {
             if (!ttsReady) {
-                startListeningOnMainThread(onResults)
-                return@post
+                startListeningOnMainThread(onResults); return@post
             }
             tts?.setSpeechRate(1.0f)
             tts?.voice = voice
@@ -310,17 +293,16 @@ class VoiceManager @Inject constructor(
     }
 
     // ------------------------------------------------------------------
-    // Core recognition loop
+    // Recognition — entry point (permission + BT SCO gate)
     // ------------------------------------------------------------------
 
     /**
-     * @param retryCount       Retries after the user spoke but wasn't understood.
-     *                         Capped at [MAX_RETRIES] before returning empty results.
-     * @param noSpeechRetries  Silent restarts when the recogniser fired before the
-     *                         user began speaking. Capped at [NO_SPEECH_MAX_RETRIES].
-     *                         When the cap is hit the session times out and the
-     *                         sentinel "SESSION_TIMEOUT" is returned so the app can
-     *                         go silent and wait for the next power-button wake.
+     * Checks permissions/availability, ensures Bluetooth SCO is active (in the
+     * bt build), then delegates to [doStartRecognizer].
+     *
+     * Keeping SCO "hot" between mic sessions avoids the 1–3 s reconnect delay
+     * on every listening window. SCO is stopped only on session timeout or
+     * explicit shutdown.
      */
     private fun startListeningOnMainThread(
         onResults: (List<String>) -> Unit,
@@ -335,6 +317,23 @@ class VoiceManager @Inject constructor(
             Log.w(tag, "Speech recognition unavailable"); onResults(emptyList()); return
         }
 
+        // In the bt build, open the SCO channel before the mic. If SCO is
+        // already connected (kept hot from the previous round) this fires
+        // immediately with no overhead.
+        bluetoothRouter.ensureScoActive {
+            doStartRecognizer(onResults, retryCount, noSpeechRetries)
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Recognition — core recogniser loop
+    // ------------------------------------------------------------------
+
+    private fun doStartRecognizer(
+        onResults: (List<String>) -> Unit,
+        retryCount: Int = 0,
+        noSpeechRetries: Int = 0
+    ) {
         acquireRecognitionWakeLock()
         muteRecognitionBeep()
 
@@ -384,8 +383,10 @@ class VoiceManager @Inject constructor(
                             }, NO_SPEECH_RETRY_DELAY_MS)
                         }
                         !speechBegan -> {
-                            // Hit the no-speech cap — session timeout.
+                            // Hit the no-speech cap — go to sleep.
+                            // Stop SCO so audio routes back to A2DP while idle.
                             Log.d(tag, "Session timeout after $NO_SPEECH_MAX_RETRIES no-speech retries")
+                            bluetoothRouter.stopSco()
                             onResults(listOf("SESSION_TIMEOUT"))
                         }
                         else -> retryOrFail(SpeechRecognizer.ERROR_NO_MATCH, onResults, retryCount)
@@ -406,6 +407,7 @@ class VoiceManager @Inject constructor(
                         }
                         !speechBegan -> {
                             Log.d(tag, "Session timeout (error path) after $NO_SPEECH_MAX_RETRIES no-speech retries")
+                            bluetoothRouter.stopSco()
                             onResults(listOf("SESSION_TIMEOUT"))
                         }
                         else -> retryOrFail(error, onResults, retryCount)
@@ -490,6 +492,10 @@ class VoiceManager @Inject constructor(
         mainHandler.post { speechRecognizer?.stopListening(); _isListening.value = false }
     }
 
+    /**
+     * Stop all audio (TTS + mic). Also tears down the BT SCO channel so audio
+     * routes back to A2DP (better quality output) while the app is idle.
+     */
     fun stopAll() {
         mainHandler.post {
             tts?.stop()
@@ -497,6 +503,7 @@ class VoiceManager @Inject constructor(
             speechRecognizer?.stopListening()
             _isListening.value = false
             unmuteRecognitionBeep()
+            bluetoothRouter.stopSco()
         }
     }
 
@@ -505,19 +512,13 @@ class VoiceManager @Inject constructor(
             tts?.stop(); tts?.shutdown()
             speechRecognizer?.destroy(); speechRecognizer = null
             releaseRecognitionWakeLock()
+            bluetoothRouter.stopSco()
         }
     }
 
     private companion object {
         const val TTS_TO_MIC_GAP_MS        = 1200L
         const val MAX_RETRIES              = 3
-        /**
-         * After this many consecutive no-speech mic openings the session times
-         * out and the sentinel "SESSION_TIMEOUT" is emitted. The app then goes
-         * silent and waits for the next power-button wake event.
-         * With the default value of 4 the user hears 5 beeps total
-         * (initial open + 4 silent retries) before the app goes quiet.
-         */
         const val NO_SPEECH_MAX_RETRIES    = 4
         const val NO_SPEECH_RETRY_DELAY_MS = 250L
     }
