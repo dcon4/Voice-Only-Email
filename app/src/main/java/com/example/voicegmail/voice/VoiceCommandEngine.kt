@@ -20,6 +20,7 @@ sealed class VoiceCommand {
     object MarkAsRead : VoiceCommand()
     object Forward : VoiceCommand()
     object ReadAllUnread : VoiceCommand()
+    object Help : VoiceCommand()
     object Repeat : VoiceCommand()
     object GoBack : VoiceCommand()
     object Send : VoiceCommand()
@@ -90,6 +91,9 @@ class VoiceCommandEngine @Inject constructor(
             lower.contains("read unread") || lower.contains("read all unread") ||
                 lower.contains("unread emails") || lower.contains("check unread") ||
                 lower.contains("hear unread") || lower.contains("show unread") -> VoiceCommand.ReadAllUnread
+            // "help" — checked before other single-word commands
+            lower.contains("help") || lower.contains("what can i say") ||
+                lower.contains("commands") || lower.contains("what are my options") -> VoiceCommand.Help
             // "search" before "send" to avoid substring collision
             lower.contains("search") || lower.contains("find") ||
                 lower.contains("look for") -> VoiceCommand.Search
