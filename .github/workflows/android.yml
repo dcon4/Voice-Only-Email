@@ -5,6 +5,7 @@ on:
     branches: [ "main", "GPT-5.2-Assist", "copilot/**" ]
   pull_request:
     branches: [ "main" ]
+  workflow_dispatch:
 
 jobs:
   build:
