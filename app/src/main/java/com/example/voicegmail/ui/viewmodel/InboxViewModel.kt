@@ -14,6 +14,7 @@ import java.util.Calendar
 import com.example.voicegmail.debug.DebugLogger
 import com.example.voicegmail.gmail.EmailItem
 import com.example.voicegmail.gmail.GmailRepository
+import com.example.voicegmail.gmail.AttachmentReader
 import com.example.voicegmail.voice.ForwardDraft
 import com.example.voicegmail.voice.NaturalLanguageQueryParser
 import com.example.voicegmail.voice.VoiceCommand
@@ -41,7 +42,8 @@ class InboxViewModel @Inject constructor(
     private val voiceManager: VoiceManager,
     private val voiceCommandEngine: VoiceCommandEngine,
     private val queryParser: NaturalLanguageQueryParser,
-    private val forwardDraft: ForwardDraft
+    private val forwardDraft: ForwardDraft,
+    private val attachmentReader: AttachmentReader
 ) : ViewModel() {
 
     /** True until the first successful inbox load — drives the opening greeting. */
@@ -203,9 +205,19 @@ class InboxViewModel @Inject constructor(
                 val email = emails.getOrNull(_currentEmailIndex.value)
                 if (email != null) {
                     val unreadPrefix = if (email.isUnread) "Unread. " else ""
+                    val attachmentNote = when (email.attachments.size) {
+                        0 -> ""
+                        1 -> "This email has 1 attachment: ${email.attachments[0].filename}. "
+                        else -> "This email has ${email.attachments.size} attachments. " +
+                            "Say 'list attachments' to hear their names. "
+                    }
+                    val attachmentCmd = if (email.attachments.isNotEmpty())
+                        "'read attachment one' to read the first attachment, " else ""
                     val text = "${unreadPrefix}Email ${_currentEmailIndex.value + 1} of ${emails.size}. " +
                         "From ${email.from}. Subject: ${email.subject}. ${email.body.take(500)}. " +
+                        attachmentNote +
                         "Say 'reply' to reply, 'forward' to forward, 'delete' to delete, " +
+                        attachmentCmd +
                         (if (email.isUnread) "'mark as read' to clear the unread badge, " else "") +
                         "'next' for the next email, or 'repeat' to hear this again."
                     voiceCommandEngine.speakThenListen(text) { cmd -> handleCommand(cmd, emails) }
@@ -287,6 +299,8 @@ class InboxViewModel @Inject constructor(
             is VoiceCommand.Forward -> forwardCurrentEmail(emails)
             is VoiceCommand.ReadAllUnread -> readUnreadFlow(emails)
             is VoiceCommand.Help -> announceHelp(emails)
+            is VoiceCommand.ListAttachments -> listEmailAttachments(emails)
+            is VoiceCommand.ReadAttachment -> readEmailAttachment(emails, command.index)
             is VoiceCommand.Search -> startSearch(emails)
             is VoiceCommand.Refresh -> loadInbox()
             is VoiceCommand.Compose -> {
@@ -491,6 +505,81 @@ class InboxViewModel @Inject constructor(
             // Any command works naturally on the unread list.
             // "refresh" exits back to the full inbox.
             handleCommand(cmd, unread)
+        }
+    }
+
+    /**
+     * Reads out the filename and MIME type of every attachment on the current
+     * email, then re-arms the mic so the user can immediately act on one.
+     */
+    private fun listEmailAttachments(emails: List<EmailItem>) {
+        val email = emails.getOrNull(_currentEmailIndex.value)
+        if (email == null) {
+            voiceCommandEngine.speakThenListen(
+                "No email selected. Say 'read' to open an email first."
+            ) { cmd -> handleCommand(cmd, emails) }
+            return
+        }
+        if (email.attachments.isEmpty()) {
+            voiceCommandEngine.speakThenListen(
+                "This email has no attachments."
+            ) { cmd -> handleCommand(cmd, emails) }
+            return
+        }
+        val list = email.attachments.mapIndexed { i, att ->
+            "Attachment ${i + 1}: ${att.filename}."
+        }.joinToString(" ")
+        val count = email.attachments.size
+        val prompt = "This email has $count attachment${if (count == 1) "" else "s"}. $list " +
+            "Say 'read attachment one' to read the first, " +
+            "'read attachment two' for the second, and so on."
+        voiceCommandEngine.speakThenListen(prompt) { cmd -> handleCommand(cmd, emails) }
+    }
+
+    /**
+     * Downloads and reads aloud the attachment at [index] (zero-based) on the
+     * current email. Announces progress before the download since it may take
+     * a moment on a slow connection.
+     */
+    private fun readEmailAttachment(emails: List<EmailItem>, index: Int) {
+        val email = emails.getOrNull(_currentEmailIndex.value)
+        if (email == null) {
+            voiceCommandEngine.speakThenListen(
+                "No email selected. Say 'read' to open an email first."
+            ) { cmd -> handleCommand(cmd, emails) }
+            return
+        }
+        if (email.attachments.isEmpty()) {
+            voiceCommandEngine.speakThenListen(
+                "This email has no attachments."
+            ) { cmd -> handleCommand(cmd, emails) }
+            return
+        }
+        val attachment = email.attachments.getOrNull(index)
+        if (attachment == null) {
+            val count = email.attachments.size
+            voiceCommandEngine.speakThenListen(
+                "There is no attachment ${index + 1}. " +
+                    "This email has $count attachment${if (count == 1) "" else "s"}. " +
+                    "Say 'list attachments' to hear their names."
+            ) { cmd -> handleCommand(cmd, emails) }
+            return
+        }
+        voiceManager.speak(
+            "Reading attachment ${index + 1}: ${attachment.filename}. Please wait."
+        )
+        viewModelScope.launch {
+            val text = attachmentReader.readAttachment(email.id, attachment)
+            val lengthNote = if (text.length >= 2_000)
+                " That was the first 2000 characters of the attachment." else ""
+            voiceCommandEngine.speakThenListen(
+                "$text$lengthNote " +
+                    "Say 'repeat' to hear it again, or any other command to continue."
+            ) { cmd ->
+                // Allow "repeat" to re-read the same attachment without re-downloading.
+                if (cmd is VoiceCommand.Repeat) readEmailAttachment(emails, index)
+                else handleCommand(cmd, emails)
+            }
         }
     }
 
