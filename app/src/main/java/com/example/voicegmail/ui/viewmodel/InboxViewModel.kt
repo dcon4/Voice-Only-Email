@@ -64,7 +64,7 @@ class InboxViewModel @Inject constructor(
     val navigationEvent: SharedFlow<InboxNavEvent> = _navigationEvent
 
     // ------------------------------------------------------------------
-    // Visual settings panel state (used by VoiceSettingsPanel composable)
+    // Visual settings panel state
     // ------------------------------------------------------------------
 
     private val _settingsPanelVisible = MutableStateFlow(false)
@@ -116,7 +116,7 @@ class InboxViewModel @Inject constructor(
     }
 
     // ------------------------------------------------------------------
-    // Settings panel — called from UI
+    // Settings panel — visual UI actions
     // ------------------------------------------------------------------
 
     fun openSettingsPanel() {
@@ -133,7 +133,6 @@ class InboxViewModel @Inject constructor(
 
     fun selectEngineFromPanel(engineName: String) {
         if (engineName == _selectedEngineName.value) {
-            // Same engine — just refresh voices list
             _settingsVoices.value = voiceManager.getAvailableVoices()
             return
         }
@@ -151,16 +150,24 @@ class InboxViewModel @Inject constructor(
         _selectedVoiceName.value = voiceName
     }
 
+    /**
+     * Resets to the engine's default voice and clears the saved preference.
+     * Used by the "Engine default" radio option in [VoiceSettingsPanel].
+     */
+    fun clearVoicePreferenceFromPanel() {
+        voiceManager.clearVoicePreference()
+        _selectedVoiceName.value = null
+    }
+
     fun testVoice() {
         val vName = _selectedVoiceName.value
         val label = if (vName != null) {
             _settingsVoices.value.find { it.name == vName }
                 ?.let { voiceManager.friendlyVoiceName(it) } ?: "the selected voice"
-        } else "the default voice"
+        } else "the engine default voice"
         voiceManager.speak("Hello. This is $label. VoiceGmail is ready to help you.")
     }
 
-    /** Exposed so VoiceSettingsPanel can display human-readable voice names. */
     fun friendlyVoiceName(voice: Voice): String = voiceManager.friendlyVoiceName(voice)
 
     // ------------------------------------------------------------------
