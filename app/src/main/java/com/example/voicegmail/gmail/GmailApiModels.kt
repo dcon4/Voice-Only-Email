@@ -64,6 +64,13 @@ data class AttachmentResponse(
     @SerializedName("data") val data: String = ""
 )
 
+/** A file to be included when *sending* an outgoing email (compose/reply/forward). */
+class OutgoingAttachment(
+    val filename: String,
+    val mimeType: String,
+    val bytes: ByteArray
+)
+
 data class ModifyLabelsRequest(
     @SerializedName("addLabelIds") val addLabelIds: List<String> = emptyList(),
     @SerializedName("removeLabelIds") val removeLabelIds: List<String> = emptyList()
