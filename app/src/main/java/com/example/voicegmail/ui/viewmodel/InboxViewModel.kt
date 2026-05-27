@@ -265,6 +265,7 @@ class InboxViewModel @Inject constructor(
             }
             is VoiceCommand.MarkAsRead -> markCurrentEmailAsRead(emails)
             is VoiceCommand.Forward -> forwardCurrentEmail(emails)
+            is VoiceCommand.ReadAllUnread -> readUnreadFlow(emails)
             is VoiceCommand.Search -> startSearch(emails)
             is VoiceCommand.Refresh -> loadInbox()
             is VoiceCommand.Compose -> {
@@ -394,6 +395,47 @@ class InboxViewModel @Inject constructor(
                     }
                 }
             }
+        }
+    }
+
+    /**
+     * Filters the inbox to only unread emails and walks through them one by
+     * one using the same voice commands as the full inbox. After the last
+     * unread email is read, the user can say 'refresh' to return to the
+     * complete inbox list.
+     */
+    private fun readUnreadFlow(allEmails: List<EmailItem>) {
+        val unread = allEmails.filter { it.isUnread }
+        if (unread.isEmpty()) {
+            voiceCommandEngine.speakThenListen(
+                "You have no unread emails. Your inbox is all caught up. " +
+                    "Say 'refresh' to reload, 'compose' to write a new email, or 'search' to find something."
+            ) { cmd -> handleCommand(cmd, allEmails) }
+            return
+        }
+        // Surface the filtered unread list as the active set so that every
+        // subsequent command (next, previous, reply, forward, delete, mark as
+        // read) operates within the unread-only view automatically.
+        _currentEmailIndex.value = 0
+        _uiState.value = InboxUiState.Success(unread)
+
+        val count = unread.size
+        val first = unread[0]
+        val unreadLabel = if (count == 1) "1 unread email" else "$count unread emails"
+
+        val intro = buildString {
+            append("You have $unreadLabel. Reading the first now. ")
+            append("Unread. Email 1 of $count, from ${first.from}. ")
+            append("Subject: ${first.subject}. ${first.body.take(500)}. ")
+            append("Say 'next' for the next unread, 'previous' for the previous, ")
+            append("'reply' to reply, 'forward' to forward, 'delete' to delete, ")
+            append("'mark as read' to clear the badge, ")
+            append("or 'refresh' to return to your full inbox.")
+        }
+        voiceCommandEngine.speakThenListen(intro) { cmd ->
+            // Any command works naturally on the unread list.
+            // "refresh" exits back to the full inbox.
+            handleCommand(cmd, unread)
         }
     }
 
