@@ -43,6 +43,8 @@ class GmailRepository @Inject constructor(
         }
     }
 
+    // ── Inbox ─────────────────────────────────────────────────────────────
+
     suspend fun listInbox(): List<EmailItem> = withAutoRefresh { auth ->
         val refs = gmailApiService.listMessages(auth).messages ?: return@withAutoRefresh emptyList()
         coroutineScope {
@@ -51,6 +53,8 @@ class GmailRepository @Inject constructor(
             }.awaitAll()
         }
     }
+
+    // ── Send ──────────────────────────────────────────────────────────────
 
     suspend fun sendEmail(
         to: String,
@@ -66,15 +70,13 @@ class GmailRepository @Inject constructor(
         gmailApiService.sendMessage(auth, SendMessageRequest(raw = encoded))
     }
 
-    /**
-     * Searches the user's entire mailbox (not just INBOX) using Gmail query syntax.
-     * Passing [labelIds] = null omits the parameter so Gmail searches all labels.
-     */
+    // ── Search ────────────────────────────────────────────────────────────
+
     suspend fun searchEmails(query: String): List<EmailItem> = withAutoRefresh { auth ->
         val refs = gmailApiService.listMessages(
             auth       = auth,
             maxResults = 20,
-            labelIds   = null,   // null → Retrofit omits the param → all-mailbox search
+            labelIds   = null,
             query      = query
         ).messages ?: return@withAutoRefresh emptyList()
         coroutineScope {
@@ -84,10 +86,8 @@ class GmailRepository @Inject constructor(
         }
     }
 
-    /**
-     * Removes the UNREAD label, marking the message as read.
-     * Requires the gmail.modify OAuth scope.
-     */
+    // ── Modify ────────────────────────────────────────────────────────────
+
     suspend fun markAsRead(messageId: String) = withAutoRefresh { auth ->
         gmailApiService.modifyMessage(
             auth    = auth,
@@ -96,21 +96,100 @@ class GmailRepository @Inject constructor(
         )
     }
 
+    suspend fun trashEmail(messageId: String) = withAutoRefresh { auth ->
+        gmailApiService.trashMessage(auth, messageId)
+    }
+
+    // ── Attachments ───────────────────────────────────────────────────────
+
     suspend fun downloadAttachmentData(messageId: String, attachmentId: String): ByteArray =
         withAutoRefresh { auth ->
             val response = gmailApiService.getAttachment(auth, messageId, attachmentId)
             Base64.decode(response.data, Base64.URL_SAFE)
         }
 
-    suspend fun trashEmail(messageId: String) = withAutoRefresh { auth ->
-        gmailApiService.trashMessage(auth, messageId)
+    // ── Drafts ────────────────────────────────────────────────────────────
+
+    /**
+     * Save a new draft.
+     * Returns the [DraftItem] as stored by Gmail, including its assigned id.
+     */
+    suspend fun saveDraft(
+        to: String,
+        subject: String,
+        body: String
+    ): DraftItem = withAutoRefresh { auth ->
+        val rawMime = buildMimeMessage(to, subject, body)
+        val encoded = Base64.encodeToString(
+            rawMime.toByteArray(Charsets.UTF_8),
+            Base64.URL_SAFE or Base64.NO_WRAP
+        )
+        val response = gmailApiService.createDraft(
+            auth  = auth,
+            draft = DraftCreateRequest(message = SendMessageRequest(raw = encoded))
+        )
+        response.toDraftItem() ?: DraftItem(id = response.id, to = to, subject = subject, body = body)
     }
+
+    /**
+     * List all drafts, fetching each one's full content in parallel.
+     * Returns an empty list (not an error) when the mailbox has no drafts.
+     */
+    suspend fun listDrafts(): List<DraftItem> = withAutoRefresh { auth ->
+        val refs = gmailApiService.listDrafts(auth).drafts ?: return@withAutoRefresh emptyList()
+        coroutineScope {
+            refs.map { ref ->
+                async {
+                    runCatching { gmailApiService.getDraft(auth, ref.id).toDraftItem() }
+                        .getOrNull()
+                }
+            }.awaitAll().filterNotNull()
+        }
+    }
+
+    /**
+     * Replace the body of an existing draft.
+     * Caller must supply the same [to] and [subject] if they haven't changed.
+     */
+    suspend fun updateDraft(
+        draftId: String,
+        to: String,
+        subject: String,
+        body: String
+    ): DraftItem = withAutoRefresh { auth ->
+        val rawMime = buildMimeMessage(to, subject, body)
+        val encoded = Base64.encodeToString(
+            rawMime.toByteArray(Charsets.UTF_8),
+            Base64.URL_SAFE or Base64.NO_WRAP
+        )
+        val response = gmailApiService.updateDraft(
+            auth  = auth,
+            id    = draftId,
+            draft = DraftCreateRequest(message = SendMessageRequest(raw = encoded))
+        )
+        response.toDraftItem() ?: DraftItem(id = draftId, to = to, subject = subject, body = body)
+    }
+
+    /**
+     * Send an existing draft using Gmail's send-draft API.
+     * This moves the draft to Sent and removes the DRAFT label.
+     */
+    suspend fun sendDraft(draftId: String) = withAutoRefresh { auth ->
+        gmailApiService.sendDraft(auth, SendDraftRequest(id = draftId))
+    }
+
+    /** Permanently delete a draft. */
+    suspend fun deleteDraft(draftId: String) = withAutoRefresh { auth ->
+        gmailApiService.deleteDraft(auth, draftId)
+    }
+
+    // ── MIME builder ──────────────────────────────────────────────────────
 
     private fun buildMimeMessage(
         to: String,
         subject: String,
         body: String,
-        attachments: List<OutgoingAttachment>
+        attachments: List<OutgoingAttachment> = emptyList()
     ): String {
         if (attachments.isEmpty()) {
             return buildString {
