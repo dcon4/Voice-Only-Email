@@ -166,10 +166,8 @@ class VoiceManager @Inject constructor(
     }
 
     /**
-     * Speaks [prompt] then opens the mic after a short gap so that:
-     * 1. TTS audio has fully decayed (prevents echo being recognised as a command).
-     * 2. The recognition start beep has played and been muted before it reaches
-     *    the callback chain.
+     * Speaks [prompt] then opens the mic after a 500 ms gap so TTS audio
+     * fully decays before recognition starts.
      */
     fun speakAndThenListen(prompt: String, onResults: (List<String>) -> Unit) {
         mainHandler.post {
@@ -181,9 +179,6 @@ class VoiceManager @Inject constructor(
                 override fun onStart(uid: String?) {}
                 override fun onDone(uid: String?) {
                     tts?.setOnUtteranceProgressListener(null)
-                    // 500 ms gap: lets TTS audio decay so the microphone doesn't
-                    // immediately pick up echo, and gives the user a natural beat
-                    // to start speaking.
                     mainHandler.postDelayed({ startListeningOnMainThread(onResults) }, 500)
                 }
                 @Deprecated("Deprecated in API 21")
@@ -193,6 +188,38 @@ class VoiceManager @Inject constructor(
                 }
             })
             tts?.speak(prompt, TextToSpeech.QUEUE_FLUSH, null, utteranceId)
+        }
+    }
+
+    /**
+     * Temporarily switches TTS to [voice], speaks [text] in that voice so the
+     * user can audition it, then opens the microphone.
+     *
+     * The voice **stays set** after the sample — the caller is responsible for
+     * calling [setVoiceByName] to commit the choice or [clearVoicePreference] /
+     * [setVoiceByName] with the original name to revert.
+     */
+    fun speakWithVoiceAndThenListen(text: String, voice: Voice, onResults: (List<String>) -> Unit) {
+        mainHandler.post {
+            if (!ttsReady) {
+                startListeningOnMainThread(onResults)
+                return@post
+            }
+            // Switch to the candidate voice so the sample is heard in that voice.
+            tts?.voice = voice
+            tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
+                override fun onStart(uid: String?) {}
+                override fun onDone(uid: String?) {
+                    tts?.setOnUtteranceProgressListener(null)
+                    mainHandler.postDelayed({ startListeningOnMainThread(onResults) }, 500)
+                }
+                @Deprecated("Deprecated in API 21")
+                override fun onError(uid: String?) {
+                    tts?.setOnUtteranceProgressListener(null)
+                    mainHandler.postDelayed({ startListeningOnMainThread(onResults) }, 300)
+                }
+            })
+            tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, utteranceId)
         }
     }
 
@@ -210,18 +237,13 @@ class VoiceManager @Inject constructor(
     ) {
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO)
                 != PackageManager.PERMISSION_GRANTED) {
-            Log.w(tag, "RECORD_AUDIO not granted")
-            onResults(emptyList()); return
+            Log.w(tag, "RECORD_AUDIO not granted"); onResults(emptyList()); return
         }
         if (!SpeechRecognizer.isRecognitionAvailable(context)) {
-            Log.w(tag, "Speech recognition unavailable")
-            onResults(emptyList()); return
+            Log.w(tag, "Speech recognition unavailable"); onResults(emptyList()); return
         }
 
-        // Keep the CPU awake during the full recognition cycle (screen may be off).
         acquireRecognitionWakeLock()
-
-        // Mute the recognition-start beep that the system UI plays on STREAM_MUSIC.
         muteRecognitionBeep()
 
         speechRecognizer?.destroy()
@@ -229,7 +251,6 @@ class VoiceManager @Inject constructor(
             setRecognitionListener(object : RecognitionListener {
                 override fun onReadyForSpeech(params: Bundle?) {
                     _isListening.value = true
-                    // Unmute now — the beep has already played (or been suppressed).
                     unmuteRecognitionBeep()
                 }
 
@@ -272,29 +293,20 @@ class VoiceManager @Inject constructor(
             putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.US.toString())
             putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 5)
             putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
-            // Wait up to 2 s of silence before finalising.
             putExtra("android.speech.extra.SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS", 2000L)
-            // Tentative silence threshold.
             putExtra("android.speech.extra.SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS", 1200L)
-            // Must hear at least 500 ms of speech — prevents spurious instant timeouts.
             putExtra("android.speech.extra.SPEECH_INPUT_MINIMUM_LENGTH_MILLIS", 500L)
         }
         speechRecognizer?.startListening(intent)
     }
 
-    private fun retryOrFail(
-        error: Int,
-        onResults: (List<String>) -> Unit,
-        retryCount: Int
-    ) {
+    private fun retryOrFail(error: Int, onResults: (List<String>) -> Unit, retryCount: Int) {
         val retriable = error == SpeechRecognizer.ERROR_NO_MATCH ||
             error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT ||
             error == SpeechRecognizer.ERROR_RECOGNIZER_BUSY
         if (retriable && retryCount < MAX_RETRIES) {
             val delay = if (error == SpeechRecognizer.ERROR_RECOGNIZER_BUSY) 600L else 250L
-            mainHandler.postDelayed({
-                startListeningOnMainThread(onResults, retryCount + 1)
-            }, delay)
+            mainHandler.postDelayed({ startListeningOnMainThread(onResults, retryCount + 1) }, delay)
         } else {
             Log.e(tag, "Recognition giving up after $retryCount retries (error=$error)")
             onResults(emptyList())
@@ -302,13 +314,12 @@ class VoiceManager @Inject constructor(
     }
 
     // ------------------------------------------------------------------
-    // Beep suppression (best-effort — some devices ignore stream mutes)
+    // Beep suppression
     // ------------------------------------------------------------------
 
     private fun muteRecognitionBeep() {
         runCatching {
             audioManager.adjustStreamVolume(AudioManager.STREAM_MUSIC, AudioManager.ADJUST_MUTE, 0)
-            // Safety net: always unmute within 1 s even if onReadyForSpeech never fires.
             mainHandler.postDelayed(::unmuteRecognitionBeep, 1000)
         }
     }
@@ -320,15 +331,14 @@ class VoiceManager @Inject constructor(
     }
 
     // ------------------------------------------------------------------
-    // Wake lock — holds CPU awake during recognition with screen off
+    // Wake lock
     // ------------------------------------------------------------------
 
     private fun acquireRecognitionWakeLock() {
         recognitionWakeLock?.let { if (it.isHeld) return }
         recognitionWakeLock = powerManager.newWakeLock(
-            PowerManager.PARTIAL_WAKE_LOCK,
-            "VoiceGmail:RecognitionWakeLock"
-        ).also { it.acquire(30_000L) } // 30 s max per recognition pass
+            PowerManager.PARTIAL_WAKE_LOCK, "VoiceGmail:RecognitionWakeLock"
+        ).also { it.acquire(30_000L) }
     }
 
     private fun releaseRecognitionWakeLock() {
