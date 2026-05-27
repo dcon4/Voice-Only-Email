@@ -44,4 +44,12 @@ interface GmailApiService {
         @Path("id") id: String,
         @Body request: ModifyLabelsRequest
     ): GmailMessage
+
+    /** Downloads the raw (base64url-encoded) bytes of one attachment. */
+    @GET("gmail/v1/users/me/messages/{messageId}/attachments/{attachmentId}")
+    suspend fun getAttachment(
+        @Header("Authorization") auth: String,
+        @Path("messageId") messageId: String,
+        @Path("attachmentId") attachmentId: String
+    ): AttachmentResponse
 }
