@@ -12,6 +12,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -28,52 +29,23 @@ jobs:
       - name: Make gradlew executable
         run: chmod +x ./gradlew
 
-      - name: Decode and prepare debug keystore
-        if: ${{ secrets.DEBUG_KEYSTORE_BASE64 != '' }}
-        env:
-          DEBUG_KEYSTORE_BASE64: ${{ secrets.DEBUG_KEYSTORE_BASE64 }}
-        run: |
-          echo "$DEBUG_KEYSTORE_BASE64" | base64 --decode > ${{ runner.temp }}/debug.keystore
-          cat > local.properties << EOF
-          sdk.dir=$ANDROID_HOME
-          EOF
-
-      - name: Build Debug APK (with phone keystore if available)
-        if: ${{ secrets.DEBUG_KEYSTORE_BASE64 != '' }}
-        env:
-          DEBUG_KEYSTORE_PATH: ${{ runner.temp }}/debug.keystore
-        run: |
-          ./gradlew :app:assembleDebug \
-            -Pandroid.injected.signing.store.file=$DEBUG_KEYSTORE_PATH \
-            -Pandroid.injected.signing.store.password=android \
-            -Pandroid.injected.signing.key.alias=androiddebugkey \
-            -Pandroid.injected.signing.key.password=android \
-            --stacktrace
-
-      - name: Build Debug APK (default keystore if secret not set)
-        if: ${{ secrets.DEBUG_KEYSTORE_BASE64 == '' }}
+      - name: Build Debug APK
         run: ./gradlew :app:assembleDebug --stacktrace
 
-      - name: Verify debug APK certificate (SHA-1 for Google OAuth)
-        shell: bash
-        run: |
-          set -euo pipefail
-          DEBUG_APK="app/build/outputs/apk/debug/app-debug.apk"
-          APKSIGNER="$(find "$ANDROID_SDK_ROOT/build-tools" -name apksigner -type f | sort -V | tail -1)"
-          CERT_OUTPUT="$(mktemp)"
-          trap 'rm -f "$CERT_OUTPUT"' EXIT
-          echo "--- Debug APK signing certificate ---"
-          "$APKSIGNER" verify --verbose --print-certs "$DEBUG_APK" | tee "$CERT_OUTPUT"
-          DEBUG_SHA1="$(grep -m1 'certificate SHA-1 digest:' "$CERT_OUTPUT" | sed 's/.*certificate SHA-1 digest:[[:space:]]*//')"
-          if [ -n "${DEBUG_SHA1:-}" ]; then
-            echo "Debug APK SHA-1: $DEBUG_SHA1"
-          else
-            echo "Unable to parse debug APK SHA-1 from apksigner output."
-            exit 1
-          fi
+      - name: List APK outputs
+        run: ls -R app/build/outputs/apk
 
-      - name: Build Release APK (optional)
-        if: ${{ github.event_name == 'push' }}
+      - name: Upload Debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: debug-apk
+          if-no-files-found: error
+          path: app/build/outputs/apk/debug/app-debug.apk
+
+      - name: Build Release APK (optional — only when signing secrets are set)
+        if: >
+          github.event_name == 'push' &&
+          vars.ANDROID_KEYSTORE_BASE64 != ''
         env:
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
@@ -87,42 +59,11 @@ jobs:
             echo "Skipping release build: signing secrets not configured."
             exit 0
           fi
-
           echo "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$ANDROID_KEYSTORE_PATH"
           ./gradlew :app:assembleRelease --stacktrace
 
-          SIGNED_APK="$(find app/build/outputs/apk -type f -name '*release*.apk' ! -name '*-unsigned.apk' | sort -V | tail -1)"
-          if [ -z "${SIGNED_APK:-}" ] || [ ! -f "$SIGNED_APK" ]; then
-            echo "No signed release APK found."
-            ls -R app/build/outputs/apk || true
-            exit 1
-          fi
-
-          APKSIGNER="$(find "$ANDROID_SDK_ROOT/build-tools" -name apksigner -type f | sort -V | tail -1)"
-          CERT_OUTPUT="$(mktemp)"
-          trap 'rm -f "$CERT_OUTPUT"' EXIT
-          echo "--- Release APK signing certificate ---"
-          "$APKSIGNER" verify --verbose --print-certs "$SIGNED_APK" | tee "$CERT_OUTPUT"
-          RELEASE_SHA1="$(grep -m1 'certificate SHA-1 digest:' "$CERT_OUTPUT" | sed 's/.*certificate SHA-1 digest:[[:space:]]*//')"
-          if [ -n "${RELEASE_SHA1:-}" ]; then
-            echo "Release APK SHA-1: $RELEASE_SHA1"
-          else
-            echo "Unable to parse release APK SHA-1 from apksigner output."
-            exit 1
-          fi
-
-      - name: List APK outputs
-        run: ls -R app/build/outputs/apk || true
-
-      - name: Upload Debug APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: debug-apk
-          if-no-files-found: error
-          path: app/build/outputs/apk/debug/app-debug.apk
-
       - name: Upload Release APK (optional)
-        if: ${{ github.event_name == 'push' }}
+        if: github.event_name == 'push'
         uses: actions/upload-artifact@v4
         with:
           name: release-apk
