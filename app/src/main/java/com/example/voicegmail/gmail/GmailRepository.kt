@@ -99,6 +99,17 @@ class GmailRepository @Inject constructor(
     }
 
     /**
+     * Downloads the raw bytes of one attachment identified by [attachmentId]
+     * on the message [messageId]. Gmail returns the data as base64url; this
+     * function decodes it so callers receive plain bytes ready for parsing.
+     */
+    suspend fun downloadAttachmentData(messageId: String, attachmentId: String): ByteArray =
+        withAutoRefresh { auth ->
+            val response = gmailApiService.getAttachment(auth, messageId, attachmentId)
+            Base64.decode(response.data, Base64.URL_SAFE)
+        }
+
+    /**
      * Moves [messageId] to the user's Trash. The email disappears from the inbox
      * immediately and can be recovered from Trash for 30 days.
      */
