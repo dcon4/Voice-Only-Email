@@ -256,6 +256,7 @@ class InboxViewModel @Inject constructor(
                     ) { cmd -> handleCommand(cmd, emails) }
                 }
             }
+            is VoiceCommand.Search -> startSearch(emails)
             is VoiceCommand.Refresh -> loadInbox()
             is VoiceCommand.Compose -> {
                 viewModelScope.launch {
@@ -264,7 +265,7 @@ class InboxViewModel @Inject constructor(
             }
             else -> {
                 voiceCommandEngine.speakThenListen(
-                    "Sorry, I didn't understand. Say 'read', 'reply', 'delete', 'next', 'previous', 'refresh', or 'compose'."
+                    "Sorry, I didn't understand. Say 'read', 'reply', 'delete', 'search', 'next', 'previous', 'refresh', or 'compose'."
                 ) { cmd -> handleCommand(cmd, emails) }
             }
         }
@@ -338,6 +339,102 @@ class InboxViewModel @Inject constructor(
                 voiceCommandEngine.speakThenListen(
                     "Say 'yes' to confirm deletion or 'cancel' to keep the email."
                 ) { nextCmd -> handleDeleteConfirmation(nextCmd, email, emails) }
+            }
+        }
+    }
+
+    /**
+     * Prompts the user to speak a search query, calls the Gmail API, then
+     * narrates the results using the same read/next/previous/reply/delete flow.
+     * "Search again" or "search" within results re-enters this function.
+     * "Back to inbox" or "inbox" returns to the full inbox view.
+     *
+     * [originEmails] is the list to return to if the user says "inbox".
+     */
+    private fun startSearch(originEmails: List<EmailItem>) {
+        voiceCommandEngine.speakThenListen(
+            "What would you like to search for? " +
+                "You can say things like 'emails from David', 'subject meeting', or 'unread emails'."
+        ) { cmd ->
+            when (cmd) {
+                is VoiceCommand.FreeText -> executeSearch(cmd.text, originEmails)
+                is VoiceCommand.Cancel -> {
+                    // Return to whichever list we came from.
+                    voiceCommandEngine.speakThenListen(
+                        "Search cancelled."
+                    ) { nextCmd -> handleCommand(nextCmd, originEmails) }
+                }
+                else -> {
+                    // The query might have been short (e.g. a name) and parsed as a
+                    // command keyword — use the raw recognised text as the query.
+                    val raw = voiceManager.recognizedText.value ?: ""
+                    if (raw.isNotBlank()) {
+                        executeSearch(raw, originEmails)
+                    } else {
+                        voiceCommandEngine.speakThenListen(
+                            "I didn't catch that. Please say what you'd like to search for, or say cancel."
+                        ) { retry ->
+                            val rawRetry = voiceManager.recognizedText.value ?: ""
+                            if (rawRetry.isNotBlank()) executeSearch(rawRetry, originEmails)
+                            else handleCommand(retry, originEmails)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private fun executeSearch(query: String, originEmails: List<EmailItem>) {
+        viewModelScope.launch {
+            // Show loading and announce the search so the user knows it's working.
+            voiceManager.speak("Searching for $query…")
+            try {
+                val results = gmailRepository.searchEmails(query)
+                if (results.isEmpty()) {
+                    voiceCommandEngine.speakThenListen(
+                        "No emails found matching '$query'. " +
+                            "Say 'search again' to try a different search, or 'inbox' to go back."
+                    ) { cmd ->
+                        when {
+                            cmd is VoiceCommand.Search -> startSearch(originEmails)
+                            cmd is VoiceCommand.Cancel ||
+                                (cmd is VoiceCommand.FreeText &&
+                                    cmd.text.trim().lowercase().contains("inbox")) ->
+                                handleCommand(VoiceCommand.Refresh, originEmails)
+                            else -> handleCommand(cmd, originEmails)
+                        }
+                    }
+                } else {
+                    val first = results[0]
+                    val intro = "Found ${results.size} email${if (results.size == 1) "" else "s"} " +
+                        "matching '$query'. " +
+                        "Email 1 of ${results.size}, from ${first.from}: ${first.subject}. " +
+                        "Say 'read' to hear it, 'next' for the next result, " +
+                        "'reply' to reply, 'delete' to delete, " +
+                        "or 'search again' to search for something else."
+                    // Reset index to the top of results.
+                    _currentEmailIndex.value = 0
+                    // Surface results as the active list so all commands work naturally.
+                    _uiState.value = InboxUiState.Success(results)
+                    voiceCommandEngine.speakThenListen(intro) { cmd ->
+                        // "search again" re-enters search; any other command uses results list.
+                        if (cmd is VoiceCommand.Search) {
+                            startSearch(originEmails)
+                        } else {
+                            handleCommand(cmd, results)
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                val msg = e.message ?: "Search failed"
+                voiceCommandEngine.speakThenListen(
+                    "Search failed. $msg. Say 'try again' to search again or 'cancel' to go back."
+                ) { cmd ->
+                    when (cmd) {
+                        is VoiceCommand.TryAgain -> executeSearch(query, originEmails)
+                        else -> handleCommand(VoiceCommand.Refresh, originEmails)
+                    }
+                }
             }
         }
     }
