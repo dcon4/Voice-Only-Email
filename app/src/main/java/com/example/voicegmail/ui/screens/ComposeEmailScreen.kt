@@ -27,6 +27,7 @@ import com.example.voicegmail.ui.viewmodel.SendState
 fun ComposeEmailScreen(
     onBack: () -> Unit,
     replyTo: String? = null,
+    isForward: Boolean = false,
     viewModel: ComposeViewModel = hiltViewModel()
 ) {
     val to by viewModel.to.collectAsState()
@@ -48,7 +49,7 @@ fun ComposeEmailScreen(
         onDispose { viewModel.stopAll() }
     }
 
-    // Pre-fill recipient if replying, then start the guided flow
+    // Pre-fill fields then start the guided flow.
     var flowStarted by remember { mutableStateOf(false) }
     val micPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -59,9 +60,9 @@ fun ComposeEmailScreen(
     LaunchedEffect(Unit) {
         if (!flowStarted) {
             flowStarted = true
-            // Pre-fill the To field for replies before starting the guided flow.
-            if (!replyTo.isNullOrBlank()) {
-                viewModel.initReplyTo(replyTo)
+            when {
+                isForward -> viewModel.initForwardFromDraft()
+                !replyTo.isNullOrBlank() -> viewModel.initReplyTo(replyTo)
             }
             if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO)
                     == PackageManager.PERMISSION_GRANTED) {
@@ -97,7 +98,11 @@ fun ComposeEmailScreen(
         }
     }
 
-    val screenTitle = if (!replyTo.isNullOrBlank()) "Reply" else "Compose"
+    val screenTitle = when {
+        isForward -> "Forward"
+        !replyTo.isNullOrBlank() -> "Reply"
+        else -> "Compose"
+    }
 
     Scaffold(
         topBar = {
