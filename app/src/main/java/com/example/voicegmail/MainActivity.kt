@@ -72,31 +72,37 @@ class MainActivity : ComponentActivity() {
                     ) {
                         composable("inbox") {
                             InboxScreen(
-                                onCompose = { replyTo ->
-                                    if (!replyTo.isNullOrBlank()) {
-                                        navController.navigate(
-                                            "compose?replyTo=${Uri.encode(replyTo)}"
-                                        )
-                                    } else {
-                                        navController.navigate("compose")
+                                onCompose = { replyTo, isForward ->
+                                    val params = buildList {
+                                        if (!replyTo.isNullOrBlank()) add("replyTo=${Uri.encode(replyTo)}")
+                                        if (isForward) add("isForward=true")
                                     }
+                                    val route = if (params.isEmpty()) "compose"
+                                                else "compose?${params.joinToString("&")}"
+                                    navController.navigate(route)
                                 }
                             )
                         }
                         composable(
-                            route = "compose?replyTo={replyTo}",
+                            route = "compose?replyTo={replyTo}&isForward={isForward}",
                             arguments = listOf(
                                 navArgument("replyTo") {
                                     type = NavType.StringType
                                     nullable = true
                                     defaultValue = null
+                                },
+                                navArgument("isForward") {
+                                    type = NavType.BoolType
+                                    defaultValue = false
                                 }
                             )
                         ) { backStackEntry ->
                             val replyTo = backStackEntry.arguments?.getString("replyTo")
+                            val isForward = backStackEntry.arguments?.getBoolean("isForward") ?: false
                             ComposeEmailScreen(
                                 onBack = { navController.popBackStack() },
-                                replyTo = replyTo
+                                replyTo = replyTo,
+                                isForward = isForward
                             )
                         }
                     }
