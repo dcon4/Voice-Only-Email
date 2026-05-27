@@ -8,6 +8,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -29,11 +30,12 @@ fun InboxScreen(
     onCompose: (replyTo: String?, isForward: Boolean) -> Unit,
     viewModel: InboxViewModel = hiltViewModel()
 ) {
-    val uiState by viewModel.uiState.collectAsState()
-    val isSignedIn by viewModel.isSignedIn.collectAsState()
-    val context = LocalContext.current
+    val uiState          by viewModel.uiState.collectAsState()
+    val isSignedIn       by viewModel.isSignedIn.collectAsState()
+    val settingsVisible  by viewModel.settingsPanelVisible.collectAsState()
+    val context          = LocalContext.current
 
-    // Observe one-shot navigation events from voice commands
+    // One-shot navigation events from voice commands
     LaunchedEffect(Unit) {
         viewModel.navigationEvent.collect { event ->
             when (event) {
@@ -42,21 +44,33 @@ fun InboxScreen(
         }
     }
 
-    // Stop voice when leaving the screen
-    DisposableEffect(Unit) {
-        onDispose { viewModel.stopVoice() }
-    }
+    DisposableEffect(Unit) { onDispose { viewModel.stopVoice() } }
 
     Scaffold(
         topBar = {
             TopAppBar(
                 title = {
                     Text(
-                        "Voice Gmail",
+                        "VoiceGmail",
                         modifier = Modifier.semantics { heading() }
                     )
                 },
                 actions = {
+                    // Settings — opens VoiceSettingsPanel for sighted helpers
+                    if (isSignedIn) {
+                        IconButton(
+                            onClick = { viewModel.openSettingsPanel() },
+                            modifier = Modifier.semantics {
+                                contentDescription = "Open voice settings"
+                            }
+                        ) {
+                            Icon(
+                                Icons.Default.Settings,
+                                contentDescription = null
+                            )
+                        }
+                    }
+                    // Debug log share
                     IconButton(
                         onClick = {
                             viewModel.getShareLogIntent()?.let { intent ->
@@ -71,6 +85,7 @@ fun InboxScreen(
                     ) {
                         Icon(Icons.Default.BugReport, contentDescription = null)
                     }
+                    // Refresh
                     IconButton(
                         onClick = { viewModel.loadInbox() },
                         modifier = Modifier.semantics {
@@ -108,6 +123,7 @@ fun InboxScreen(
                             .semantics { contentDescription = "Loading inbox" }
                     )
                 }
+
                 is InboxUiState.SignedOut -> {
                     Column(
                         modifier = Modifier.align(Alignment.Center),
@@ -129,12 +145,14 @@ fun InboxScreen(
                         }
                     }
                 }
+
                 is InboxUiState.Success -> {
                     EmailList(
-                        emails = state.emails,
+                        emails       = state.emails,
                         onEmailClick = { email -> viewModel.readEmailAloud(email) }
                     )
                 }
+
                 is InboxUiState.Error -> {
                     Column(
                         modifier = Modifier
@@ -143,7 +161,7 @@ fun InboxScreen(
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
                         Text(
-                            text = state.message,
+                            text  = state.message,
                             color = MaterialTheme.colorScheme.error,
                             modifier = Modifier.semantics {
                                 contentDescription = "Error: ${state.message}"
@@ -173,6 +191,11 @@ fun InboxScreen(
                 }
             }
         }
+
+        // Voice settings panel — shown on top of inbox content
+        if (settingsVisible) {
+            VoiceSettingsPanel(viewModel = viewModel)
+        }
     }
 }
 
@@ -191,33 +214,37 @@ private fun EmailList(
 
 @Composable
 private fun EmailRow(email: EmailItem, onClick: () -> Unit) {
-    val rowDescription = "Email from ${email.from}. Subject: ${email.subject}. ${email.snippet}"
+    val unreadIndicator = if (email.isUnread) "Unread. " else ""
+    val rowDescription  = "${unreadIndicator}Email from ${email.from}. Subject: ${email.subject}. ${email.snippet}"
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(
-                onClick = onClick,
-                onClickLabel = "Read email aloud"
-            )
+            .clickable(onClick = onClick, onClickLabel = "Read email aloud")
             .padding(horizontal = 16.dp, vertical = 12.dp)
             .semantics(mergeDescendants = true) {
                 contentDescription = rowDescription
             }
     ) {
         Text(
-            text = email.from,
-            style = MaterialTheme.typography.titleSmall
+            text  = email.from,
+            style = if (email.isUnread) MaterialTheme.typography.titleSmall
+                    else MaterialTheme.typography.titleSmall.copy(
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
         )
         Spacer(Modifier.height(2.dp))
         Text(
-            text = email.subject,
-            style = MaterialTheme.typography.bodyMedium
+            text  = email.subject,
+            style = if (email.isUnread) MaterialTheme.typography.bodyMedium
+                    else MaterialTheme.typography.bodyMedium.copy(
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
         )
         Spacer(Modifier.height(2.dp))
         Text(
-            text = email.snippet,
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            text     = email.snippet,
+            style    = MaterialTheme.typography.bodySmall,
+            color    = MaterialTheme.colorScheme.onSurfaceVariant,
             maxLines = 2
         )
     }
