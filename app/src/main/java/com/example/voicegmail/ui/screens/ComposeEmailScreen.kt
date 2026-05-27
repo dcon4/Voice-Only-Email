@@ -2,10 +2,14 @@ package com.example.voicegmail.ui.screens
 
 import android.Manifest
 import android.content.pm.PackageManager
+import android.net.Uri
+import android.provider.OpenableColumns
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.AttachFile
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Send
 import androidx.compose.material3.*
@@ -18,9 +22,11 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.hilt.navigation.compose.hiltViewModel
-import androidx.activity.compose.rememberLauncherForActivityResult
+import com.example.voicegmail.ui.viewmodel.ComposeEvent
 import com.example.voicegmail.ui.viewmodel.ComposeViewModel
 import com.example.voicegmail.ui.viewmodel.SendState
+
+private const val MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024 // 10 MB
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -33,11 +39,40 @@ fun ComposeEmailScreen(
     val to by viewModel.to.collectAsState()
     val subject by viewModel.subject.collectAsState()
     val body by viewModel.body.collectAsState()
+    val attachments by viewModel.attachments.collectAsState()
     var activeField by remember { mutableStateOf<String?>(null) }
 
     val context = LocalContext.current
     val sendState by viewModel.sendState.collectAsState()
     val isListening by viewModel.isListening.collectAsState()
+
+    // ── File picker ──────────────────────────────────────────────────────
+    val filePicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri: Uri? ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        val cr = context.contentResolver
+        val mimeType = cr.getType(uri) ?: "application/octet-stream"
+        val filename = cr.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)
+            ?.use { cursor ->
+                if (cursor.moveToFirst()) cursor.getString(0) else null
+            } ?: uri.lastPathSegment?.substringAfterLast('/') ?: "attachment"
+        val bytes = cr.openInputStream(uri)?.use { it.readBytes() }
+        when {
+            bytes == null -> viewModel.attachmentTooLarge()
+            bytes.size > MAX_ATTACHMENT_BYTES -> viewModel.attachmentTooLarge()
+            else -> viewModel.attachmentSelected(filename, mimeType, bytes)
+        }
+    }
+
+    // Collect one-shot events from ViewModel (e.g. open file picker)
+    LaunchedEffect(Unit) {
+        viewModel.composeEvent.collect { event ->
+            when (event) {
+                is ComposeEvent.OpenFilePicker -> filePicker.launch(arrayOf("*/*"))
+            }
+        }
+    }
 
     // Navigate back when voice flow triggers it (cancel or successful send)
     LaunchedEffect(Unit) {
@@ -122,6 +157,13 @@ fun ComposeEmailScreen(
                     }
                 },
                 actions = {
+                    // Attach-file button for sighted caretakers
+                    IconButton(
+                        onClick = { filePicker.launch(arrayOf("*/*")) },
+                        modifier = Modifier.semantics { contentDescription = "Attach a file" }
+                    ) {
+                        Icon(Icons.Default.AttachFile, contentDescription = null)
+                    }
                     IconButton(
                         onClick = { viewModel.sendEmail(to, subject, body) },
                         enabled = sendState !is SendState.Sending && to.isNotBlank(),
@@ -220,6 +262,27 @@ fun ComposeEmailScreen(
                     }
                 }
             )
+
+            // ── Attachment list (visible feedback for sighted caretakers) ──
+            if (attachments.isNotEmpty()) {
+                HorizontalDivider()
+                Text(
+                    text = "Attachments",
+                    style = MaterialTheme.typography.labelMedium,
+                    modifier = Modifier.semantics {
+                        contentDescription = "${attachments.size} file${if (attachments.size == 1) "" else "s"} attached"
+                    }
+                )
+                attachments.forEachIndexed { i, att ->
+                    Text(
+                        text = "${i + 1}. ${att.filename}",
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.semantics {
+                            contentDescription = "Attachment ${i + 1}: ${att.filename}"
+                        }
+                    )
+                }
+            }
 
             if (sendState is SendState.Sending) {
                 LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
