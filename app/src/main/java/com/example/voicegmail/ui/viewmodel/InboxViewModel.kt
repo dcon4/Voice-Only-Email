@@ -44,7 +44,7 @@ class InboxViewModel @Inject constructor(
     private val voiceManager: VoiceManager,
     private val voiceCommandEngine: VoiceCommandEngine,
     private val queryParser: NaturalLanguageQueryParser,
-    private val forwardDraft: ForwardDraft,
+    @Suppress("unused") private val forwardDraft: ForwardDraft,   // kept for DI graph
     private val attachmentReader: AttachmentReader,
     private val oAuthRedirectBus: OAuthRedirectBus,
     private val wakeEventBus: WakeEventBus
@@ -61,6 +61,11 @@ class InboxViewModel @Inject constructor(
     private val _currentEmailIndex = MutableStateFlow(0)
     val currentEmailIndex: StateFlow<Int> = _currentEmailIndex
 
+    /**
+     * Used by the visual compose button in the UI (for sighted helpers).
+     * Voice commands (compose / reply / forward) drive the inline voice flow
+     * without navigating to the compose screen.
+     */
     private val _navigationEvent = MutableSharedFlow<InboxNavEvent>(extraBufferCapacity = 1)
     val navigationEvent: SharedFlow<InboxNavEvent> = _navigationEvent
 
@@ -116,7 +121,7 @@ class InboxViewModel @Inject constructor(
     }
 
     // ------------------------------------------------------------------
-    // Visual settings panel — called from UI
+    // Visual settings panel
     // ------------------------------------------------------------------
 
     fun openSettingsPanel() {
@@ -162,6 +167,11 @@ class InboxViewModel @Inject constructor(
     }
 
     fun friendlyVoiceName(voice: Voice): String = voiceManager.friendlyVoiceName(voice)
+
+    /** Called by the visual compose FAB / toolbar button — opens the full visual screen. */
+    fun openVisualCompose() {
+        viewModelScope.launch { _navigationEvent.emit(InboxNavEvent.NavigateToCompose()) }
+    }
 
     // ------------------------------------------------------------------
     // Wake from lock screen
@@ -274,60 +284,70 @@ class InboxViewModel @Inject constructor(
             is VoiceCommand.Previous      -> advanceEmail(-1, emails)
             is VoiceCommand.Repeat        -> repeatCurrentEmail(emails)
             is VoiceCommand.Refresh       -> loadInbox()
-            is VoiceCommand.Compose       -> viewModelScope.launch {
-                _navigationEvent.emit(InboxNavEvent.NavigateToCompose())
-            }
-            is VoiceCommand.Reply         -> {
+
+            // Voice compose/reply/forward — fully voice-driven, no screen navigation needed.
+            is VoiceCommand.Compose -> startVoiceCompose(emails)
+            is VoiceCommand.Reply -> {
                 val email = emails.getOrNull(_currentEmailIndex.value)
-                if (email != null) viewModelScope.launch {
-                    _navigationEvent.emit(InboxNavEvent.NavigateToCompose(replyTo = email.from))
-                } else voiceCommandEngine.speakThenListen(
-                    "No email selected. Say 'reed' to hear an email first."
-                ) { cmd -> handleCommand(cmd, emails) }
+                if (email != null)
+                    startVoiceCompose(
+                        emails,
+                        replyTo = email.from,
+                        replySubject = "Re: ${email.subject}"
+                    )
+                else
+                    voiceCommandEngine.speakThenListen(
+                        "No email selected. Say 'reed' to hear an email first."
+                    ) { cmd -> handleCommand(cmd, emails) }
             }
+            is VoiceCommand.Forward -> startVoiceForward(emails)
+
             is VoiceCommand.Delete        -> confirmDelete(emails)
-            is VoiceCommand.Forward       -> startForward(emails)
             is VoiceCommand.MarkAsRead    -> markCurrentAsRead(emails)
             is VoiceCommand.Search        -> startSearch(emails)
             is VoiceCommand.ListAttachments -> listAttachments(emails)
             is VoiceCommand.ReadAttachment  -> readAttachment(command.index, emails)
             is VoiceCommand.ReadAllUnread   -> readAllUnread(emails)
             is VoiceCommand.TryAgain      -> loadInbox()
+
             is VoiceCommand.Cancel, is VoiceCommand.GoBack ->
                 voiceCommandEngine.speakThenListen(
                     "Cancelled. Say a command or 'help' for options."
                 ) { cmd -> handleCommand(cmd, emails) }
+
             is VoiceCommand.Confirm ->
                 voiceCommandEngine.speakThenListen(
                     "Nothing to confirm right now. Say a command."
                 ) { cmd -> handleCommand(cmd, emails) }
+
             is VoiceCommand.Help ->
                 voiceCommandEngine.speakThenListen(
                     "Commands: reed, next, previous, repeat, reply, forward, delete, compose, " +
                         "search, refresh, reed unread, mark as read, list attachments, " +
                         "read slower, read faster, voice settings, instructions. Say a command."
                 ) { cmd -> handleCommand(cmd, emails) }
+
             is VoiceCommand.ReadSlower -> {
-                voiceManager.adjustEmailReadRate(-0.05f)
+                voiceManager.adjustEmailReadRate(-0.10f)
                 val pct = voiceManager.getEmailReadRatePct()
                 voiceCommandEngine.speakThenListen(
-                    "Email reading speed reduced to $pct percent."
+                    "Email reading speed reduced to $pct percent. Say 'repeat' to hear the current email at the new speed."
                 ) { cmd -> handleCommand(cmd, emails) }
             }
             is VoiceCommand.ReadFaster -> {
-                voiceManager.adjustEmailReadRate(+0.05f)
+                voiceManager.adjustEmailReadRate(+0.10f)
                 val pct = voiceManager.getEmailReadRatePct()
                 voiceCommandEngine.speakThenListen(
-                    "Email reading speed increased to $pct percent."
+                    "Email reading speed increased to $pct percent. Say 'repeat' to hear the current email at the new speed."
                 ) { cmd -> handleCommand(cmd, emails) }
             }
-            is VoiceCommand.SessionTimeout -> {
-                // Mic has timed out after repeated no-speech cycles.
-                // Go silent and wait for the next power-button wake event.
+
+            is VoiceCommand.SessionTimeout ->
                 voiceManager.speak("Going to sleep. Press the power button to wake me.")
-            }
+
             is VoiceCommand.VoiceSettings -> handleVoiceSettings(emails)
             is VoiceCommand.Instructions  -> handleInstructions(emails)
+
             else ->
                 voiceCommandEngine.speakThenListen(
                     "Sorry, I didn't understand that. Say 'help' to hear available commands."
@@ -336,7 +356,7 @@ class InboxViewModel @Inject constructor(
     }
 
     // ------------------------------------------------------------------
-    // Reading — uses speakEmailThenListen so speed follows user preference
+    // Reading — email rate via speakEmailThenListen
     // ------------------------------------------------------------------
 
     private fun readCurrentEmail(emails: List<EmailItem>) {
@@ -365,7 +385,6 @@ class InboxViewModel @Inject constructor(
         val email  = emails.getOrNull(newIdx)
         if (email != null) {
             _currentEmailIndex.value = newIdx
-            // Subject/from preview is a brief navigation prompt — normal rate.
             voiceCommandEngine.speakThenListen(
                 "Email ${newIdx + 1} of ${emails.size}. From ${email.from}: ${email.subject}. " +
                     "Say 'reed' to hear the full message, 'reply', 'delete', or '${if (delta > 0) "next" else "previous"}'."
@@ -419,7 +438,7 @@ class InboxViewModel @Inject constructor(
     }
 
     // ------------------------------------------------------------------
-    // Attachments — content read at email rate
+    // Attachments
     // ------------------------------------------------------------------
 
     private fun listAttachments(emails: List<EmailItem>) {
@@ -449,7 +468,6 @@ class InboxViewModel @Inject constructor(
             voiceManager.speak("Reading ${attachment.filename}. Please wait.")
             try {
                 val text = attachmentReader.readAttachment(email.id, attachment)
-                // Attachment content read at email rate.
                 voiceCommandEngine.speakEmailThenListen(text) { cmd -> handleCommand(cmd, emails) }
             } catch (e: Exception) {
                 voiceCommandEngine.speakThenListen(
@@ -536,40 +554,181 @@ class InboxViewModel @Inject constructor(
     }
 
     // ------------------------------------------------------------------
-    // Forward
+    // Voice compose — fully inline, no screen navigation required
     // ------------------------------------------------------------------
 
-    private fun startForward(emails: List<EmailItem>) {
-        val email = emails.getOrNull(_currentEmailIndex.value)
-        if (email == null) {
-            voiceCommandEngine.speakThenListen("No email selected to forward.") { cmd ->
-                handleCommand(cmd, emails)
-            }; return
+    /**
+     * Starts a fully voice-guided compose or reply flow without navigating to
+     * ComposeEmailScreen. The visual compose screen remains reachable via
+     * [openVisualCompose] (called from the toolbar button) for sighted helpers.
+     *
+     * @param replyTo    Pre-fill the TO field for a reply. Null for new compose.
+     * @param replySubject  Pre-fill the SUBJECT field. Null for new compose.
+     */
+    private fun startVoiceCompose(
+        emails: List<EmailItem>,
+        replyTo: String? = null,
+        replySubject: String? = null
+    ) {
+        if (replyTo != null) {
+            // Reply: TO and SUBJECT are known — go straight to body.
+            voiceCommandEngine.speakThenListen(
+                "Reply to $replyTo. Subject: $replySubject. Say your reply now."
+            ) { cmd -> handleComposeBody(replyTo, replySubject ?: "", cmd, emails) }
+        } else {
+            voiceCommandEngine.speakThenListen(
+                "Compose. Who would you like to send to? Say the email address."
+            ) { cmd -> handleComposeTo(cmd, emails) }
         }
-        voiceCommandEngine.speakThenListen(
-            "Who would you like to forward this to? Please say the email address."
-        ) { cmd ->
-            val raw = (cmd as? VoiceCommand.FreeText)?.text ?: voiceManager.recognizedText.value ?: ""
-            when {
-                cmd is VoiceCommand.Cancel ->
-                    voiceCommandEngine.speakThenListen("Forward cancelled.") { c -> handleCommand(c, emails) }
-                raw.isNotBlank() -> launchForward(email, raw, emails)
-                else ->
-                    voiceCommandEngine.speakThenListen(
-                        "I didn't catch that. Say the email address or 'cancel'."
-                    ) { c -> handleCommand(c, emails) }
+    }
+
+    private fun handleComposeTo(cmd: VoiceCommand, emails: List<EmailItem>) {
+        val raw = rawText(cmd)
+        when {
+            cmd is VoiceCommand.Cancel ->
+                voiceCommandEngine.speakThenListen("Compose cancelled.") { c -> handleCommand(c, emails) }
+            raw.isNotBlank() ->
+                voiceCommandEngine.speakThenListen(
+                    "Sending to $raw. What is the subject?"
+                ) { c -> handleComposeSubject(raw, c, emails) }
+            else ->
+                voiceCommandEngine.speakThenListen(
+                    "I didn't catch the email address. Please try again, or say 'cancel'."
+                ) { c -> handleComposeTo(c, emails) }
+        }
+    }
+
+    private fun handleComposeSubject(to: String, cmd: VoiceCommand, emails: List<EmailItem>) {
+        val raw = rawText(cmd)
+        when {
+            cmd is VoiceCommand.Cancel ->
+                voiceCommandEngine.speakThenListen("Compose cancelled.") { c -> handleCommand(c, emails) }
+            raw.isNotBlank() ->
+                voiceCommandEngine.speakThenListen(
+                    "Subject: $raw. Now say your message."
+                ) { c -> handleComposeBody(to, raw, c, emails) }
+            else ->
+                voiceCommandEngine.speakThenListen(
+                    "I didn't catch the subject. Please say it again, or say 'cancel'."
+                ) { c -> handleComposeSubject(to, c, emails) }
+        }
+    }
+
+    private fun handleComposeBody(
+        to: String,
+        subject: String,
+        cmd: VoiceCommand,
+        emails: List<EmailItem>
+    ) {
+        val raw = rawText(cmd)
+        when {
+            cmd is VoiceCommand.Cancel ->
+                voiceCommandEngine.speakThenListen("Compose cancelled.") { c -> handleCommand(c, emails) }
+            cmd is VoiceCommand.Send ->
+                // User said "send" without dictating a body — send as-is (body can be empty).
+                voiceComposeSend(to, subject, "", emails)
+            raw.isNotBlank() ->
+                voiceCommandEngine.speakThenListen(
+                    "Message recorded. Say 'send' to send, 'read back' to review, or 'cancel'."
+                ) { c -> handleComposeFinal(to, subject, raw, c, emails) }
+            else ->
+                voiceCommandEngine.speakThenListen(
+                    "I didn't catch your message. Please try again, or say 'cancel'."
+                ) { c -> handleComposeBody(to, subject, c, emails) }
+        }
+    }
+
+    private fun handleComposeFinal(
+        to: String,
+        subject: String,
+        body: String,
+        cmd: VoiceCommand,
+        emails: List<EmailItem>
+    ) {
+        when (cmd) {
+            is VoiceCommand.Send    -> voiceComposeSend(to, subject, body, emails)
+            is VoiceCommand.ReadBack ->
+                voiceCommandEngine.speakThenListen(
+                    "To: $to. Subject: $subject. Message: $body. " +
+                        "Say 'send' to send, or 'cancel' to discard."
+                ) { c -> handleComposeFinal(to, subject, body, c, emails) }
+            is VoiceCommand.Cancel, is VoiceCommand.GoBack ->
+                voiceCommandEngine.speakThenListen("Compose cancelled.") { c -> handleCommand(c, emails) }
+            else ->
+                voiceCommandEngine.speakThenListen(
+                    "Say 'send', 'read back', or 'cancel'."
+                ) { c -> handleComposeFinal(to, subject, body, c, emails) }
+        }
+    }
+
+    private fun voiceComposeSend(
+        to: String,
+        subject: String,
+        body: String,
+        emails: List<EmailItem>
+    ) {
+        viewModelScope.launch {
+            voiceManager.speak("Sending.")
+            try {
+                gmailRepository.sendEmail(to, subject, body)
+                voiceCommandEngine.speakThenListen("Sent successfully.") { c -> handleCommand(c, emails) }
+            } catch (e: Exception) {
+                voiceCommandEngine.speakThenListen(
+                    "Failed to send. ${e.message ?: "Unknown error."}. Say 'try again' or 'cancel'."
+                ) { c ->
+                    when (c) {
+                        is VoiceCommand.TryAgain -> voiceComposeSend(to, subject, body, emails)
+                        else -> handleCommand(c, emails)
+                    }
+                }
             }
         }
     }
 
-    private fun launchForward(email: EmailItem, to: String, emails: List<EmailItem>) {
-        val body = buildString {
-            appendLine(); appendLine("---------- Forwarded message ---------")
-            appendLine("From: ${email.from}"); appendLine("Subject: ${email.subject}")
-            appendLine(); append(email.body)
+    // ------------------------------------------------------------------
+    // Voice forward — inline, no screen navigation
+    // ------------------------------------------------------------------
+
+    private fun startVoiceForward(emails: List<EmailItem>) {
+        val email = emails.getOrNull(_currentEmailIndex.value)
+        if (email == null) {
+            voiceCommandEngine.speakThenListen("No email selected to forward.") { c -> handleCommand(c, emails) }
+            return
         }
-        forwardDraft.set(to = to, subject = "Fwd: ${email.subject}", body = body)
-        viewModelScope.launch { _navigationEvent.emit(InboxNavEvent.NavigateToCompose(isForward = true)) }
+        voiceCommandEngine.speakThenListen(
+            "Forward email from ${email.from}: ${email.subject}. " +
+                "Who would you like to forward to? Say the email address."
+        ) { cmd ->
+            val raw = rawText(cmd)
+            when {
+                cmd is VoiceCommand.Cancel ->
+                    voiceCommandEngine.speakThenListen("Forward cancelled.") { c -> handleCommand(c, emails) }
+                raw.isNotBlank() -> {
+                    val fwdBody =
+                        "---------- Forwarded message ----------\n" +
+                        "From: ${email.from}\nSubject: ${email.subject}\n\n${email.body}"
+                    voiceCommandEngine.speakThenListen(
+                        "Forwarding to $raw. Say 'send' to forward now, or say a note to add before the message."
+                    ) { c ->
+                        val note = rawText(c)
+                        when {
+                            c is VoiceCommand.Cancel ->
+                                voiceCommandEngine.speakThenListen("Forward cancelled.") { x ->
+                                    handleCommand(x, emails)
+                                }
+                            c is VoiceCommand.Send || note.isBlank() ->
+                                voiceComposeSend(raw, "Fwd: ${email.subject}", fwdBody, emails)
+                            else ->
+                                voiceComposeSend(raw, "Fwd: ${email.subject}", "$note\n\n$fwdBody", emails)
+                        }
+                    }
+                }
+                else ->
+                    voiceCommandEngine.speakThenListen(
+                        "I didn't catch that. Say the email address or 'cancel'."
+                    ) { _ -> startVoiceForward(emails) }
+            }
+        }
     }
 
     // ------------------------------------------------------------------
@@ -603,12 +762,12 @@ class InboxViewModel @Inject constructor(
     private fun executeSearch(rawQuery: String, originEmails: List<EmailItem>) {
         viewModelScope.launch {
             val query = queryParser.parse(rawQuery)
-            voiceManager.speak("Searching…")
+            voiceManager.speak("Searching.")
             try {
                 val results = gmailRepository.searchEmails(query)
                 if (results.isEmpty()) {
                     voiceCommandEngine.speakThenListen(
-                        "No emails found matching '$query'. Say 'search again' or 'inbox' to go back."
+                        "No emails found matching '$rawQuery'. Say 'search again' or 'refresh' to go back to inbox."
                     ) { cmd ->
                         when {
                             cmd is VoiceCommand.Search -> startSearch(originEmails)
@@ -625,7 +784,7 @@ class InboxViewModel @Inject constructor(
                     _uiState.value = InboxUiState.Success(results)
                     voiceCommandEngine.speakThenListen(
                         "Found ${results.size} email${if (results.size == 1) "" else "s"} " +
-                            "matching '$query'. Email 1: From ${first.from}: ${first.subject}. " +
+                            "matching '$rawQuery'. Email 1: From ${first.from}: ${first.subject}. " +
                             "Say 'reed', 'next', or 'search again'."
                     ) { cmd ->
                         if (cmd is VoiceCommand.Search) startSearch(originEmails)
@@ -646,7 +805,7 @@ class InboxViewModel @Inject constructor(
     }
 
     // ------------------------------------------------------------------
-    // Voice settings — linear single-pass voice chooser
+    // Voice settings — linear single-pass chooser
     // ------------------------------------------------------------------
 
     private fun handleVoiceSettings(emails: List<EmailItem>) {
@@ -665,10 +824,8 @@ class InboxViewModel @Inject constructor(
         val count = voices.size
         voiceCommandEngine.speakThenListen(
             "Voice chooser. $count English U.S. voice${if (count == 1) "" else "s"} available. " +
-                "Each will introduce itself in its own voice. " +
-                "Say 'keep it' when you hear one you like. " +
-                "Say 'cancel' to exit without changing. " +
-                "Otherwise I will move on automatically."
+                "Each will introduce itself. Say 'keep it' when you hear one you like, " +
+                "or 'cancel' to exit. Otherwise I will move on automatically."
         ) { _ -> browseVoice(voices, 0, originalVoiceName, emails) }
     }
 
@@ -729,7 +886,7 @@ class InboxViewModel @Inject constructor(
     }
 
     // ------------------------------------------------------------------
-    // Multi-section spoken instructions
+    // Instructions
     // ------------------------------------------------------------------
 
     private fun handleInstructions(emails: List<EmailItem>, section: Int = 0) {
@@ -753,6 +910,14 @@ class InboxViewModel @Inject constructor(
     // ------------------------------------------------------------------
     // Utility
     // ------------------------------------------------------------------
+
+    /**
+     * Extracts the best raw text from a recognised command.
+     * Prefers [VoiceCommand.FreeText.text], then falls back to the last
+     * recognised text stored in VoiceManager.
+     */
+    private fun rawText(cmd: VoiceCommand): String =
+        ((cmd as? VoiceCommand.FreeText)?.text?.trim() ?: voiceManager.recognizedText.value?.trim() ?: "")
 
     fun signOut() {
         viewModelScope.launch {
@@ -797,10 +962,10 @@ class InboxViewModel @Inject constructor(
                 "Say 'reed' to hear the current email. " +
                 "Say 'next' to move forward, 'previous' to go back, 'repeat' to hear again. " +
                 "Say 'reed unread' to jump to your first unread message. Say 'next' to continue.",
-            "Section 3 of 8: Replying and composing. " +
-                "Say 'reply' to reply to the current email. Say 'compose' to write a new email. " +
-                "When composing, the app guides you step by step. " +
-                "Say 'send' when done, 'reed back' to review, or 'cancel' to discard. Say 'next' to continue.",
+            "Section 3 of 8: Composing and replying. " +
+                "Say 'compose' — I will ask for the recipient, subject, and message, one at a time. " +
+                "Say 'reply' to reply to the current email. Say 'forward' to forward it. " +
+                "Say 'read back' to review before sending, 'send' to send, or 'cancel' to discard. Say 'next' to continue.",
             "Section 4 of 8: Managing email. " +
                 "Say 'delete' — then 'yes' to confirm or 'cancel' to abort. " +
                 "Say 'mark as read' to clear the unread badge. " +
@@ -815,9 +980,9 @@ class InboxViewModel @Inject constructor(
                 "P D F, Word, and plain text files are supported. Say 'next' to continue.",
             "Section 7 of 8: Voice and speed settings. " +
                 "Say 'voice settings' to browse English U.S. voices. " +
-                "Say 'read slower' or 'slow down' to decrease email reading speed by 5 percent. " +
+                "Say 'read slower' or 'slow down' to decrease email reading speed by 10 percent. " +
                 "Say 'read faster' or 'speed up' to increase it. " +
-                "Speed changes apply only to email and attachment reading, not to app prompts. Say 'next' to continue.",
+                "After adjusting, say 'repeat' to hear the current email at the new speed. Say 'next' to continue.",
             "Section 8 of 8: Wake from lock screen and sleep. " +
                 "Press the power button to wake your device. " +
                 "VoiceGmail appears on screen and says: VoiceGmail ready, say a command. " +
