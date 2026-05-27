@@ -46,12 +46,19 @@ data class SendMessageRequest(
     @SerializedName("raw") val raw: String
 )
 
+data class ModifyLabelsRequest(
+    @SerializedName("addLabelIds") val addLabelIds: List<String> = emptyList(),
+    @SerializedName("removeLabelIds") val removeLabelIds: List<String> = emptyList()
+)
+
 data class EmailItem(
     val id: String,
     val from: String,
     val subject: String,
     val snippet: String,
-    val body: String
+    val body: String,
+    /** True when the Gmail UNREAD label is present on this message. */
+    val isUnread: Boolean = false
 )
 
 fun GmailMessage.toEmailItem(): EmailItem {
@@ -64,7 +71,8 @@ fun GmailMessage.toEmailItem(): EmailItem {
         from = from,
         subject = subject,
         snippet = snippet,
-        body = body
+        body = body,
+        isUnread = labelIds?.contains("UNREAD") == true
     )
 }
 
