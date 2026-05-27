@@ -3,6 +3,7 @@ package com.example.voicegmail.auth
 import android.content.Context
 import android.net.Uri
 import android.util.Log
+import com.example.voicegmail.debug.DebugLogger
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.edit
@@ -66,8 +67,17 @@ class AuthRepository @Inject constructor(
     // Sign-in flow
     // ------------------------------------------------------------------
 
-    fun buildSignInIntent(): android.content.Intent =
-        authService.getAuthorizationRequestIntent(buildAuthorizationRequest())
+    fun buildSignInIntent(): android.content.Intent {
+        val clientIdPrefix = AuthConfig.CLIENT_ID.take(12) + "…"
+        DebugLogger.log(
+            "Auth",
+            "Building sign-in intent — " +
+                "clientId(prefix)=$clientIdPrefix " +
+                "redirectUri=${AuthConfig.REDIRECT_URI} " +
+                "scopes=${AuthConfig.SCOPES.joinToString()}"
+        )
+        return authService.getAuthorizationRequestIntent(buildAuthorizationRequest())
+    }
 
     private fun buildAuthorizationRequest(): AuthorizationRequest {
         val serviceConfig = AuthorizationServiceConfiguration(
