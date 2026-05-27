@@ -125,6 +125,7 @@ class ComposeViewModel @Inject constructor(
         when (cmd) {
             is VoiceCommand.Send -> confirmAndSend()
             is VoiceCommand.AttachFile -> requestFilePicker()
+            is VoiceCommand.RemoveAttachment -> removeAttachment(cmd.index) { confirmAndSend() }
             is VoiceCommand.Cancel -> cancel()
             is VoiceCommand.FreeText -> {
                 _body.value = "${cmd.text}\n${_body.value}"
@@ -210,6 +211,7 @@ class ComposeViewModel @Inject constructor(
         when (cmd) {
             is VoiceCommand.Cancel -> cancel()
             is VoiceCommand.AttachFile -> requestFilePicker()
+            is VoiceCommand.RemoveAttachment -> removeAttachment(cmd.index) { confirmAndSend() }
             is VoiceCommand.Send -> confirmAndSend()
             is VoiceCommand.FreeText -> {
                 _body.value = cmd.text
@@ -235,20 +237,27 @@ class ComposeViewModel @Inject constructor(
             1 -> "1 attachment: ${_attachments.value[0].filename}. "
             else -> "${_attachments.value.size} attachments. "
         }
+        val removeHint = if (_attachments.value.isNotEmpty())
+            "'remove attachment one' to remove a file, " else ""
         voiceCommandEngine.speakThenListen(
-            "${attNote}Say 'send' to send, 'attach file' to add a file, or 'cancel' to go back."
+            "${attNote}Say 'send' to send, 'attach file' to add a file, " +
+                "${removeHint}or 'cancel' to go back."
         ) { cmd ->
             when (cmd) {
                 is VoiceCommand.Send -> sendEmail(_to.value, _subject.value, _body.value)
                 is VoiceCommand.AttachFile -> requestFilePicker()
+                is VoiceCommand.RemoveAttachment -> removeAttachment(cmd.index) { confirmAndSend() }
                 is VoiceCommand.Cancel -> cancel()
                 else -> {
                     voiceCommandEngine.speakThenListen(
-                        "Say 'send' to send, 'attach file' to add a file, or 'cancel'."
+                        "Say 'send' to send, 'attach file' to add a file, " +
+                            "${removeHint}or 'cancel'."
                     ) { retry ->
                         when (retry) {
                             is VoiceCommand.Send -> sendEmail(_to.value, _subject.value, _body.value)
                             is VoiceCommand.AttachFile -> requestFilePicker()
+                            is VoiceCommand.RemoveAttachment ->
+                                removeAttachment(retry.index) { confirmAndSend() }
                             else -> cancel()
                         }
                     }
@@ -279,7 +288,8 @@ class ComposeViewModel @Inject constructor(
         val countNote = if (count > 1) " You now have $count attachments." else ""
         voiceCommandEngine.speakThenListen(
             "Attached: $filename.$countNote " +
-                "Say 'send' to send, 'attach file' to add another, or 'cancel' to go back."
+                "Say 'send' to send, 'attach file' to add another, " +
+                "'remove attachment one' to remove it, or 'cancel' to go back."
         ) { cmd -> confirmAndSend() }
     }
 
@@ -290,6 +300,41 @@ class ComposeViewModel @Inject constructor(
         voiceManager.speak(
             "That file is too large. Please choose a file under 10 megabytes."
         )
+    }
+
+    /**
+     * Removes the staged attachment at zero-based [index].
+     * Announces the result via TTS then calls [onDone] to continue the flow.
+     */
+    private fun removeAttachment(index: Int, onDone: () -> Unit) {
+        val current = _attachments.value
+        if (current.isEmpty()) {
+            voiceCommandEngine.speakThenListen(
+                "You have no attachments to remove."
+            ) { _ -> onDone() }
+            return
+        }
+        val att = current.getOrNull(index)
+        if (att == null) {
+            val count = current.size
+            voiceCommandEngine.speakThenListen(
+                "There is no attachment ${index + 1}. " +
+                    "You have $count attachment${if (count == 1) "" else "s"}. " +
+                    "Say 'remove attachment one' for the first, and so on."
+            ) { _ -> onDone() }
+            return
+        }
+        _attachments.value = current.toMutableList().also { it.removeAt(index) }
+        val remaining = _attachments.value.size
+        val remainingNote = when (remaining) {
+            0 -> " No attachments remaining."
+            1 -> " 1 attachment remaining: ${_attachments.value[0].filename}."
+            else -> " $remaining attachments remaining."
+        }
+        voiceCommandEngine.speakThenListen(
+            "Removed: ${att.filename}.$remainingNote " +
+                "Say 'send' to send, 'attach file' to add a file, or 'cancel'."
+        ) { _ -> onDone() }
     }
 
     private fun cancel() {
