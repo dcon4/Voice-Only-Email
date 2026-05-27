@@ -10,6 +10,7 @@ import androidx.lifecycle.viewModelScope
 import com.example.voicegmail.BuildConfig
 import com.example.voicegmail.auth.AuthRepository
 import com.example.voicegmail.auth.OAuthDiagnostics
+import java.util.Calendar
 import com.example.voicegmail.debug.DebugLogger
 import com.example.voicegmail.gmail.EmailItem
 import com.example.voicegmail.gmail.GmailRepository
@@ -42,6 +43,9 @@ class InboxViewModel @Inject constructor(
     private val queryParser: NaturalLanguageQueryParser,
     private val forwardDraft: ForwardDraft
 ) : ViewModel() {
+
+    /** True until the first successful inbox load — drives the opening greeting. */
+    private var isFirstLoad = true
 
     private val _uiState = MutableStateFlow<InboxUiState>(InboxUiState.Loading)
     val uiState: StateFlow<InboxUiState> = _uiState
@@ -142,16 +146,32 @@ class InboxViewModel @Inject constructor(
                 val emails = gmailRepository.listInbox()
                 _currentEmailIndex.value = 0
                 _uiState.value = InboxUiState.Success(emails)
-                if (emails.isNotEmpty()) {
-                    val prompt = "You have ${emails.size} email${if (emails.size == 1) "" else "s"}. " +
-                        "Say 'read' to hear the first one, 'next' to move to the next, " +
-                        "'reply' to reply, 'delete' to delete, 'refresh' to reload, or 'compose' to write a new email."
-                    voiceCommandEngine.speakThenListen(prompt) { cmd -> handleCommand(cmd, emails) }
-                } else {
-                    voiceCommandEngine.speakThenListen(
-                        "Your inbox is empty. Say 'refresh' to reload or 'compose' to write a new email."
-                    ) { cmd -> handleCommand(cmd, emails) }
+
+                val greeting = if (isFirstLoad) timeOfDayGreeting() + ". " else ""
+                isFirstLoad = false
+
+                val unreadCount = emails.count { it.isUnread }
+                val prompt = when {
+                    emails.isEmpty() -> {
+                        "${greeting}Your inbox is empty. " +
+                            "Say 'compose' to write a new email or 'refresh' to reload."
+                    }
+                    unreadCount > 0 -> {
+                        val unreadWord = if (unreadCount == 1) "1 unread email" else "$unreadCount unread emails"
+                        val totalWord = if (emails.size == 1) "1 email total" else "${emails.size} emails total"
+                        "${greeting}You have $unreadWord out of $totalWord. " +
+                            "Say 'read unread' to hear your unread messages, " +
+                            "'read' to start from the top, 'search' to find something, " +
+                            "or 'compose' to write a new email."
+                    }
+                    else -> {
+                        val totalWord = if (emails.size == 1) "1 email" else "${emails.size} emails"
+                        "${greeting}Your inbox is all caught up. You have $totalWord. " +
+                            "Say 'read' to hear the first one, 'search' to find something, " +
+                            "or 'compose' to write a new email."
+                    }
                 }
+                voiceCommandEngine.speakThenListen(prompt) { cmd -> handleCommand(cmd, emails) }
             } catch (e: Exception) {
                 val msg = e.message ?: "Failed to load inbox"
                 val isAuthError = msg.contains("401", ignoreCase = true) ||
@@ -632,6 +652,25 @@ class InboxViewModel @Inject constructor(
             type = "text/plain"
             putExtra(Intent.EXTRA_STREAM, uri)
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+    }
+
+    /**
+     * Returns a time-appropriate greeting string based on the device's local
+     * clock hour. Used only on the very first inbox load after app launch.
+     *
+     *   5 – 11  → "Good morning"
+     *  12 – 16  → "Good afternoon"
+     *  17 – 20  → "Good evening"
+     *  21 –  4  → "Good night"
+     */
+    private fun timeOfDayGreeting(): String {
+        val hour = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
+        return when (hour) {
+            in 5..11  -> "Good morning"
+            in 12..16 -> "Good afternoon"
+            in 17..20 -> "Good evening"
+            else      -> "Good night"
         }
     }
 
