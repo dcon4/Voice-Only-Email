@@ -64,20 +64,10 @@ class ComposeViewModel @Inject constructor(
     /** True once [initForwardFromDraft] has loaded the forward fields. */
     private var isForwardMode = false
 
-    /**
-     * Pre-fills the recipient for a reply and marks it so the guided flow
-     * skips asking "Who would you like to send to?". Call this before
-     * [startGuidedVoiceFlow].
-     */
     fun initReplyTo(address: String) {
         _to.value = address
     }
 
-    /**
-     * Reads the pending [ForwardDraft] (if any) and pre-fills all three
-     * fields (to, subject, body). Idempotent — safe to call even when no
-     * draft is waiting. Call this before [startGuidedVoiceFlow].
-     */
     fun initForwardFromDraft() {
         val draft = forwardDraft.consume() ?: return
         _to.value = draft.to
@@ -86,14 +76,6 @@ class ComposeViewModel @Inject constructor(
         isForwardMode = true
     }
 
-    /**
-     * Starts the hands-free guided compose flow.
-     *
-     * - Forward mode: all fields are pre-filled; asks for an optional extra
-     *   message to prepend, then offers "send" or "cancel".
-     * - Reply mode: [_to] is pre-filled; skips the "To" step.
-     * - Fresh compose: collects To → Subject → Body → Confirm.
-     */
     fun startGuidedVoiceFlow() {
         if (isForwardMode) {
             askForForwardExtra()
@@ -274,18 +256,10 @@ class ComposeViewModel @Inject constructor(
     // Attachment helpers
     // ------------------------------------------------------------------
 
-    /**
-     * Emits [ComposeEvent.OpenFilePicker] so the UI layer can launch the
-     * system file chooser. Call this whenever the user says "attach file".
-     */
     fun requestFilePicker() {
         viewModelScope.launch { _composeEvent.emit(ComposeEvent.OpenFilePicker) }
     }
 
-    /**
-     * Called by the UI after the user selects a file. Adds the file to the
-     * pending attachment list and announces the result via TTS.
-     */
     fun attachmentSelected(filename: String, mimeType: String, bytes: ByteArray) {
         _attachments.value = _attachments.value + OutgoingAttachment(filename, mimeType, bytes)
         val count = _attachments.value.size
@@ -294,15 +268,9 @@ class ComposeViewModel @Inject constructor(
             "Attached: $filename.$countNote " +
                 "Say 'send' to send, 'attach file' to add another, " +
                 "'remove attachment one' to remove it, or 'cancel' to go back."
-        ) { cmd -> confirmAndSend() }
+        ) { _ -> confirmAndSend() }
     }
 
-    /**
-     * Reads the full composed message (To, Subject, body, attachments) aloud so
-     * the user can verify before sending. Acts as its own confirm prompt —
-     * the user can say 'send', 'read back' again, 'attach file', or 'cancel'
-     * without an extra confirmation step.
-     */
     private fun readBackMessage() {
         val bodyText = _body.value.takeIf { it.isNotBlank() } ?: "no message body"
         val attNote = when (_attachments.value.size) {
@@ -328,19 +296,12 @@ class ComposeViewModel @Inject constructor(
         }
     }
 
-    /**
-     * Announces that the chosen file exceeded the size limit (10 MB).
-     */
     fun attachmentTooLarge() {
         voiceManager.speak(
             "That file is too large. Please choose a file under 10 megabytes."
         )
     }
 
-    /**
-     * Removes the staged attachment at zero-based [index].
-     * Announces the result via TTS then calls [onDone] to continue the flow.
-     */
     private fun removeAttachment(index: Int, onDone: () -> Unit) {
         val current = _attachments.value
         if (current.isEmpty()) {
@@ -408,8 +369,15 @@ class ComposeViewModel @Inject constructor(
         }
     }
 
+    /**
+     * Adapts the legacy [onResult] (String) callback for callers that use the
+     * pre-existing manual voice-input API. Uses only the highest-confidence
+     * hypothesis from the multi-result recogniser.
+     */
     fun startVoiceInput(onResult: (String) -> Unit) {
-        voiceManager.startListening(onResult)
+        voiceManager.startListening { candidates ->
+            onResult(candidates.firstOrNull() ?: "")
+        }
     }
 
     fun stopVoiceInput() {
