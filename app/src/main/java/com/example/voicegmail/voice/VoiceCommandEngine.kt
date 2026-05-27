@@ -121,6 +121,15 @@ class VoiceCommandEngine @Inject constructor(
         }
     }
 
+    /**
+     * Speak one chunk of an email at reading rate — no listening window.
+     * [onDone] is invoked when TTS completes so the ViewModel can advance to
+     * the next chunk immediately, keeping reading fluid and beep-free.
+     */
+    fun speakEmailChunk(text: String, onDone: () -> Unit) {
+        voiceManager.speakEmailChunk(text, onDone)
+    }
+
     fun stopAll() = voiceManager.stopAll()
 
     /**
