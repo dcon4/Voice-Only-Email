@@ -9,11 +9,22 @@ import retrofit2.http.Query
 
 interface GmailApiService {
 
+    /**
+     * Lists messages in the user's mailbox.
+     *
+     * [labelIds] filters to a specific label (e.g. "INBOX"). Pass **null** to
+     * search across all labels (required for the search feature so results are
+     * not restricted to the inbox).
+     *
+     * [query] is a Gmail search query string (e.g. `from:david is:unread`).
+     * Retrofit omits null @Query parameters, so callers that don't need a
+     * filter should leave it at the default null.
+     */
     @GET("gmail/v1/users/me/messages")
     suspend fun listMessages(
         @Header("Authorization") auth: String,
         @Query("maxResults") maxResults: Int = 20,
-        @Query("labelIds") labelIds: String = "INBOX",
+        @Query("labelIds") labelIds: String? = "INBOX",
         @Query("q") query: String? = null
     ): ListMessagesResponse
 
@@ -30,14 +41,13 @@ interface GmailApiService {
         @Body message: SendMessageRequest
     ): GmailMessage
 
-    /** Moves the message to the user's Trash. Google's API requires no request body. */
     @POST("gmail/v1/users/me/messages/{id}/trash")
     suspend fun trashMessage(
         @Header("Authorization") auth: String,
         @Path("id") id: String
     ): GmailMessage
 
-    /** Adds or removes labels (e.g. remove UNREAD to mark as read). */
+    /** Adds or removes labels (e.g. remove UNREAD to mark as read). Requires gmail.modify scope. */
     @POST("gmail/v1/users/me/messages/{id}/modify")
     suspend fun modifyMessage(
         @Header("Authorization") auth: String,
@@ -45,7 +55,6 @@ interface GmailApiService {
         @Body request: ModifyLabelsRequest
     ): GmailMessage
 
-    /** Downloads the raw (base64url-encoded) bytes of one attachment. */
     @GET("gmail/v1/users/me/messages/{messageId}/attachments/{attachmentId}")
     suspend fun getAttachment(
         @Header("Authorization") auth: String,
