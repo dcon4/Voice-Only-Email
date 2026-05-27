@@ -37,6 +37,15 @@ class MainActivity : ComponentActivity() {
     @Inject lateinit var voiceManager: VoiceManager
     @Inject lateinit var oAuthRedirectBus: OAuthRedirectBus
 
+    /**
+     * PARTIAL_WAKE_LOCK keeps the CPU awake for the entire Activity lifetime so
+     * that the TTS→mic→command loop continues even after the screen turns off.
+     *
+     * VoiceWakeService independently holds its own PARTIAL_WAKE_LOCK for when
+     * the Activity is not in the foreground at all. Together they guarantee that
+     * at least one component is keeping the CPU alive at all times while the
+     * user is actively using the app.
+     */
     private var wakeLock: PowerManager.WakeLock? = null
 
     // ---- Permission launchers ------------------------------------------------
@@ -57,7 +66,6 @@ class MainActivity : ComponentActivity() {
     private val notifPermissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
             DebugLogger.log("MainActivity", "POST_NOTIFICATIONS granted=$granted")
-            // Even if denied the foreground service runs — the notification just stays hidden.
         }
 
     // ---- Lifecycle -----------------------------------------------------------
@@ -66,29 +74,31 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         DebugLogger.log("MainActivity", "onCreate")
 
-        // Show this activity over the lock screen and turn the screen on when
-        // the app is brought to the foreground from VoiceWakeService.
         enableLockScreenMode()
-
-        // Handle OAuth redirect on a fresh process start.
         handleOAuthRedirectIntent(intent)
 
-        // Mic permission — required for voice recognition.
+        // PARTIAL_WAKE_LOCK: screen may dim/turn off, but CPU stays awake so
+        // TTS and SpeechRecognizer keep working in the background.
+        val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
+        wakeLock = pm.newWakeLock(
+            PowerManager.PARTIAL_WAKE_LOCK,
+            "VoiceGmail:ActivityWakeLock"
+        ).also { it.acquire() } // indefinite; released in onDestroy
+
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
                 != PackageManager.PERMISSION_GRANTED) {
             micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
         }
 
-        // Notification permission — Android 13+ (API 33+).
-        // The foreground service notification for VoiceWakeService requires this on API 33+.
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
             ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
                 != PackageManager.PERMISSION_GRANTED) {
             notifPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
 
-        // Start the background wake service so the app can be activated by the
-        // power button even when the screen is locked.
+        // Start the background wake service — monitors ACTION_SCREEN_ON, holds
+        // its own PARTIAL_WAKE_LOCK, and provides MICROPHONE foreground service
+        // type for the whole process.
         VoiceWakeService.start(this)
 
         setContent {
@@ -140,39 +150,17 @@ class MainActivity : ComponentActivity() {
         setIntent(intent)
         DebugLogger.log("MainActivity", "onNewIntent — data=${intent.data} action=${intent.action}")
         handleOAuthRedirectIntent(intent)
-        // Wake intent from VoiceWakeService: the WakeEventBus has already been
-        // posted by the service before startActivity() was called, so InboxViewModel
-        // will receive the wake event via its coroutine collector — no extra work here.
-    }
-
-    override fun onResume() {
-        super.onResume()
-        DebugLogger.log("MainActivity", "onResume")
-        val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
-        @Suppress("DEPRECATION")
-        wakeLock = pm.newWakeLock(
-            PowerManager.SCREEN_DIM_WAKE_LOCK or PowerManager.ACQUIRE_CAUSES_WAKEUP,
-            "VoiceGmail:ListeningWakeLock"
-        ).also { it.acquire(10 * 60 * 1000L) }
-    }
-
-    override fun onPause() {
-        super.onPause()
-        wakeLock?.let { if (it.isHeld) it.release() }
-        wakeLock = null
     }
 
     override fun onDestroy() {
         super.onDestroy()
+        wakeLock?.let { if (it.isHeld) it.release() }
+        wakeLock = null
         voiceManager.shutdown()
     }
 
     // ---- Helpers -------------------------------------------------------------
 
-    /**
-     * Allow the activity to appear over the lock screen and turn the screen on.
-     * API 27+ uses Activity methods; API 26 falls back to the deprecated window flags.
-     */
     private fun enableLockScreenMode() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
             setShowWhenLocked(true)
