@@ -13,6 +13,7 @@ import com.example.voicegmail.auth.OAuthDiagnostics
 import com.example.voicegmail.debug.DebugLogger
 import com.example.voicegmail.gmail.EmailItem
 import com.example.voicegmail.gmail.GmailRepository
+import com.example.voicegmail.voice.ForwardDraft
 import com.example.voicegmail.voice.NaturalLanguageQueryParser
 import com.example.voicegmail.voice.VoiceCommand
 import com.example.voicegmail.voice.VoiceCommandEngine
@@ -38,7 +39,8 @@ class InboxViewModel @Inject constructor(
     private val gmailRepository: GmailRepository,
     private val voiceManager: VoiceManager,
     private val voiceCommandEngine: VoiceCommandEngine,
-    private val queryParser: NaturalLanguageQueryParser
+    private val queryParser: NaturalLanguageQueryParser,
+    private val forwardDraft: ForwardDraft
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow<InboxUiState>(InboxUiState.Loading)
@@ -183,7 +185,7 @@ class InboxViewModel @Inject constructor(
                     val unreadPrefix = if (email.isUnread) "Unread. " else ""
                     val text = "${unreadPrefix}Email ${_currentEmailIndex.value + 1} of ${emails.size}. " +
                         "From ${email.from}. Subject: ${email.subject}. ${email.body.take(500)}. " +
-                        "Say 'reply' to reply, 'delete' to delete, " +
+                        "Say 'reply' to reply, 'forward' to forward, 'delete' to delete, " +
                         (if (email.isUnread) "'mark as read' to clear the unread badge, " else "") +
                         "'next' for the next email, or 'repeat' to hear this again."
                     voiceCommandEngine.speakThenListen(text) { cmd -> handleCommand(cmd, emails) }
@@ -262,6 +264,7 @@ class InboxViewModel @Inject constructor(
                 }
             }
             is VoiceCommand.MarkAsRead -> markCurrentEmailAsRead(emails)
+            is VoiceCommand.Forward -> forwardCurrentEmail(emails)
             is VoiceCommand.Search -> startSearch(emails)
             is VoiceCommand.Refresh -> loadInbox()
             is VoiceCommand.Compose -> {
@@ -391,6 +394,71 @@ class InboxViewModel @Inject constructor(
                     }
                 }
             }
+        }
+    }
+
+    /**
+     * Asks the user for a recipient address then builds a forward draft and
+     * navigates to the compose screen. The body is stored in [ForwardDraft]
+     * to avoid URL-encoding / nav-arg length problems.
+     */
+    private fun forwardCurrentEmail(emails: List<EmailItem>) {
+        val email = emails.getOrNull(_currentEmailIndex.value)
+        if (email == null) {
+            voiceCommandEngine.speakThenListen(
+                "No email selected. Say 'read' to hear an email first."
+            ) { cmd -> handleCommand(cmd, emails) }
+            return
+        }
+        voiceCommandEngine.speakThenListen(
+            "Forwarding email from ${email.from}, subject: ${email.subject}. " +
+                "Who would you like to forward this to? Say the email address."
+        ) { cmd ->
+            when (cmd) {
+                is VoiceCommand.Cancel -> voiceCommandEngine.speakThenListen(
+                    "Forward cancelled."
+                ) { next -> handleCommand(next, emails) }
+                is VoiceCommand.FreeText -> launchForward(email, cmd.text, emails)
+                else -> {
+                    val raw = voiceManager.recognizedText.value ?: ""
+                    if (raw.isNotBlank()) {
+                        launchForward(email, raw, emails)
+                    } else {
+                        voiceCommandEngine.speakThenListen(
+                            "I didn't catch that. Please say the recipient's email address, or say cancel."
+                        ) { retry ->
+                            when (retry) {
+                                is VoiceCommand.Cancel -> voiceCommandEngine.speakThenListen(
+                                    "Forward cancelled."
+                                ) { next -> handleCommand(next, emails) }
+                                is VoiceCommand.FreeText -> launchForward(email, retry.text, emails)
+                                else -> voiceCommandEngine.speakThenListen(
+                                    "Forward cancelled."
+                                ) { next -> handleCommand(next, emails) }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private fun launchForward(email: EmailItem, to: String, emails: List<EmailItem>) {
+        val forwardedBody = buildString {
+            appendLine()
+            appendLine("---------- Forwarded message ---------")
+            appendLine("From: ${email.from}")
+            appendLine("Subject: ${email.subject}")
+            appendLine()
+            append(email.body)
+        }
+        forwardDraft.set(
+            to = to,
+            subject = "Fwd: ${email.subject}",
+            body = forwardedBody
+        )
+        viewModelScope.launch {
+            _navigationEvent.emit(InboxNavEvent.NavigateToCompose(isForward = true))
         }
     }
 
@@ -537,6 +605,13 @@ sealed class InboxUiState {
 }
 
 sealed class InboxNavEvent {
-    /** Navigate to the compose screen. [replyTo] is pre-filled when replying. */
-    data class NavigateToCompose(val replyTo: String? = null) : InboxNavEvent()
+    /**
+     * Navigate to the compose screen.
+     * [replyTo] is the pre-filled recipient address when replying.
+     * [isForward] is true when the full draft (to/subject/body) is waiting in [ForwardDraft].
+     */
+    data class NavigateToCompose(
+        val replyTo: String? = null,
+        val isForward: Boolean = false
+    ) : InboxNavEvent()
 }
