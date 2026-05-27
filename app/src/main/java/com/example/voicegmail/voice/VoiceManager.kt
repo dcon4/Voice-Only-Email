@@ -534,6 +534,22 @@ class VoiceManager @Inject constructor(
     // Control
     // ------------------------------------------------------------------
 
+    /**
+     * Silently destroy the current recognizer session without firing any
+     * error or result callbacks.  Use this when a higher-priority event
+     * (e.g. power-button wake) needs to discard whatever recognition was in
+     * flight — [stopListening] fires ERROR_CLIENT which triggers retries and
+     * can interfere with the new session.
+     */
+    fun cancelListening() {
+        mainHandler.post {
+            speechRecognizer?.destroy()
+            speechRecognizer = null
+            _isListening.value = false
+            unmuteRecognitionBeep()
+        }
+    }
+
     fun stopListening() {
         mainHandler.post { speechRecognizer?.stopListening(); _isListening.value = false }
     }
