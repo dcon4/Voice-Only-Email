@@ -2,32 +2,33 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
+    <!-- ── Core permissions ─────────────────────────────────────────── -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.VIBRATE" />
-    <!--
-        WAKE_LOCK: lets VoiceWakeService hold a PARTIAL_WAKE_LOCK so the CPU
-        stays awake (with screen off) while TTS is speaking and the microphone
-        is open between voice commands.
-    -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
-    <!--
-        FOREGROUND_SERVICE: required to start VoiceWakeService as a foreground
-        service at all.
-    -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-    <!--
-        FOREGROUND_SERVICE_MICROPHONE: required on Android 12+ (API 31+) to
-        declare a foreground service with foregroundServiceType="microphone".
-        This grants the whole process microphone access while in the background,
-        so SpeechRecognizer can listen even with the screen off.
-    -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
-    <!--
-        POST_NOTIFICATIONS: required on Android 13+ for the foreground service
-        notification to appear in the status bar.
-    -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <!--
+        MODIFY_AUDIO_SETTINGS: required to start and stop Bluetooth SCO
+        (AudioManager.startBluetoothSco / stopBluetoothSco). Used by
+        BluetoothAudioRouter in the "bt" build flavor; harmless in "standard".
+    -->
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+
+    <!--
+        BLUETOOTH (legacy, API ≤ 30): allows querying Bluetooth state.
+        BLUETOOTH_CONNECT (API 31+): allows connecting to paired BT devices.
+        Both are declared so the system picks the right one per Android version.
+    -->
+    <uses-permission
+        android:name="android.permission.BLUETOOTH"
+        android:maxSdkVersion="30" />
+    <uses-permission
+        android:name="android.permission.BLUETOOTH_CONNECT"
+        android:minSdkVersion="31" />
 
     <application
         android:name=".VoiceGmailApp"
@@ -49,10 +50,6 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
-            <!--
-                OAuth redirect: singleTask means onNewIntent() fires on the
-                existing instance, or onCreate() gets the URI on a fresh start.
-            -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
@@ -61,23 +58,11 @@
             </intent-filter>
         </activity>
 
-        <!--
-            Disable AppAuth's built-in RedirectUriReceiverActivity so it cannot
-            compete with MainActivity for the OAuth redirect URI.
-        -->
         <activity
             android:name="net.openid.appauth.RedirectUriReceiverActivity"
             android:exported="true"
             tools:node="replace" />
 
-        <!--
-            VoiceWakeService:
-            - Detects ACTION_SCREEN_ON and brings MainActivity over the lock
-              screen so the blind user can speak commands immediately.
-            - foregroundServiceType="microphone" grants this process microphone
-              access even when the screen is off and the app is not in the
-              foreground (Android 10+ policy).
-        -->
         <service
             android:name=".VoiceWakeService"
             android:exported="false"
