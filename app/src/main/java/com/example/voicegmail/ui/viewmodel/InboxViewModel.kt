@@ -100,10 +100,10 @@ class InboxViewModel @Inject constructor(
     }
 
     /**
-     * Handles an OAuth redirect URI delivered by MainActivity.onNewIntent (or onCreate
-     * on a fresh process after process death). Exchanges the authorization code for
-     * tokens directly via AuthRepository, bypassing AppAuth's
-     * AuthorizationManagementActivity which cannot deliver results after process death.
+     * Handles an OAuth redirect URI delivered by MainActivity.onNewIntent (or onCreate on
+     * a fresh process after process death). Exchanges the authorization code for tokens
+     * directly, bypassing AppAuth's AuthorizationManagementActivity which cannot deliver
+     * results after process death.
      */
     private suspend fun handleOAuthRedirectUri(uri: Uri) {
         DebugLogger.log("Auth", "OAuth redirect received — uri=${uri.toString().take(100)}")
@@ -249,6 +249,7 @@ class InboxViewModel @Inject constructor(
             is VoiceCommand.Delete -> {
                 val email = emails.getOrNull(_currentEmailIndex.value)
                 if (email != null) {
+                    // Ask for confirmation — accidental deletion is serious for a blind user.
                     voiceCommandEngine.speakThenListen(
                         "Delete email from ${email.from}, subject: ${email.subject}? " +
                             "Say 'yes' to confirm or 'cancel' to go back."
@@ -369,7 +370,8 @@ class InboxViewModel @Inject constructor(
                         "Attachment ${i + 1}: ${a.filename}"
                     }.joinToString(". ")
                     voiceCommandEngine.speakThenListen(
-                        "$names. Say 'read attachment one' to read the first, or 'read attachment two' for the second, and so on."
+                        "$names. Say 'read attachment one' to read the first, " +
+                            "or 'read attachment two' for the second, and so on."
                     ) { cmd -> handleCommand(cmd, emails) }
                 } else {
                     voiceCommandEngine.speakThenListen(
@@ -398,24 +400,25 @@ class InboxViewModel @Inject constructor(
                     val total = emails.getOrNull(_currentEmailIndex.value)?.attachments?.size ?: 0
                     voiceCommandEngine.speakThenListen(
                         if (total == 0) "This email has no attachments."
-                        else "There is no attachment number ${command.index}. This email has $total attachment${if (total == 1) "" else "s"}."
+                        else "There is no attachment number ${command.index}. " +
+                            "This email has $total attachment${if (total == 1) "" else "s"}."
                     ) { cmd -> handleCommand(cmd, emails) }
                 }
             }
-            is VoiceCommand.ReadUnread -> {
+            is VoiceCommand.ReadAllUnread -> {
                 val unread = emails.filter { it.isUnread }
                 if (unread.isEmpty()) {
                     voiceCommandEngine.speakThenListen(
                         "No unread emails. All caught up!"
                     ) { cmd -> handleCommand(cmd, emails) }
                 } else {
-                    val idx = emails.indexOf(unread.first())
-                    _currentEmailIndex.value = idx.coerceAtLeast(0)
+                    val idx = emails.indexOf(unread.first()).coerceAtLeast(0)
+                    _currentEmailIndex.value = idx
                     val email = unread.first()
                     voiceCommandEngine.speakThenListen(
                         "You have ${unread.size} unread email${if (unread.size == 1) "" else "s"}. " +
                             "First unread: From ${email.from}. Subject: ${email.subject}. " +
-                            "Say 'read' to hear the full message, or 'next' to go to the next unread."
+                            "Say 'read' to hear the full message, or 'next' to go to the next email."
                     ) { cmd -> handleCommand(cmd, emails) }
                 }
             }
@@ -425,15 +428,22 @@ class InboxViewModel @Inject constructor(
                     "Cancelled. Say a command."
                 ) { cmd -> handleCommand(cmd, emails) }
             }
-            is VoiceCommand.Yes -> {
+            is VoiceCommand.Confirm -> {
+                // Confirm with no pending action — prompt for a command.
                 voiceCommandEngine.speakThenListen(
-                    "I'm not sure what you'd like to confirm. Say a command."
+                    "Nothing to confirm. Say a command."
                 ) { cmd -> handleCommand(cmd, emails) }
             }
-            is VoiceCommand.Unknown, is VoiceCommand.FreeText -> {
+            is VoiceCommand.Help -> {
                 voiceCommandEngine.speakThenListen(
-                    "Sorry, I didn't understand. Say 'read', 'next', 'previous', " +
-                        "'reply', 'forward', 'delete', 'compose', 'search', or 'refresh'."
+                    "Available commands: 'read', 'next', 'previous', 'reply', 'forward', " +
+                        "'delete', 'compose', 'search', 'refresh', 'read unread', " +
+                        "'mark as read', 'list attachments', or 'repeat'."
+                ) { cmd -> handleCommand(cmd, emails) }
+            }
+            else -> {
+                voiceCommandEngine.speakThenListen(
+                    "Sorry, I didn't understand that. Say 'help' to hear available commands."
                 ) { cmd -> handleCommand(cmd, emails) }
             }
         }
@@ -445,7 +455,7 @@ class InboxViewModel @Inject constructor(
         emails: List<EmailItem>
     ) {
         when (command) {
-            is VoiceCommand.Yes -> {
+            is VoiceCommand.Confirm -> {
                 viewModelScope.launch {
                     try {
                         gmailRepository.deleteEmail(email.id)
@@ -464,10 +474,11 @@ class InboxViewModel @Inject constructor(
                         }
                     } catch (e: Exception) {
                         voiceCommandEngine.speakThenListen(
-                            "Delete failed. ${e.message ?: "Unknown error."}. Say 'retry' or 'cancel'."
+                            "Delete failed. ${e.message ?: "Unknown error."}. Say 'try again' or 'cancel'."
                         ) { cmd ->
                             when (cmd) {
-                                is VoiceCommand.TryAgain -> handleDeleteConfirmation(VoiceCommand.Yes, email, emails)
+                                is VoiceCommand.TryAgain ->
+                                    handleDeleteConfirmation(VoiceCommand.Confirm, email, emails)
                                 else -> handleCommand(cmd, emails)
                             }
                         }
