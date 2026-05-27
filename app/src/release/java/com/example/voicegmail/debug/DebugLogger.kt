@@ -1,16 +1,63 @@
 package com.example.voicegmail.debug
 
 import android.content.Context
+import android.util.Log
 import java.io.File
+import java.io.FileWriter
+import java.io.IOException
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 /**
- * No-op stub used in release builds.
- * All calls are inlined away by the compiler; no file I/O or overhead at runtime.
+ * Diagnostic logger for release builds — writes to a file so OAuth errors
+ * can be inspected without a USB cable. Remove once sign-in is confirmed working.
  */
 object DebugLogger {
-    fun init(context: Context) = Unit
-    fun log(tag: String, message: String) = Unit
-    fun logException(tag: String, message: String, e: Throwable) = Unit
-    fun getLogFile(): File? = null
-    fun clearLog() = Unit
+    private const val TAG = "VoiceGmailDebug"
+    private const val LOG_FILE_NAME = "voicegmail-debug.log"
+
+    private var logFile: File? = null
+
+    fun init(context: Context) {
+        if (logFile != null) return
+        logFile = File(context.filesDir, LOG_FILE_NAME)
+        try {
+            if (!logFile!!.exists()) logFile!!.createNewFile()
+        } catch (e: IOException) {
+            Log.e(TAG, "Failed to initialize debug log file", e)
+        }
+        log("DebugLogger", "Logger initialized — log file: ${logFile?.absolutePath}")
+    }
+
+    fun log(tag: String, message: String) {
+        val line = "${timestamp()} [$tag] $message"
+        Log.d(TAG, line)
+        appendLine(line)
+    }
+
+    fun logException(tag: String, message: String, throwable: Throwable) {
+        val line = "${timestamp()} [$tag] $message — ${throwable.javaClass.simpleName}: ${throwable.message}"
+        Log.e(TAG, line, throwable)
+        appendLine(line)
+        appendLine(throwable.stackTraceToString())
+    }
+
+    fun getLogFile(): File? = logFile
+
+    fun clearLog() {
+        logFile?.writeText("")
+    }
+
+    private fun appendLine(line: String) {
+        val file = logFile ?: return
+        try {
+            FileWriter(file, true).use { it.appendLine(line) }
+        } catch (_: IOException) {
+            Log.e(TAG, "Failed to write debug log line")
+        }
+    }
+
+    private fun timestamp(): String =
+        SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.US).format(Date())
 }
