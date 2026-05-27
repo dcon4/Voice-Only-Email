@@ -23,6 +23,7 @@ import com.example.voicegmail.voice.NaturalLanguageQueryParser
 import com.example.voicegmail.voice.VoiceCommand
 import com.example.voicegmail.voice.VoiceCommandEngine
 import com.example.voicegmail.voice.VoiceManager
+import com.example.voicegmail.voice.forSpeech
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -364,9 +365,11 @@ class InboxViewModel @Inject constructor(
             else -> "This email has ${email.attachments.size} attachments. Say 'list attachments' to hear them. "
         }
         val readAttachHint = if (email.attachments.isNotEmpty()) "'read attachment one' to read the first, " else ""
+        // Apply URL sanitisation before handing to TTS
+        val bodyForSpeech = email.body.forSpeech().take(800)
         voiceCommandEngine.speakEmailThenListen(
             "${unreadPrefix}Email ${_currentEmailIndex.value + 1} of ${emails.size}. " +
-                "From ${email.from}. Subject: ${email.subject}. ${email.body.take(500)}. " +
+                "From ${email.from}. Subject: ${email.subject}. $bodyForSpeech. " +
                 attachNote + "Say 'reply', 'forward', 'delete', ${readAttachHint}'next', or 'repeat'."
         ) { cmd -> handleCommand(cmd, emails) }
     }
@@ -390,12 +393,13 @@ class InboxViewModel @Inject constructor(
 
     private fun repeatCurrentEmail(emails: List<EmailItem>) {
         val email = emails.getOrNull(_currentEmailIndex.value)
-        if (email != null)
+        if (email != null) {
+            val bodyForSpeech = email.body.forSpeech().take(800)
             voiceCommandEngine.speakEmailThenListen(
                 "Repeating email ${_currentEmailIndex.value + 1}. From ${email.from}. " +
-                    "Subject: ${email.subject}. ${email.body.take(500)}"
+                    "Subject: ${email.subject}. $bodyForSpeech"
             ) { cmd -> handleCommand(cmd, emails) }
-        else
+        } else
             voiceCommandEngine.speakThenListen("No email to repeat. Say 'reed' first.") { cmd ->
                 handleCommand(cmd, emails)
             }
@@ -422,8 +426,9 @@ class InboxViewModel @Inject constructor(
         val emails = currentEmails()
         val idx = emails.indexOf(email).takeIf { it >= 0 } ?: _currentEmailIndex.value
         _currentEmailIndex.value = idx
+        val bodyForSpeech = email.body.forSpeech().take(800)
         voiceCommandEngine.speakEmailThenListen(
-            "From ${email.from}. Subject: ${email.subject}. ${email.body.take(500)}. " +
+            "From ${email.from}. Subject: ${email.subject}. $bodyForSpeech. " +
                 "Say 'reply', 'delete', 'next', or 'repeat'."
         ) { cmd -> handleCommand(cmd, emails) }
     }
@@ -458,7 +463,9 @@ class InboxViewModel @Inject constructor(
         viewModelScope.launch {
             voiceManager.speak("Reading ${attachment.filename}. Please wait.")
             try {
-                val text = attachmentReader.readAttachment(email.id, attachment)
+                val raw  = attachmentReader.readAttachment(email.id, attachment)
+                // Sanitise URLs in the attachment text before speaking
+                val text = raw.forSpeech()
                 voiceCommandEngine.speakEmailThenListen(text) { cmd -> handleCommand(cmd, emails) }
             } catch (e: Exception) {
                 voiceCommandEngine.speakThenListen(
@@ -631,7 +638,7 @@ class InboxViewModel @Inject constructor(
             is VoiceCommand.Send     -> voiceComposeSend(to, subject, body, emails)
             is VoiceCommand.ReadBack ->
                 voiceCommandEngine.speakThenListen(
-                    "To: $to. Subject: $subject. Message: $body. " +
+                    "To: $to. Subject: $subject. Message: ${body.forSpeech()}. " +
                         "Say 'send', 'add more', 'delete last word or sentence', " +
                         "'start over', 'save draft', or 'cancel'."
                 ) { c -> handleComposeFinal(to, subject, body, c, emails) }
@@ -690,7 +697,6 @@ class InboxViewModel @Inject constructor(
                 voiceCommandEngine.speakThenListen("Compose cancelled.") { c -> handleCommand(c, emails) }
 
             is VoiceCommand.None ->
-                // Called programmatically after AddMore appends text.
                 voiceCommandEngine.speakThenListen(
                     "Added. Say 'send', 'read back', 'add more', 'delete last word or sentence', " +
                         "'start over', 'save draft', or 'cancel'."
@@ -727,25 +733,18 @@ class InboxViewModel @Inject constructor(
     // Body editing helpers
     // ------------------------------------------------------------------
 
-    /** Remove the last whitespace-delimited word from [text]. */
     private fun deleteLastWord(text: String): String {
         val t = text.trimEnd()
         val idx = t.lastIndexOf(' ')
         return if (idx < 0) "" else t.substring(0, idx)
     }
 
-    /**
-     * Remove everything after the second-to-last sentence boundary (.!?).
-     * If there is only one sentence, clear the body entirely.
-     */
     private fun deleteLastSentence(text: String): String {
         val t = text.trimEnd()
-        // Find the last sentence-ending punctuation that is NOT the very last character.
         val match = Regex("""[.!?](?=[^.!?]*${'$'})""").find(t.dropLast(1))
         return if (match != null) t.substring(0, match.range.last + 1).trimEnd() else ""
     }
 
-    /** Remove the last newline-delimited paragraph from [text]. */
     private fun deleteLastParagraph(text: String): String {
         val t = text.trimEnd()
         val idx = t.lastIndexOf('\n')
@@ -919,21 +918,13 @@ class InboxViewModel @Inject constructor(
         }
     }
 
-    /**
-     * Read back the draft and enter an editing loop. The user can:
-     *  - "send"          → send via Gmail drafts API
-     *  - "add more"      → append more text to body
-     *  - "delete last"   → trim last word/sentence/paragraph
-     *  - "start over"    → keep To/Subject, re-dictate body
-     *  - "save draft"    → update the existing draft and exit
-     *  - "cancel"        → exit without changes
-     */
     private fun resumeDraft(draft: DraftItem, allDrafts: List<DraftItem>, emails: List<EmailItem>) {
+        val bodyPreview = draft.body.forSpeech().take(400).ifBlank { "no body yet" }
         voiceCommandEngine.speakThenListen(
             "Draft ${allDrafts.indexOf(draft) + 1}. " +
                 "To: ${draft.to.ifBlank { "unknown" }}. " +
                 "Subject: ${draft.subject.ifBlank { "no subject" }}. " +
-                "Body: ${draft.body.take(300).ifBlank { "no body yet" }}. " +
+                "Body: $bodyPreview. " +
                 "Say 'send', 'add more', 'delete last word or sentence', " +
                 "'start over', 'save draft', or 'cancel'."
         ) { cmd -> handleDraftEdit(draft, draft.body, allDrafts, cmd, emails) }
@@ -951,7 +942,6 @@ class InboxViewModel @Inject constructor(
                 viewModelScope.launch {
                     voiceManager.speak("Sending.")
                     try {
-                        // If the body was edited, update the draft first.
                         if (body != draft.body)
                             gmailRepository.updateDraft(draft.id, draft.to, draft.subject, body)
                         gmailRepository.sendDraft(draft.id)
@@ -1007,11 +997,13 @@ class InboxViewModel @Inject constructor(
                 ) { c -> handleDraftEdit(draft, newBody, allDrafts, c, emails) }
             }
 
-            is VoiceCommand.ReadBack ->
+            is VoiceCommand.ReadBack -> {
+                val bodyForSpeech = body.forSpeech()
                 voiceCommandEngine.speakThenListen(
-                    "To: ${draft.to}. Subject: ${draft.subject}. Body: $body. " +
+                    "To: ${draft.to}. Subject: ${draft.subject}. Body: $bodyForSpeech. " +
                         "Say 'send', 'add more', 'delete last word or sentence', 'save draft', or 'cancel'."
                 ) { c -> handleDraftEdit(draft, body, allDrafts, c, emails) }
+            }
 
             is VoiceCommand.SaveDraft -> {
                 viewModelScope.launch {
@@ -1248,6 +1240,7 @@ class InboxViewModel @Inject constructor(
                 "Say 'read slower' or 'slow down' to decrease email reading speed by 10 percent. " +
                 "Say 'read faster' or 'speed up' to increase it. " +
                 "After adjusting, say 'repeat' to hear the current email at the new speed. " +
+                "Long web links in email bodies are automatically shortened to 'weblink at domain dot com'. " +
                 "Press the power button to wake the app from sleep. " +
                 "That is the end of the instructions. " +
                 "Say 'previous', 'repeat', or any command to return to your inbox."
