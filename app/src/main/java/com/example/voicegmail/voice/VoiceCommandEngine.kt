@@ -19,6 +19,7 @@ sealed class VoiceCommand {
     object Confirm         : VoiceCommand()
     object Search          : VoiceCommand()
     object MarkAsRead      : VoiceCommand()
+    object MarkAsUnread    : VoiceCommand()
     object Forward         : VoiceCommand()
     object ReadAllUnread   : VoiceCommand()
     object Help            : VoiceCommand()
@@ -37,6 +38,11 @@ sealed class VoiceCommand {
     object ReadSlower      : VoiceCommand()
     object ReadFaster      : VoiceCommand()
     object SessionTimeout  : VoiceCommand()
+
+    /** Pause mid-email reading. */
+    object Pause           : VoiceCommand()
+    /** Resume reading from the last paused position. */
+    object ContinueReading : VoiceCommand()
 
     // ── Compose editing ───────────────────────────────────────────────────
     /** Append more dictated text to the current message body. */
@@ -79,6 +85,20 @@ class VoiceCommandEngine @Inject constructor(
 
     fun speakEmailThenListen(prompt: String, onCommand: (VoiceCommand) -> Unit) {
         voiceManager.speakEmailAndThenListen(prompt) { candidates ->
+            val cmd = parseAll(candidates)
+            _lastCommand.value = cmd
+            onCommand(cmd)
+        }
+    }
+
+    /**
+     * Speak one chunk of an email at email reading rate, then open a brief
+     * listening window (no-speech max retries = 0).  On silence the callback
+     * receives [VoiceCommand.FreeText] with an empty string so the caller can
+     * continue to the next chunk automatically.
+     */
+    fun speakEmailSentenceAndListen(sentence: String, onCommand: (VoiceCommand) -> Unit) {
+        voiceManager.speakEmailSentenceAndThenListen(sentence) { candidates ->
             val cmd = parseAll(candidates)
             _lastCommand.value = cmd
             onCommand(cmd)
@@ -207,12 +227,22 @@ class VoiceCommandEngine @Inject constructor(
                 lower.contains("all drafts") || lower.contains("see my drafts") ->
                 VoiceCommand.ListDrafts
 
+            // ── Pause / resume reading ────────────────────────────────────────
+
+            lower == "pause" || lower == "pause reading" || lower == "stop reading" ->
+                VoiceCommand.Pause
+
+            lower == "continue" || lower == "continue reading" ||
+                lower.contains("resume reading") || lower == "play" ||
+                lower.contains("pick up where") || lower.contains("keep reading") ->
+                VoiceCommand.ContinueReading
+
             // ── Compose body editing ─────────────────────────────────────────
 
             lower.contains("add more") || lower.contains("continue writing") ||
                 lower.contains("add to that") || lower.contains("keep going") ||
                 lower.contains("add more text") || lower == "more" ||
-                lower == "continue" || lower.contains("and also") ||
+                lower.contains("and also") ||
                 lower.contains("add another") -> VoiceCommand.AddMore
 
             // "start over" must come before "cancel"/"stop" checks
@@ -236,8 +266,14 @@ class VoiceCommandEngine @Inject constructor(
 
             lower.contains("try again") || lower.contains("retry") -> VoiceCommand.TryAgain
 
+            // MarkAsUnread before MarkAsRead to avoid substring collision
+            lower.contains("mark as unread") || lower.contains("mark unread") ||
+                lower.contains("mark it unread") || lower.contains("mark this unread") ->
+                VoiceCommand.MarkAsUnread
+
             lower.contains("mark as read") || lower.contains("mark read") ||
-                lower.contains("mark it read") || lower.contains("mark this read") -> VoiceCommand.MarkAsRead
+                lower.contains("mark it read") || lower.contains("mark this read") ->
+                VoiceCommand.MarkAsRead
 
             lower.contains("read back") || lower.contains("read my message") ||
                 lower.contains("what did i say") || lower.contains("review message") -> VoiceCommand.ReadBack
