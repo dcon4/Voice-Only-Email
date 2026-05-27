@@ -2,6 +2,7 @@ package com.example.voicegmail
 
 import android.Manifest
 import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Bundle
@@ -19,6 +20,7 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
+import com.example.voicegmail.auth.OAuthRedirectBus
 import com.example.voicegmail.debug.DebugLogger
 import com.example.voicegmail.ui.screens.ComposeEmailScreen
 import com.example.voicegmail.ui.screens.InboxScreen
@@ -32,10 +34,16 @@ class MainActivity : ComponentActivity() {
 
     @Inject lateinit var voiceManager: VoiceManager
 
+    /**
+     * Hilt-injected singleton bus shared with InboxViewModel.
+     * MainActivity posts OAuth redirect URIs here; InboxViewModel collects and exchanges
+     * the auth code for tokens. Using a StateFlow ensures no URI is lost even when the
+     * ViewModel starts collecting after the redirect has been posted (process-death scenario).
+     */
+    @Inject lateinit var oAuthRedirectBus: OAuthRedirectBus
+
     private var wakeLock: PowerManager.WakeLock? = null
 
-    // Request the RECORD_AUDIO permission at startup. The app cannot function
-    // without it — speech recognition will silently fail or crash if it is missing.
     private val micPermissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
             if (granted) {
@@ -53,7 +61,11 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         DebugLogger.log("MainActivity", "onCreate")
 
-        // Ask for microphone permission if we don't already have it.
+        // Handle OAuth redirect delivered on a fresh process start.
+        // When the app process was killed while Chrome was open, Android restarts
+        // MainActivity directly from the redirect intent (singleTask + intent-filter).
+        handleOAuthRedirectIntent(intent)
+
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
                 != PackageManager.PERMISSION_GRANTED) {
             micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
@@ -111,11 +123,30 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    /**
+     * Called when the app is already running and Chrome delivers the OAuth redirect.
+     * singleTask launch mode ensures Android routes the redirect here and clears
+     * AuthorizationManagementActivity from the back stack automatically.
+     */
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        DebugLogger.log("MainActivity", "onNewIntent — data=${intent.data}")
+        handleOAuthRedirectIntent(intent)
+    }
+
+    private fun handleOAuthRedirectIntent(intent: Intent?) {
+        val uri = intent?.data ?: return
+        // Only handle our OAuth redirect scheme; ignore all other implicit intents.
+        val scheme = uri.scheme ?: return
+        if (!scheme.startsWith("com.googleusercontent.apps")) return
+        DebugLogger.log("MainActivity", "OAuth redirect detected — scheme=$scheme")
+        oAuthRedirectBus.post(uri)
+    }
+
     override fun onResume() {
         super.onResume()
         DebugLogger.log("MainActivity", "onResume")
-        // Keep the screen and CPU on while the app is active so the microphone
-        // is never cut off during voice dictation.
         val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
         @Suppress("DEPRECATION")
         wakeLock = pm.newWakeLock(
