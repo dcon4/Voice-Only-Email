@@ -26,6 +26,8 @@ sealed class VoiceCommand {
     data class ReadAttachment(val index: Int = 0) : VoiceCommand()
     /** User wants to attach a file to the outgoing email they are composing. */
     object AttachFile : VoiceCommand()
+    /** Read back the composed To, Subject, body, and attachments before sending. */
+    object ReadBack : VoiceCommand()
     /** Remove a staged attachment at zero-based [index] before sending. */
     data class RemoveAttachment(val index: Int = 0) : VoiceCommand()
     object Repeat : VoiceCommand()
@@ -101,6 +103,10 @@ class VoiceCommandEngine @Inject constructor(
             // "help" — checked before other single-word commands
             lower.contains("help") || lower.contains("what can i say") ||
                 lower.contains("commands") || lower.contains("what are my options") -> VoiceCommand.Help
+            // "read back" — must come before the generic "read" exact-match rule
+            lower.contains("read back") || lower.contains("read my message") ||
+                lower.contains("what did i say") || lower.contains("review message") ||
+                lower.contains("review my message") -> VoiceCommand.ReadBack
             // "attach file" / "add file" — checked BEFORE attachment-reading rules so that
             // "add attachment" is routed here rather than to ReadAttachment.
             lower.contains("attach file") || lower.contains("add file") ||
