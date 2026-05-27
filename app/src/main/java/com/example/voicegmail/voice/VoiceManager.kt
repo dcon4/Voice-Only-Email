@@ -29,12 +29,10 @@ class VoiceManager @Inject constructor(
 ) {
     private val tag = "VoiceManager"
     private val utteranceId = "vm_utterance"
-
     private val mainHandler = Handler(Looper.getMainLooper())
 
     private var tts: TextToSpeech? = null
     private var ttsReady = false
-
     private var speechRecognizer: SpeechRecognizer? = null
 
     private val _recognizedText = MutableStateFlow<String?>(null)
@@ -58,88 +56,63 @@ class VoiceManager @Inject constructor(
                 tts?.language = Locale.US
                 ttsReady = true
                 applyVoicePreference()
-                Log.d(tag, "TTS ready — engine=${tts?.defaultEngine} savedEngine=$savedEngine")
+                Log.d(tag, "TTS ready — savedEngine=$savedEngine")
             } else {
                 Log.e(tag, "TTS initialization failed: $status")
             }
         }
-        tts = if (savedEngine != null) {
-            TextToSpeech(context, listener, savedEngine)
-        } else {
-            TextToSpeech(context, listener)
-        }
+        tts = if (savedEngine != null) TextToSpeech(context, listener, savedEngine)
+               else TextToSpeech(context, listener)
     }
 
-    /** Apply the saved voice preference after TTS has finished initialising. */
     private fun applyVoicePreference() {
-        val voiceName = ttsSettings.getVoiceName() ?: return
-        val voice = tts?.voices?.find { it.name == voiceName }
+        val name = ttsSettings.getVoiceName() ?: return
+        val voice = tts?.voices?.find { it.name == name }
         if (voice != null) {
             tts?.voice = voice
-            Log.d(tag, "Applied saved voice: $voiceName")
+            Log.d(tag, "Applied saved voice: $name")
         } else {
-            Log.w(tag, "Saved voice '$voiceName' not found in current engine; clearing preference")
+            Log.w(tag, "Saved voice '$name' not found; clearing preference")
             ttsSettings.clearVoiceName()
         }
     }
 
     // ------------------------------------------------------------------
-    // Engine & voice switching (called from InboxViewModel voice-settings flow)
+    // Engine & voice introspection
     // ------------------------------------------------------------------
 
-    /** Returns all installed TTS engines, sorted by label. */
     fun getAvailableEngines(): List<TextToSpeech.EngineInfo> =
         tts?.engines?.sortedBy { it.label } ?: emptyList()
 
-    /**
-     * Returns available voices for the current engine, offline voices first
-     * and sorted by display name.
-     */
-    fun getAvailableVoices(): List<Voice> {
-        val voices = tts?.voices?.toList() ?: return emptyList()
-        return voices.sortedWith(
+    fun getAvailableVoices(): List<Voice> =
+        tts?.voices?.toList()?.sortedWith(
             compareBy({ it.isNetworkConnectionRequired }, { it.locale.displayLanguage }, { it.name })
-        )
-    }
+        ) ?: emptyList()
 
-    /**
-     * Sets and persists a voice by name. Returns true on success.
-     * Must be called from any thread — posts to main thread internally.
-     */
+    /** Package name of the currently active TTS engine, or null for system default. */
+    fun getCurrentEngineName(): String? = ttsSettings.getEnginePackage()
+
+    /** Name of the currently active voice, or null if using engine default. */
+    fun getCurrentVoiceName(): String? = tts?.voice?.name ?: ttsSettings.getVoiceName()
+
     fun setVoiceByName(name: String) {
         mainHandler.post {
             val voice = tts?.voices?.find { it.name == name }
             if (voice != null) {
                 tts?.voice = voice
                 ttsSettings.saveVoiceName(name)
-                Log.d(tag, "Voice set: $name")
-            } else {
-                Log.w(tag, "Voice not found: $name")
             }
         }
     }
 
-    /**
-     * Resets to the engine's default voice and clears the saved preference.
-     */
     fun clearVoicePreference() {
         ttsSettings.clearVoiceName()
-        mainHandler.post {
-            if (ttsReady) tts?.language = Locale.US  // resets to best voice for locale
-        }
+        mainHandler.post { if (ttsReady) tts?.language = Locale.US }
     }
 
-    /**
-     * Reinitialises TTS with the given engine package and calls [onReady]
-     * on the main thread once the new engine is ready to speak. Falls back
-     * to the default engine if re-init fails.
-     */
     fun reinitWithEngine(enginePackage: String, onReady: () -> Unit) {
         mainHandler.post {
-            tts?.stop()
-            tts?.shutdown()
-            tts = null
-            ttsReady = false
+            tts?.stop(); tts?.shutdown(); tts = null; ttsReady = false
             val listener = TextToSpeech.OnInitListener { status ->
                 mainHandler.post {
                     if (status == TextToSpeech.SUCCESS) {
@@ -150,7 +123,7 @@ class VoiceManager @Inject constructor(
                         Log.d(tag, "Re-init complete — engine=$enginePackage")
                         onReady()
                     } else {
-                        Log.e(tag, "Re-init failed for $enginePackage ($status); falling back to default")
+                        Log.e(tag, "Re-init failed for $enginePackage; falling back")
                         initTts()
                     }
                 }
@@ -159,28 +132,22 @@ class VoiceManager @Inject constructor(
         }
     }
 
-    /**
-     * Returns a human-readable description of a [Voice] suitable for TTS
-     * announcement — e.g. "English United Kingdom female".
-     */
     fun friendlyVoiceName(voice: Voice): String {
         val locale  = voice.locale
         val lang    = locale.displayLanguage
         val country = if (locale.country.isNotEmpty()) " ${locale.displayCountry}" else ""
-        val nameLow = voice.name.lowercase()
+        val n       = voice.name.lowercase()
         val gender  = when {
-            nameLow.contains("female") || nameLow.contains("-f-") ||
-                nameLow.endsWith("-f")  -> " female"
-            nameLow.contains("male") || nameLow.contains("-m-") ||
-                nameLow.endsWith("-m")  -> " male"
-            else                        -> ""
+            n.contains("female") || n.contains("-f-") || n.endsWith("-f") -> " female"
+            n.contains("male")   || n.contains("-m-") || n.endsWith("-m") -> " male"
+            else -> ""
         }
-        val network = if (voice.isNetworkConnectionRequired) " online" else ""
+        val network = if (voice.isNetworkConnectionRequired) " (online)" else ""
         return "$lang$country$gender$network".trim()
     }
 
     // ------------------------------------------------------------------
-    // Speech output
+    // TTS output
     // ------------------------------------------------------------------
 
     fun speak(text: String) {
@@ -192,45 +159,57 @@ class VoiceManager @Inject constructor(
         }
     }
 
-    fun speakAndThenListen(prompt: String, onResult: (String) -> Unit) {
+    /**
+     * Speaks [prompt] and then opens the mic. Calls [onResults] with the list
+     * of recognition hypotheses (highest-confidence first). On repeated errors
+     * the recogniser retries silently up to [MAX_RETRIES] times before calling
+     * [onResults] with an empty list, which causes the ViewModel's "didn't
+     * understand" branch to fire.
+     */
+    fun speakAndThenListen(prompt: String, onResults: (List<String>) -> Unit) {
         mainHandler.post {
             if (!ttsReady) {
-                Log.w(tag, "TTS not ready; falling back to immediate listen")
-                startListeningOnMainThread(onResult)
+                Log.w(tag, "TTS not ready — falling back to immediate listen")
+                startListeningOnMainThread(onResults)
                 return@post
             }
             tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
-                override fun onStart(utteranceId: String?) {}
-                override fun onDone(utteranceId: String?) {
+                override fun onStart(uid: String?) {}
+                override fun onDone(uid: String?) {
                     tts?.setOnUtteranceProgressListener(null)
-                    mainHandler.post { startListeningOnMainThread(onResult) }
+                    mainHandler.post { startListeningOnMainThread(onResults) }
                 }
                 @Deprecated("Deprecated in API 21")
-                override fun onError(utteranceId: String?) {
+                override fun onError(uid: String?) {
                     tts?.setOnUtteranceProgressListener(null)
-                    mainHandler.post { startListeningOnMainThread(onResult) }
+                    mainHandler.post { startListeningOnMainThread(onResults) }
                 }
             })
             tts?.speak(prompt, TextToSpeech.QUEUE_FLUSH, null, utteranceId)
         }
     }
 
-    // ------------------------------------------------------------------
-    // Speech recognition
-    // ------------------------------------------------------------------
-
-    fun startListening(onResult: (String) -> Unit) {
-        mainHandler.post { startListeningOnMainThread(onResult) }
+    fun startListening(onResults: (List<String>) -> Unit) {
+        mainHandler.post { startListeningOnMainThread(onResults) }
     }
 
-    private fun startListeningOnMainThread(onResult: (String) -> Unit) {
+    // ------------------------------------------------------------------
+    // Core recognition loop (with retry on no-match / timeout)
+    // ------------------------------------------------------------------
+
+    private fun startListeningOnMainThread(
+        onResults: (List<String>) -> Unit,
+        retryCount: Int = 0
+    ) {
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO)
                 != PackageManager.PERMISSION_GRANTED) {
-            Log.w(tag, "RECORD_AUDIO not granted; cannot listen")
+            Log.w(tag, "RECORD_AUDIO not granted")
+            onResults(emptyList())
             return
         }
         if (!SpeechRecognizer.isRecognitionAvailable(context)) {
             Log.w(tag, "Speech recognition unavailable")
+            onResults(emptyList())
             return
         }
 
@@ -238,56 +217,95 @@ class VoiceManager @Inject constructor(
         speechRecognizer = SpeechRecognizer.createSpeechRecognizer(context).apply {
             setRecognitionListener(object : RecognitionListener {
                 override fun onReadyForSpeech(params: Bundle?) { _isListening.value = true }
+
                 override fun onResults(results: Bundle?) {
                     _isListening.value = false
-                    val text = results
+                    val candidates = results
                         ?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
-                        ?.firstOrNull() ?: return
-                    _recognizedText.value = text
-                    onResult(text)
+                        ?.filter { it.isNotBlank() }
+                        ?: emptyList()
+                    if (candidates.isNotEmpty()) {
+                        _recognizedText.value = candidates[0]
+                        Log.d(tag, "Results (${candidates.size}): ${candidates.take(3)}")
+                        onResults(candidates)
+                    } else {
+                        retryOrFail(SpeechRecognizer.ERROR_NO_MATCH, onResults, retryCount)
+                    }
                 }
+
                 override fun onError(error: Int) {
                     _isListening.value = false
-                    Log.e(tag, "Speech recognition error: $error")
+                    Log.w(tag, "Recognition error $error (retry $retryCount/${MAX_RETRIES})")
+                    retryOrFail(error, onResults, retryCount)
                 }
+
                 override fun onBeginningOfSpeech() {}
-                override fun onBufferReceived(buffer: ByteArray?) {}
+                override fun onBufferReceived(buf: ByteArray?) {}
                 override fun onEndOfSpeech() {}
-                override fun onEvent(eventType: Int, params: Bundle?) {}
-                override fun onPartialResults(partialResults: Bundle?) {}
+                override fun onEvent(type: Int, params: Bundle?) {}
+                override fun onPartialResults(partial: Bundle?) {}
                 override fun onRmsChanged(rmsdB: Float) {}
             })
         }
 
         val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL,
+                RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
             putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.US.toString())
-            putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
+            // Up to 5 recognition hypotheses — higher-confidence first.
+            putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 5)
+            // Prefer on-device recognition for lower latency and better reliability.
+            putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
+            // Wait up to 2 s of silence before deciding speech has ended.
+            putExtra("android.speech.extra.SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS", 2000L)
+            // Allow slightly faster finalisation when speech sounds done.
+            putExtra("android.speech.extra.SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS", 1200L)
+            // Do not require minimum speech length.
+            putExtra("android.speech.extra.SPEECH_INPUT_MINIMUM_LENGTH_MILLIS", 0L)
         }
         speechRecognizer?.startListening(intent)
     }
 
-    fun stopListening() {
-        mainHandler.post {
-            speechRecognizer?.stopListening()
-            _isListening.value = false
+    private fun retryOrFail(
+        error: Int,
+        onResults: (List<String>) -> Unit,
+        retryCount: Int
+    ) {
+        val retriable = error == SpeechRecognizer.ERROR_NO_MATCH ||
+            error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT ||
+            error == SpeechRecognizer.ERROR_RECOGNIZER_BUSY
+        if (retriable && retryCount < MAX_RETRIES) {
+            // Silent retry — no spoken prompt so the UX feels seamless.
+            val delay = if (error == SpeechRecognizer.ERROR_RECOGNIZER_BUSY) 600L else 200L
+            mainHandler.postDelayed({
+                startListeningOnMainThread(onResults, retryCount + 1)
+            }, delay)
+        } else {
+            Log.e(tag, "Recognition giving up after $retryCount retries (error=$error)")
+            onResults(emptyList())
         }
     }
 
+    // ------------------------------------------------------------------
+    // Control
+    // ------------------------------------------------------------------
+
+    fun stopListening() {
+        mainHandler.post { speechRecognizer?.stopListening(); _isListening.value = false }
+    }
+
     fun stopAll() {
-        mainHandler.post {
-            tts?.stop()
-            speechRecognizer?.stopListening()
-            _isListening.value = false
-        }
+        mainHandler.post { tts?.stop(); speechRecognizer?.stopListening(); _isListening.value = false }
     }
 
     fun shutdown() {
         mainHandler.post {
-            tts?.stop()
-            tts?.shutdown()
-            speechRecognizer?.destroy()
-            speechRecognizer = null
+            tts?.stop(); tts?.shutdown()
+            speechRecognizer?.destroy(); speechRecognizer = null
         }
+    }
+
+    private companion object {
+        const val MAX_RETRIES = 2
     }
 }
