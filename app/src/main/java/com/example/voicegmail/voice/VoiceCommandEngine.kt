@@ -123,6 +123,14 @@ class VoiceCommandEngine @Inject constructor(
 
     fun stopAll() = voiceManager.stopAll()
 
+    /**
+     * Silently discard any in-flight recognition session without triggering
+     * error callbacks.  Use instead of [stopAll] when you only need to cancel
+     * the mic — the next [speakThenListen] call will restart TTS via
+     * QUEUE_FLUSH on its own.
+     */
+    fun cancelListening() = voiceManager.cancelListening()
+
     // ------------------------------------------------------------------
     // Multi-hypothesis selection
     // ------------------------------------------------------------------
