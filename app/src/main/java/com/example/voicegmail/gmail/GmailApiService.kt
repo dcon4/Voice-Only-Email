@@ -13,7 +13,8 @@ interface GmailApiService {
     suspend fun listMessages(
         @Header("Authorization") auth: String,
         @Query("maxResults") maxResults: Int = 20,
-        @Query("labelIds") labelIds: String = "INBOX"
+        @Query("labelIds") labelIds: String = "INBOX",
+        @Query("q") query: String? = null
     ): ListMessagesResponse
 
     @GET("gmail/v1/users/me/messages/{id}")
