@@ -5,8 +5,10 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.os.PowerManager
+import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -33,43 +35,61 @@ import javax.inject.Inject
 class MainActivity : ComponentActivity() {
 
     @Inject lateinit var voiceManager: VoiceManager
-
-    /**
-     * Hilt-injected singleton bus shared with InboxViewModel.
-     * MainActivity posts OAuth redirect URIs here; InboxViewModel collects and exchanges
-     * the auth code for tokens. Using a StateFlow ensures no URI is lost even when the
-     * ViewModel starts collecting after the redirect has been posted (process-death scenario).
-     */
     @Inject lateinit var oAuthRedirectBus: OAuthRedirectBus
 
     private var wakeLock: PowerManager.WakeLock? = null
 
+    // ---- Permission launchers ------------------------------------------------
+
     private val micPermissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
             if (granted) {
-                DebugLogger.log("MainActivity", "RECORD_AUDIO permission granted")
+                DebugLogger.log("MainActivity", "RECORD_AUDIO granted")
             } else {
-                DebugLogger.log("MainActivity", "RECORD_AUDIO permission DENIED — voice input will not work")
+                DebugLogger.log("MainActivity", "RECORD_AUDIO DENIED")
                 voiceManager.speak(
                     "Microphone permission was denied. Voice commands will not work. " +
-                        "Please grant the microphone permission in your device settings."
+                        "Please grant microphone permission in your device settings."
                 )
             }
         }
+
+    private val notifPermissionLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+            DebugLogger.log("MainActivity", "POST_NOTIFICATIONS granted=$granted")
+            // Even if denied the foreground service runs — the notification just stays hidden.
+        }
+
+    // ---- Lifecycle -----------------------------------------------------------
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         DebugLogger.log("MainActivity", "onCreate")
 
-        // Handle OAuth redirect delivered on a fresh process start.
-        // When the app process was killed while Chrome was open, Android restarts
-        // MainActivity directly from the redirect intent (singleTask + intent-filter).
+        // Show this activity over the lock screen and turn the screen on when
+        // the app is brought to the foreground from VoiceWakeService.
+        enableLockScreenMode()
+
+        // Handle OAuth redirect on a fresh process start.
         handleOAuthRedirectIntent(intent)
 
+        // Mic permission — required for voice recognition.
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
                 != PackageManager.PERMISSION_GRANTED) {
             micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
         }
+
+        // Notification permission — Android 13+ (API 33+).
+        // The foreground service notification for VoiceWakeService requires this on API 33+.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
+                != PackageManager.PERMISSION_GRANTED) {
+            notifPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
+
+        // Start the background wake service so the app can be activated by the
+        // power button even when the screen is locked.
+        VoiceWakeService.start(this)
 
         setContent {
             VoiceGmailTheme {
@@ -78,10 +98,7 @@ class MainActivity : ComponentActivity() {
                     color = MaterialTheme.colorScheme.background
                 ) {
                     val navController = rememberNavController()
-                    NavHost(
-                        navController = navController,
-                        startDestination = "inbox"
-                    ) {
+                    NavHost(navController = navController, startDestination = "inbox") {
                         composable("inbox") {
                             InboxScreen(
                                 onCompose = { replyTo, isForward ->
@@ -90,7 +107,7 @@ class MainActivity : ComponentActivity() {
                                         if (isForward) add("isForward=true")
                                     }
                                     val route = if (params.isEmpty()) "compose"
-                                                else "compose?${params.joinToString("&")}"
+                                               else "compose?${params.joinToString("&")}"
                                     navController.navigate(route)
                                 }
                             )
@@ -99,22 +116,17 @@ class MainActivity : ComponentActivity() {
                             route = "compose?replyTo={replyTo}&isForward={isForward}",
                             arguments = listOf(
                                 navArgument("replyTo") {
-                                    type = NavType.StringType
-                                    nullable = true
-                                    defaultValue = null
+                                    type = NavType.StringType; nullable = true; defaultValue = null
                                 },
                                 navArgument("isForward") {
-                                    type = NavType.BoolType
-                                    defaultValue = false
+                                    type = NavType.BoolType; defaultValue = false
                                 }
                             )
-                        ) { backStackEntry ->
-                            val replyTo = backStackEntry.arguments?.getString("replyTo")
-                            val isForward = backStackEntry.arguments?.getBoolean("isForward") ?: false
+                        ) { backStack ->
                             ComposeEmailScreen(
                                 onBack = { navController.popBackStack() },
-                                replyTo = replyTo,
-                                isForward = isForward
+                                replyTo = backStack.arguments?.getString("replyTo"),
+                                isForward = backStack.arguments?.getBoolean("isForward") ?: false
                             )
                         }
                     }
@@ -123,25 +135,14 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    /**
-     * Called when the app is already running and Chrome delivers the OAuth redirect.
-     * singleTask launch mode ensures Android routes the redirect here and clears
-     * AuthorizationManagementActivity from the back stack automatically.
-     */
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        DebugLogger.log("MainActivity", "onNewIntent — data=${intent.data}")
+        DebugLogger.log("MainActivity", "onNewIntent — data=${intent.data} action=${intent.action}")
         handleOAuthRedirectIntent(intent)
-    }
-
-    private fun handleOAuthRedirectIntent(intent: Intent?) {
-        val uri = intent?.data ?: return
-        // Only handle our OAuth redirect scheme; ignore all other implicit intents.
-        val scheme = uri.scheme ?: return
-        if (!scheme.startsWith("com.googleusercontent.apps")) return
-        DebugLogger.log("MainActivity", "OAuth redirect detected — scheme=$scheme")
-        oAuthRedirectBus.post(uri)
+        // Wake intent from VoiceWakeService: the WakeEventBus has already been
+        // posted by the service before startActivity() was called, so InboxViewModel
+        // will receive the wake event via its coroutine collector — no extra work here.
     }
 
     override fun onResume() {
@@ -152,7 +153,7 @@ class MainActivity : ComponentActivity() {
         wakeLock = pm.newWakeLock(
             PowerManager.SCREEN_DIM_WAKE_LOCK or PowerManager.ACQUIRE_CAUSES_WAKEUP,
             "VoiceGmail:ListeningWakeLock"
-        ).also { it.acquire(10 * 60 * 1000L /* 10 min max */) }
+        ).also { it.acquire(10 * 60 * 1000L) }
     }
 
     override fun onPause() {
@@ -164,5 +165,32 @@ class MainActivity : ComponentActivity() {
     override fun onDestroy() {
         super.onDestroy()
         voiceManager.shutdown()
+    }
+
+    // ---- Helpers -------------------------------------------------------------
+
+    /**
+     * Allow the activity to appear over the lock screen and turn the screen on.
+     * API 27+ uses Activity methods; API 26 falls back to the deprecated window flags.
+     */
+    private fun enableLockScreenMode() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+            setShowWhenLocked(true)
+            setTurnScreenOn(true)
+        } else {
+            @Suppress("DEPRECATION")
+            window.addFlags(
+                WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
+                    WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON
+            )
+        }
+    }
+
+    private fun handleOAuthRedirectIntent(intent: Intent?) {
+        val uri    = intent?.data ?: return
+        val scheme = uri.scheme ?: return
+        if (!scheme.startsWith("com.googleusercontent.apps")) return
+        DebugLogger.log("MainActivity", "OAuth redirect — scheme=$scheme")
+        oAuthRedirectBus.post(uri)
     }
 }
