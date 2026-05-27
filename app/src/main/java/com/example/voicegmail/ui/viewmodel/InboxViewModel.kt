@@ -386,7 +386,7 @@ class InboxViewModel @Inject constructor(
                     viewModelScope.launch {
                         voiceManager.speak("Reading attachment: ${attachment.filename}. Please wait.")
                         try {
-                            val text = attachmentReader.read(email.id, attachment)
+                            val text = attachmentReader.readAttachment(email.id, attachment)
                             voiceCommandEngine.speakThenListen(text) { cmd ->
                                 handleCommand(cmd, emails)
                             }
@@ -458,7 +458,7 @@ class InboxViewModel @Inject constructor(
             is VoiceCommand.Confirm -> {
                 viewModelScope.launch {
                     try {
-                        gmailRepository.deleteEmail(email.id)
+                        gmailRepository.trashEmail(email.id)
                         val updated = emails.filter { it.id != email.id }
                         _currentEmailIndex.value =
                             _currentEmailIndex.value.coerceAtMost((updated.size - 1).coerceAtLeast(0))
