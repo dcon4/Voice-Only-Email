@@ -94,7 +94,14 @@ class InboxViewModel @Inject constructor(
         val response = AuthorizationResponse.fromIntent(data)
         val exception = AuthorizationException.fromIntent(data)
 
-        DebugLogger.log("Auth", "Redirect received — hasResponse=${response != null}, hasException=${exception != null}")
+        DebugLogger.log(
+            "Auth",
+            "Redirect received — hasResponse=${response != null}, hasException=${exception != null}" +
+                if (exception != null)
+                    " | exType=${exception.type} exCode=${exception.code} " +
+                    "exError='${exception.error ?: "none"}' exDesc='${exception.errorDescription ?: "none"}'"
+                else ""
+        )
 
         Log.d(TAG, "handleSignInResult: hasResponse=${response != null} hasException=${exception != null}")
 
@@ -106,7 +113,7 @@ class InboxViewModel @Inject constructor(
                         DebugLogger.log("Auth", "Exchanging authorization code for tokens...")
                         val (accessToken, refreshToken) = authRepository.exchangeCodeForTokens(response)
                         if (accessToken != null) {
-                            DebugLogger.log("Auth", "Token exchange success")
+                            DebugLogger.log("Auth", "Token exchange success — hasRefreshToken=${refreshToken != null}")
                             authRepository.saveTokens(accessToken, refreshToken)
                             _isSignedIn.value = true
                             loadInbox()
@@ -114,14 +121,27 @@ class InboxViewModel @Inject constructor(
                             val msg = "Sign-in failed: Google returned no access token. " +
                                 "Verify that the Gmail API is enabled and the OAuth scopes " +
                                 "are approved in Google Cloud Console."
+                            DebugLogger.log("Auth", "Token exchange returned null access token")
                             _uiState.value = InboxUiState.Error(msg, isAuthError = true)
                             voiceManager.speak(msg)
                         }
                     } catch (e: AuthorizationException) {
+                        DebugLogger.logException(
+                            "Auth",
+                            "Token exchange AuthorizationException — " +
+                                "type=${e.type} code=${e.code} " +
+                                "error='${e.error ?: "none"}' desc='${e.errorDescription ?: "none"}'",
+                            e
+                        )
                         val msg = OAuthDiagnostics.friendlyMessage(e)
                         _uiState.value = InboxUiState.Error(msg, isAuthError = true)
                         voiceManager.speak(msg)
                     } catch (e: Exception) {
+                        DebugLogger.logException(
+                            "Auth",
+                            "Token exchange unexpected exception — ${e::class.simpleName}: ${e.message}",
+                            e
+                        )
                         val msg = "Sign-in failed: ${e.message ?: "unexpected error"}. Please try again."
                         _uiState.value = InboxUiState.Error(msg, isAuthError = true)
                         voiceManager.speak(msg)
@@ -134,6 +154,7 @@ class InboxViewModel @Inject constructor(
                 voiceManager.speak(msg)
             }
             else -> {
+                DebugLogger.log("Auth", "Redirect had neither response nor exception — resultCode=${result.resultCode}")
                 val msg = "Sign-in failed: no response received from Google. Please try again."
                 _uiState.value = InboxUiState.Error(msg, isAuthError = true)
                 voiceManager.speak(msg)
