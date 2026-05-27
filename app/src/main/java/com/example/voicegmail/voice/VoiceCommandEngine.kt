@@ -26,6 +26,8 @@ sealed class VoiceCommand {
     data class ReadAttachment(val index: Int = 0) : VoiceCommand()
     /** User wants to attach a file to the outgoing email they are composing. */
     object AttachFile : VoiceCommand()
+    /** Remove a staged attachment at zero-based [index] before sending. */
+    data class RemoveAttachment(val index: Int = 0) : VoiceCommand()
     object Repeat : VoiceCommand()
     object GoBack : VoiceCommand()
     object Send : VoiceCommand()
@@ -103,6 +105,11 @@ class VoiceCommandEngine @Inject constructor(
             // "add attachment" is routed here rather than to ReadAttachment.
             lower.contains("attach file") || lower.contains("add file") ||
                 lower.contains("add attachment") -> VoiceCommand.AttachFile
+            // "remove/delete/cancel attachment" — checked BEFORE the generic delete rule so
+            // that "delete attachment one" isn't swallowed by VoiceCommand.Delete.
+            (lower.contains("remove attachment") || lower.contains("delete attachment") ||
+                lower.contains("cancel attachment")) ->
+                VoiceCommand.RemoveAttachment(extractOrdinalFromPhrase(lower))
             // Attachments — "list" before "read attachment" to avoid collision
             lower.contains("list attachment") || lower.contains("what attachment") ||
                 lower.contains("which attachment") || lower.contains("show attachment") -> VoiceCommand.ListAttachments
