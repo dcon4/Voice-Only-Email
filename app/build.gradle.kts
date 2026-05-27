@@ -48,33 +48,40 @@ android {
             useSupportLibrary = true
         }
 
-        // Release values can be overridden with OAUTH_* env vars or Gradle properties.
-        // Debug builds can override them separately with DEBUG_OAUTH_* values so local
-        // debug APKs can use a different Android OAuth client/SHA-1 than release builds.
         manifestPlaceholders["appAuthRedirectScheme"] = releaseOauthRedirectScheme
         buildConfigField("String", "OAUTH_REDIRECT_SCHEME", "\"$releaseOauthRedirectScheme\"")
         buildConfigField("String", "OAUTH_CLIENT_ID", "\"$releaseOauthClientId\"")
+    }
+
+    // ── Build flavors ─────────────────────────────────────────────────
+    // "standard"  — default; phone speaker + built-in mic only.
+    // "bt"        — adds Bluetooth SCO routing so a BT headset mic is used
+    //               for voice input and TTS output goes through the headset.
+    //               Installs alongside the standard build (different app ID).
+    flavorDimensions += "audio"
+    productFlavors {
+        create("standard") {
+            dimension = "audio"
+            buildConfigField("boolean", "BLUETOOTH_AUDIO", "false")
+        }
+        create("bt") {
+            dimension = "audio"
+            applicationIdSuffix = ".bt"
+            versionNameSuffix = "-bt"
+            buildConfigField("boolean", "BLUETOOTH_AUDIO", "true")
+        }
     }
 
     signingConfigs {
         create("release") {
             val storePath = System.getenv("ANDROID_KEYSTORE_PATH")
             val storePass = System.getenv("ANDROID_KEYSTORE_PASSWORD")
-            val alias = System.getenv("ANDROID_KEY_ALIAS")
-            val keyPass = System.getenv("ANDROID_KEY_PASSWORD")
-
-            if (!storePath.isNullOrBlank()) {
-                storeFile = file(storePath)
-            }
-            if (!storePass.isNullOrBlank()) {
-                storePassword = storePass
-            }
-            if (!alias.isNullOrBlank()) {
-                keyAlias = alias
-            }
-            if (!keyPass.isNullOrBlank()) {
-                keyPassword = keyPass
-            }
+            val alias     = System.getenv("ANDROID_KEY_ALIAS")
+            val keyPass   = System.getenv("ANDROID_KEY_PASSWORD")
+            if (!storePath.isNullOrBlank()) storeFile = file(storePath)
+            if (!storePass.isNullOrBlank()) storePassword = storePass
+            if (!alias.isNullOrBlank())     keyAlias = alias
+            if (!keyPass.isNullOrBlank())   keyPassword = keyPass
         }
     }
 
@@ -91,7 +98,6 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
-
             if (!System.getenv("ANDROID_KEYSTORE_PATH").isNullOrBlank()) {
                 signingConfig = signingConfigs.getByName("release")
             }
@@ -119,7 +125,6 @@ android {
     packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
-            // PdfBox-Android bundles its own copies of these files.
             excludes += "/META-INF/DEPENDENCIES"
             excludes += "/META-INF/LICENSE"
             excludes += "/META-INF/NOTICE"
@@ -157,7 +162,6 @@ dependencies {
     implementation("androidx.datastore:datastore-preferences:1.1.1")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
 
-    // PDF text extraction for reading PDF attachments aloud
     implementation("com.tom-roush:pdfbox-android:2.0.27.0")
 
     testImplementation("junit:junit:4.13.2")
