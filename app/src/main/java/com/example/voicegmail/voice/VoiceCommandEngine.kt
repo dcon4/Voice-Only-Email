@@ -8,41 +8,57 @@ import javax.inject.Singleton
 
 /** High-level commands that the user can speak. */
 sealed class VoiceCommand {
-    object None           : VoiceCommand()
-    object Read           : VoiceCommand()
-    object Next           : VoiceCommand()
-    object Previous       : VoiceCommand()
-    object Refresh        : VoiceCommand()
-    object Compose        : VoiceCommand()
-    object Reply          : VoiceCommand()
-    object Delete         : VoiceCommand()
-    object Confirm        : VoiceCommand()
-    object Search         : VoiceCommand()
-    object MarkAsRead     : VoiceCommand()
-    object Forward        : VoiceCommand()
-    object ReadAllUnread  : VoiceCommand()
-    object Help           : VoiceCommand()
-    object ListAttachments: VoiceCommand()
+    object None            : VoiceCommand()
+    object Read            : VoiceCommand()
+    object Next            : VoiceCommand()
+    object Previous        : VoiceCommand()
+    object Refresh         : VoiceCommand()
+    object Compose         : VoiceCommand()
+    object Reply           : VoiceCommand()
+    object Delete          : VoiceCommand()
+    object Confirm         : VoiceCommand()
+    object Search          : VoiceCommand()
+    object MarkAsRead      : VoiceCommand()
+    object Forward         : VoiceCommand()
+    object ReadAllUnread   : VoiceCommand()
+    object Help            : VoiceCommand()
+    object ListAttachments : VoiceCommand()
     data class ReadAttachment(val index: Int = 1) : VoiceCommand()
-    object AttachFile     : VoiceCommand()
-    object ReadBack       : VoiceCommand()
+    object AttachFile      : VoiceCommand()
+    object ReadBack        : VoiceCommand()
     data class RemoveAttachment(val index: Int = 1) : VoiceCommand()
-    object Repeat         : VoiceCommand()
-    object GoBack         : VoiceCommand()
-    object Send           : VoiceCommand()
-    object TryAgain       : VoiceCommand()
-    object Cancel         : VoiceCommand()
-    object VoiceSettings  : VoiceCommand()
-    object Instructions   : VoiceCommand()
-    /** Decrease email-reading TTS rate by 5 %. */
-    object ReadSlower     : VoiceCommand()
-    /** Increase email-reading TTS rate by 5 %. */
-    object ReadFaster     : VoiceCommand()
+    object Repeat          : VoiceCommand()
+    object GoBack          : VoiceCommand()
+    object Send            : VoiceCommand()
+    object TryAgain        : VoiceCommand()
+    object Cancel          : VoiceCommand()
+    object VoiceSettings   : VoiceCommand()
+    object Instructions    : VoiceCommand()
+    object ReadSlower      : VoiceCommand()
+    object ReadFaster      : VoiceCommand()
+    object SessionTimeout  : VoiceCommand()
+
+    // ── Compose editing ───────────────────────────────────────────────────
+    /** Append more dictated text to the current message body. */
+    object AddMore     : VoiceCommand()
+    /** Keep To and Subject; clear the body and re-dictate from scratch. */
+    object StartOver   : VoiceCommand()
     /**
-     * Emitted after [NO_SPEECH_MAX_RETRIES] consecutive no-speech mic sessions.
-     * The app goes silent and waits for the next power-button wake event.
+     * Delete the last [unit] of the message body.
+     * [unit] is one of: "word", "sentence", "paragraph".
      */
-    object SessionTimeout : VoiceCommand()
+    data class DeleteLast(val unit: String) : VoiceCommand()
+
+    // ── Drafts ────────────────────────────────────────────────────────────
+    /** Save the current compose state as a Gmail draft. */
+    object SaveDraft : VoiceCommand()
+    /** List all saved drafts. */
+    object ListDrafts : VoiceCommand()
+    /** Open/edit draft number [index] (1-based). */
+    data class EditDraft(val index: Int) : VoiceCommand()
+    /** Delete draft number [index] (1-based). */
+    data class DeleteDraft(val index: Int) : VoiceCommand()
+
     data class FreeText(val text: String) : VoiceCommand()
 }
 
@@ -53,7 +69,6 @@ class VoiceCommandEngine @Inject constructor(
     private val _lastCommand = MutableStateFlow<VoiceCommand>(VoiceCommand.None)
     val lastCommand: StateFlow<VoiceCommand> = _lastCommand
 
-    /** Speak [prompt] at the normal UI rate, then listen. */
     fun speakThenListen(prompt: String, onCommand: (VoiceCommand) -> Unit) {
         voiceManager.speakAndThenListen(prompt) { candidates ->
             val cmd = parseAll(candidates)
@@ -62,11 +77,6 @@ class VoiceCommandEngine @Inject constructor(
         }
     }
 
-    /**
-     * Speak [prompt] at the user's chosen email-reading rate, then listen.
-     * Use this for reading email bodies, subjects, and attachment content
-     * so the speed follows "read slower" / "read faster" adjustments.
-     */
     fun speakEmailThenListen(prompt: String, onCommand: (VoiceCommand) -> Unit) {
         voiceManager.speakEmailAndThenListen(prompt) { candidates ->
             val cmd = parseAll(candidates)
@@ -75,7 +85,6 @@ class VoiceCommandEngine @Inject constructor(
         }
     }
 
-    /** Open the mic immediately (no TTS prompt). */
     fun listen(onCommand: (VoiceCommand) -> Unit) {
         voiceManager.startListening { candidates ->
             val cmd = parseAll(candidates)
@@ -84,10 +93,6 @@ class VoiceCommandEngine @Inject constructor(
         }
     }
 
-    /**
-     * Speaks [text] in [voice] so the user can audition it, then opens the mic.
-     * Used by the voice chooser — always at rate 1.0 regardless of email read rate.
-     */
     fun speakWithVoiceAndListen(text: String, voice: Voice, onCommand: (VoiceCommand) -> Unit) {
         voiceManager.speakWithVoiceAndThenListen(text, voice) { candidates ->
             val cmd = parseAll(candidates)
@@ -104,7 +109,6 @@ class VoiceCommandEngine @Inject constructor(
 
     private fun parseAll(candidates: List<String>): VoiceCommand {
         if (candidates.isEmpty()) return VoiceCommand.FreeText("")
-        // Internal sentinel emitted by VoiceManager on session timeout.
         if (candidates.size == 1 && candidates[0] == "SESSION_TIMEOUT")
             return VoiceCommand.SessionTimeout
         for (raw in candidates) {
@@ -122,20 +126,21 @@ class VoiceCommandEngine @Inject constructor(
     private fun applyPhoneticCorrections(text: String): String {
         var s = text.trim().lowercase()
         s = when (s) {
-            "reed", "reap", "re", "red" -> "read"
+            "reed", "reap", "re", "red"     -> "read"
             "necks", "tex", "text", "next please" -> "next"
-            "a text" -> "next"
-            "replay", "re-play" -> "reply"
-            "elite", "delete it" -> "delete"
+            "a text"                         -> "next"
+            "replay", "re-play"              -> "reply"
+            "elite", "delete it"             -> "delete"
             "can sell", "cancel that", "ken sell" -> "cancel"
-            "send it", "send that" -> "send"
-            "fore", "door" -> "forward"
-            "refresh it", "re-fresh" -> "refresh"
-            "won" -> "one"
-            "to", "too" -> "two"
-            "for" -> "four"
-            "ate" -> "eight"
-            else -> s
+            "send it", "send that"           -> "send"
+            "fore", "door"                   -> "forward"
+            "refresh it", "re-fresh"         -> "refresh"
+            "won"                            -> "one"
+            "to", "too"                      -> "two"
+            "for"                            -> "four"
+            "ate"                            -> "eight"
+            "add more", "and more"           -> "add more"
+            else                             -> s
         }
         s = s
             .replace(Regex("\\belite\\b"), "delete")
@@ -149,6 +154,7 @@ class VoiceCommandEngine @Inject constructor(
             .replace(Regex("\\bgo back\\b"), "go back")
             .replace(Regex("\\bwon\\b"), "one")
             .replace(Regex("\\bate\\b"), "eight")
+            .replace(Regex("\\band more\\b"), "add more")
         return s
     }
 
@@ -159,6 +165,7 @@ class VoiceCommandEngine @Inject constructor(
     private fun parse(text: String): VoiceCommand {
         val lower = text.trim().lowercase()
         return when {
+
             lower.contains("instructions") || lower.contains("user guide") ||
                 lower.contains("help guide") || lower.contains("full guide") ||
                 lower.contains("tutorial") || lower.contains("guide me") -> VoiceCommand.Instructions
@@ -169,16 +176,63 @@ class VoiceCommandEngine @Inject constructor(
                 lower.contains("pick voice") || lower.contains("different voice") ||
                 lower.contains("tts setting") -> VoiceCommand.VoiceSettings
 
-            // Speed controls — must come before the plain "read" checks.
-            lower.contains("read slower")    || lower.contains("slow down")       ||
+            lower.contains("read slower") || lower.contains("slow down") ||
                 lower.contains("read more slowly") || lower.contains("speak slower") ||
                 lower.contains("speak more slowly") ||
-                (lower == "slower") -> VoiceCommand.ReadSlower
+                lower == "slower" -> VoiceCommand.ReadSlower
 
-            lower.contains("read faster")    || lower.contains("speed up")        ||
+            lower.contains("read faster") || lower.contains("speed up") ||
                 lower.contains("read more quickly") || lower.contains("read more fast") ||
                 lower.contains("speak faster") || lower.contains("speak more quickly") ||
-                (lower == "faster") -> VoiceCommand.ReadFaster
+                lower == "faster" -> VoiceCommand.ReadFaster
+
+            // ── Draft commands — checked before plain "delete" / "edit" ──────
+
+            lower.contains("delete draft") || lower.contains("discard draft") ||
+                lower.contains("remove draft") ->
+                VoiceCommand.DeleteDraft(extractOrdinal(lower))
+
+            lower.contains("edit draft") || lower.contains("open draft") ||
+                lower.contains("resume draft") || lower.contains("continue draft") ||
+                lower.contains("load draft") ->
+                VoiceCommand.EditDraft(extractOrdinal(lower))
+
+            lower.contains("save draft") || lower.contains("save as draft") ||
+                lower.contains("draft it") || lower.contains("save it as draft") ->
+                VoiceCommand.SaveDraft
+
+            lower.contains("list drafts") || lower.contains("my drafts") ||
+                lower.contains("show drafts") || lower.contains("check drafts") ||
+                lower.contains("open drafts") || lower.contains("view drafts") ||
+                lower.contains("all drafts") || lower.contains("see my drafts") ->
+                VoiceCommand.ListDrafts
+
+            // ── Compose body editing ─────────────────────────────────────────
+
+            lower.contains("add more") || lower.contains("continue writing") ||
+                lower.contains("add to that") || lower.contains("keep going") ||
+                lower.contains("add more text") || lower == "more" ||
+                lower == "continue" || lower.contains("and also") ||
+                lower.contains("add another") -> VoiceCommand.AddMore
+
+            // "start over" must come before "cancel"/"stop" checks
+            lower.contains("start over") || lower.contains("start again") ||
+                lower.contains("start from scratch") || lower.contains("new body") ||
+                lower.contains("rewrite") || lower.contains("clear body") ||
+                lower.contains("erase body") -> VoiceCommand.StartOver
+
+            lower.contains("delete last") || lower.contains("undo last") ||
+                lower.contains("remove last") || lower.contains("erase last") ||
+                lower.contains("delete that last") || lower.contains("undo that") ->
+                VoiceCommand.DeleteLast(
+                    when {
+                        lower.contains("paragraph") -> "paragraph"
+                        lower.contains("sentence")  -> "sentence"
+                        else                         -> "word"
+                    }
+                )
+
+            // ── Standard commands ────────────────────────────────────────────
 
             lower.contains("try again") || lower.contains("retry") -> VoiceCommand.TryAgain
 
@@ -206,7 +260,7 @@ class VoiceCommandEngine @Inject constructor(
                 VoiceCommand.ReadAttachment(extractOrdinal(lower))
 
             lower.contains("forward") -> VoiceCommand.Forward
-            lower.contains("reply") -> VoiceCommand.Reply
+            lower.contains("reply")   -> VoiceCommand.Reply
 
             lower.contains("help") || lower.contains("what can i say") ||
                 lower.contains("commands") -> VoiceCommand.Help
@@ -217,7 +271,6 @@ class VoiceCommandEngine @Inject constructor(
             lower.contains("delete") || lower.contains("trash") ||
                 lower.contains("remove") || lower.contains("erase") -> VoiceCommand.Delete
 
-            // "keep it" and similar affirmative phrases → Confirm (used by voice chooser)
             lower.matches(Regex("(yes|yeah|yep|confirm|sure|do it|ok|okay|keep it?|that one|this one|perfect|great|good|like it|love it)")) ->
                 VoiceCommand.Confirm
 
@@ -228,7 +281,7 @@ class VoiceCommandEngine @Inject constructor(
             lower.matches(Regex("(go back( one)?|previous|prior|last|back)")) -> VoiceCommand.Previous
             lower.contains("refresh") || lower.contains("reload") -> VoiceCommand.Refresh
             lower.contains("compose") || lower.contains("new email") ||
-                lower.contains("write") -> VoiceCommand.Compose
+                lower.contains("write an email") || lower.contains("write email") -> VoiceCommand.Compose
             lower.contains("repeat") || lower.contains("again") -> VoiceCommand.Repeat
             lower.matches(Regex("(cancel|exit|stop|never mind)")) -> VoiceCommand.Cancel
             lower.contains("go back") -> VoiceCommand.GoBack
