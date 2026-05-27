@@ -191,8 +191,10 @@ class InboxViewModel @Inject constructor(
 
     private fun handleWakeEvent() {
         DebugLogger.log("InboxViewModel", "Wake event — state=${_uiState.value::class.simpleName}")
-        // Stop any ongoing TTS or mic session so we start fresh
-        voiceCommandEngine.stopAll()
+        // Destroy the in-flight recognizer silently so its error/result callback
+        // cannot race with this new session. TTS is handled by QUEUE_FLUSH inside
+        // the following speakThenListen call.
+        voiceCommandEngine.cancelListening()
         when (val state = _uiState.value) {
             is InboxUiState.Success -> {
                 val pos = pausedPosition
