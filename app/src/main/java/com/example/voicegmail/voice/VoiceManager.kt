@@ -4,9 +4,11 @@ import android.Manifest
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.media.AudioManager
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.PowerManager
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
@@ -35,6 +37,14 @@ class VoiceManager @Inject constructor(
     private var ttsReady = false
     private var speechRecognizer: SpeechRecognizer? = null
 
+    private val audioManager: AudioManager by lazy {
+        context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+    }
+    private val powerManager: PowerManager by lazy {
+        context.getSystemService(Context.POWER_SERVICE) as PowerManager
+    }
+    private var recognitionWakeLock: PowerManager.WakeLock? = null
+
     private val _recognizedText = MutableStateFlow<String?>(null)
     val recognizedText: StateFlow<String?> = _recognizedText
 
@@ -56,7 +66,7 @@ class VoiceManager @Inject constructor(
                 tts?.language = Locale.US
                 ttsReady = true
                 applyVoicePreference()
-                Log.d(tag, "TTS ready — savedEngine=$savedEngine")
+                Log.d(tag, "TTS ready — engine=$savedEngine")
             } else {
                 Log.e(tag, "TTS initialization failed: $status")
             }
@@ -89,10 +99,7 @@ class VoiceManager @Inject constructor(
             compareBy({ it.isNetworkConnectionRequired }, { it.locale.displayLanguage }, { it.name })
         ) ?: emptyList()
 
-    /** Package name of the currently active TTS engine, or null for system default. */
     fun getCurrentEngineName(): String? = ttsSettings.getEnginePackage()
-
-    /** Name of the currently active voice, or null if using engine default. */
     fun getCurrentVoiceName(): String? = tts?.voice?.name ?: ttsSettings.getVoiceName()
 
     fun setVoiceByName(name: String) {
@@ -120,7 +127,6 @@ class VoiceManager @Inject constructor(
                         ttsReady = true
                         ttsSettings.saveEnginePackage(enginePackage)
                         applyVoicePreference()
-                        Log.d(tag, "Re-init complete — engine=$enginePackage")
                         onReady()
                     } else {
                         Log.e(tag, "Re-init failed for $enginePackage; falling back")
@@ -160,16 +166,14 @@ class VoiceManager @Inject constructor(
     }
 
     /**
-     * Speaks [prompt] and then opens the mic. Calls [onResults] with the list
-     * of recognition hypotheses (highest-confidence first). On repeated errors
-     * the recogniser retries silently up to [MAX_RETRIES] times before calling
-     * [onResults] with an empty list, which causes the ViewModel's "didn't
-     * understand" branch to fire.
+     * Speaks [prompt] then opens the mic after a short gap so that:
+     * 1. TTS audio has fully decayed (prevents echo being recognised as a command).
+     * 2. The recognition start beep has played and been muted before it reaches
+     *    the callback chain.
      */
     fun speakAndThenListen(prompt: String, onResults: (List<String>) -> Unit) {
         mainHandler.post {
             if (!ttsReady) {
-                Log.w(tag, "TTS not ready — falling back to immediate listen")
                 startListeningOnMainThread(onResults)
                 return@post
             }
@@ -177,12 +181,15 @@ class VoiceManager @Inject constructor(
                 override fun onStart(uid: String?) {}
                 override fun onDone(uid: String?) {
                     tts?.setOnUtteranceProgressListener(null)
-                    mainHandler.post { startListeningOnMainThread(onResults) }
+                    // 500 ms gap: lets TTS audio decay so the microphone doesn't
+                    // immediately pick up echo, and gives the user a natural beat
+                    // to start speaking.
+                    mainHandler.postDelayed({ startListeningOnMainThread(onResults) }, 500)
                 }
                 @Deprecated("Deprecated in API 21")
                 override fun onError(uid: String?) {
                     tts?.setOnUtteranceProgressListener(null)
-                    mainHandler.post { startListeningOnMainThread(onResults) }
+                    mainHandler.postDelayed({ startListeningOnMainThread(onResults) }, 300)
                 }
             })
             tts?.speak(prompt, TextToSpeech.QUEUE_FLUSH, null, utteranceId)
@@ -194,7 +201,7 @@ class VoiceManager @Inject constructor(
     }
 
     // ------------------------------------------------------------------
-    // Core recognition loop (with retry on no-match / timeout)
+    // Core recognition loop
     // ------------------------------------------------------------------
 
     private fun startListeningOnMainThread(
@@ -204,22 +211,31 @@ class VoiceManager @Inject constructor(
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO)
                 != PackageManager.PERMISSION_GRANTED) {
             Log.w(tag, "RECORD_AUDIO not granted")
-            onResults(emptyList())
-            return
+            onResults(emptyList()); return
         }
         if (!SpeechRecognizer.isRecognitionAvailable(context)) {
             Log.w(tag, "Speech recognition unavailable")
-            onResults(emptyList())
-            return
+            onResults(emptyList()); return
         }
+
+        // Keep the CPU awake during the full recognition cycle (screen may be off).
+        acquireRecognitionWakeLock()
+
+        // Mute the recognition-start beep that the system UI plays on STREAM_MUSIC.
+        muteRecognitionBeep()
 
         speechRecognizer?.destroy()
         speechRecognizer = SpeechRecognizer.createSpeechRecognizer(context).apply {
             setRecognitionListener(object : RecognitionListener {
-                override fun onReadyForSpeech(params: Bundle?) { _isListening.value = true }
+                override fun onReadyForSpeech(params: Bundle?) {
+                    _isListening.value = true
+                    // Unmute now — the beep has already played (or been suppressed).
+                    unmuteRecognitionBeep()
+                }
 
                 override fun onResults(results: Bundle?) {
                     _isListening.value = false
+                    releaseRecognitionWakeLock()
                     val candidates = results
                         ?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                         ?.filter { it.isNotBlank() }
@@ -235,7 +251,9 @@ class VoiceManager @Inject constructor(
 
                 override fun onError(error: Int) {
                     _isListening.value = false
-                    Log.w(tag, "Recognition error $error (retry $retryCount/${MAX_RETRIES})")
+                    releaseRecognitionWakeLock()
+                    unmuteRecognitionBeep()
+                    Log.w(tag, "Recognition error $error (retry $retryCount/$MAX_RETRIES)")
                     retryOrFail(error, onResults, retryCount)
                 }
 
@@ -252,16 +270,14 @@ class VoiceManager @Inject constructor(
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL,
                 RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
             putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.US.toString())
-            // Up to 5 recognition hypotheses — higher-confidence first.
             putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 5)
-            // Prefer on-device recognition for lower latency and better reliability.
             putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
-            // Wait up to 2 s of silence before deciding speech has ended.
+            // Wait up to 2 s of silence before finalising.
             putExtra("android.speech.extra.SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS", 2000L)
-            // Allow slightly faster finalisation when speech sounds done.
+            // Tentative silence threshold.
             putExtra("android.speech.extra.SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS", 1200L)
-            // Do not require minimum speech length.
-            putExtra("android.speech.extra.SPEECH_INPUT_MINIMUM_LENGTH_MILLIS", 0L)
+            // Must hear at least 500 ms of speech — prevents spurious instant timeouts.
+            putExtra("android.speech.extra.SPEECH_INPUT_MINIMUM_LENGTH_MILLIS", 500L)
         }
         speechRecognizer?.startListening(intent)
     }
@@ -275,8 +291,7 @@ class VoiceManager @Inject constructor(
             error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT ||
             error == SpeechRecognizer.ERROR_RECOGNIZER_BUSY
         if (retriable && retryCount < MAX_RETRIES) {
-            // Silent retry — no spoken prompt so the UX feels seamless.
-            val delay = if (error == SpeechRecognizer.ERROR_RECOGNIZER_BUSY) 600L else 200L
+            val delay = if (error == SpeechRecognizer.ERROR_RECOGNIZER_BUSY) 600L else 250L
             mainHandler.postDelayed({
                 startListeningOnMainThread(onResults, retryCount + 1)
             }, delay)
@@ -284,6 +299,41 @@ class VoiceManager @Inject constructor(
             Log.e(tag, "Recognition giving up after $retryCount retries (error=$error)")
             onResults(emptyList())
         }
+    }
+
+    // ------------------------------------------------------------------
+    // Beep suppression (best-effort — some devices ignore stream mutes)
+    // ------------------------------------------------------------------
+
+    private fun muteRecognitionBeep() {
+        runCatching {
+            audioManager.adjustStreamVolume(AudioManager.STREAM_MUSIC, AudioManager.ADJUST_MUTE, 0)
+            // Safety net: always unmute within 1 s even if onReadyForSpeech never fires.
+            mainHandler.postDelayed(::unmuteRecognitionBeep, 1000)
+        }
+    }
+
+    private fun unmuteRecognitionBeep() {
+        runCatching {
+            audioManager.adjustStreamVolume(AudioManager.STREAM_MUSIC, AudioManager.ADJUST_UNMUTE, 0)
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Wake lock — holds CPU awake during recognition with screen off
+    // ------------------------------------------------------------------
+
+    private fun acquireRecognitionWakeLock() {
+        recognitionWakeLock?.let { if (it.isHeld) return }
+        recognitionWakeLock = powerManager.newWakeLock(
+            PowerManager.PARTIAL_WAKE_LOCK,
+            "VoiceGmail:RecognitionWakeLock"
+        ).also { it.acquire(30_000L) } // 30 s max per recognition pass
+    }
+
+    private fun releaseRecognitionWakeLock() {
+        recognitionWakeLock?.let { if (it.isHeld) it.release() }
+        recognitionWakeLock = null
     }
 
     // ------------------------------------------------------------------
@@ -295,13 +345,19 @@ class VoiceManager @Inject constructor(
     }
 
     fun stopAll() {
-        mainHandler.post { tts?.stop(); speechRecognizer?.stopListening(); _isListening.value = false }
+        mainHandler.post {
+            tts?.stop()
+            speechRecognizer?.stopListening()
+            _isListening.value = false
+            unmuteRecognitionBeep()
+        }
     }
 
     fun shutdown() {
         mainHandler.post {
             tts?.stop(); tts?.shutdown()
             speechRecognizer?.destroy(); speechRecognizer = null
+            releaseRecognitionWakeLock()
         }
     }
 
