@@ -541,6 +541,40 @@ class VoiceManager @Inject constructor(
      * flight — [stopListening] fires ERROR_CLIENT which triggers retries and
      * can interfere with the new session.
      */
+    /**
+     * Speak one email chunk at [emailReadRate] then invoke [onDone] — no mic
+     * session is opened between chunks, so there is no recognition beep or
+     * initialisation pause.  The power button wake-event is the only interrupt
+     * path during reading.
+     *
+     * Safe against QUEUE_FLUSH races: if [onDone] fires after the utterance was
+     * flushed by a new [speakAndThenListen] call, the ViewModel's generation
+     * counter in [readNextChunk] will discard the stale callback before it can
+     * advance the chunk index.
+     */
+    fun speakEmailChunk(text: String, onDone: () -> Unit) {
+        mainHandler.post {
+            if (!ttsReady) { mainHandler.post(onDone); return@post }
+            val uid = System.nanoTime().toString()
+            tts?.setSpeechRate(emailReadRate)
+            tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
+                override fun onStart(u: String?) {}
+                override fun onDone(u: String?) {
+                    tts?.setSpeechRate(1.0f)
+                    tts?.setOnUtteranceProgressListener(null)
+                    mainHandler.post(onDone)
+                }
+                @Deprecated("Deprecated in API 21")
+                override fun onError(u: String?) {
+                    tts?.setSpeechRate(1.0f)
+                    tts?.setOnUtteranceProgressListener(null)
+                    mainHandler.post(onDone)
+                }
+            })
+            tts?.speak(phoneticize(text), TextToSpeech.QUEUE_FLUSH, null, uid)
+        }
+    }
+
     fun cancelListening() {
         mainHandler.post {
             speechRecognizer?.destroy()
