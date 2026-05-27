@@ -24,6 +24,8 @@ sealed class VoiceCommand {
     object ListAttachments : VoiceCommand()
     /** Read aloud the attachment at zero-based [index]. Defaults to the first. */
     data class ReadAttachment(val index: Int = 0) : VoiceCommand()
+    /** User wants to attach a file to the outgoing email they are composing. */
+    object AttachFile : VoiceCommand()
     object Repeat : VoiceCommand()
     object GoBack : VoiceCommand()
     object Send : VoiceCommand()
@@ -97,6 +99,10 @@ class VoiceCommandEngine @Inject constructor(
             // "help" — checked before other single-word commands
             lower.contains("help") || lower.contains("what can i say") ||
                 lower.contains("commands") || lower.contains("what are my options") -> VoiceCommand.Help
+            // "attach file" / "add file" — checked BEFORE attachment-reading rules so that
+            // "add attachment" is routed here rather than to ReadAttachment.
+            lower.contains("attach file") || lower.contains("add file") ||
+                lower.contains("add attachment") -> VoiceCommand.AttachFile
             // Attachments — "list" before "read attachment" to avoid collision
             lower.contains("list attachment") || lower.contains("what attachment") ||
                 lower.contains("which attachment") || lower.contains("show attachment") -> VoiceCommand.ListAttachments
