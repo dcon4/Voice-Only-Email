@@ -180,9 +180,12 @@ class InboxViewModel @Inject constructor(
             is VoiceCommand.Read -> {
                 val email = emails.getOrNull(_currentEmailIndex.value)
                 if (email != null) {
-                    val text = "Email ${_currentEmailIndex.value + 1} of ${emails.size}. " +
+                    val unreadPrefix = if (email.isUnread) "Unread. " else ""
+                    val text = "${unreadPrefix}Email ${_currentEmailIndex.value + 1} of ${emails.size}. " +
                         "From ${email.from}. Subject: ${email.subject}. ${email.body.take(500)}. " +
-                        "Say 'reply' to reply, 'delete' to delete, 'next' for the next email, or 'repeat' to hear this again."
+                        "Say 'reply' to reply, 'delete' to delete, " +
+                        (if (email.isUnread) "'mark as read' to clear the unread badge, " else "") +
+                        "'next' for the next email, or 'repeat' to hear this again."
                     voiceCommandEngine.speakThenListen(text) { cmd -> handleCommand(cmd, emails) }
                 } else {
                     voiceCommandEngine.speakThenListen(
@@ -258,6 +261,7 @@ class InboxViewModel @Inject constructor(
                     ) { cmd -> handleCommand(cmd, emails) }
                 }
             }
+            is VoiceCommand.MarkAsRead -> markCurrentEmailAsRead(emails)
             is VoiceCommand.Search -> startSearch(emails)
             is VoiceCommand.Refresh -> loadInbox()
             is VoiceCommand.Compose -> {
@@ -341,6 +345,51 @@ class InboxViewModel @Inject constructor(
                 voiceCommandEngine.speakThenListen(
                     "Say 'yes' to confirm deletion or 'cancel' to keep the email."
                 ) { nextCmd -> handleDeleteConfirmation(nextCmd, email, emails) }
+            }
+        }
+    }
+
+    /**
+     * Marks the current email as read by removing the UNREAD label.
+     * Updates the local list immediately — no reload needed.
+     */
+    private fun markCurrentEmailAsRead(emails: List<EmailItem>) {
+        val email = emails.getOrNull(_currentEmailIndex.value)
+        if (email == null) {
+            voiceCommandEngine.speakThenListen(
+                "No email selected. Say 'read' to hear an email first."
+            ) { cmd -> handleCommand(cmd, emails) }
+            return
+        }
+        if (!email.isUnread) {
+            voiceCommandEngine.speakThenListen(
+                "This email is already marked as read."
+            ) { cmd -> handleCommand(cmd, emails) }
+            return
+        }
+        viewModelScope.launch {
+            try {
+                gmailRepository.markAsRead(email.id)
+                // Update the local copy so the UI reflects the change without a reload.
+                val updated = emails.toMutableList()
+                updated[_currentEmailIndex.value] = email.copy(isUnread = false)
+                _uiState.value = InboxUiState.Success(updated)
+                voiceCommandEngine.speakThenListen(
+                    "Marked as read. Email from ${email.from}, subject: ${email.subject}. " +
+                        "Say 'reply' to reply, 'delete' to delete, 'next' for the next email, or 'repeat' to hear it again."
+                ) { cmd -> handleCommand(cmd, updated) }
+            } catch (e: Exception) {
+                val msg = e.message ?: "Failed to mark as read"
+                voiceCommandEngine.speakThenListen(
+                    "Could not mark as read. $msg. Say 'try again' or 'cancel'."
+                ) { cmd ->
+                    when (cmd) {
+                        is VoiceCommand.TryAgain -> markCurrentEmailAsRead(emails)
+                        else -> voiceCommandEngine.speakThenListen(
+                            "Okay."
+                        ) { nextCmd -> handleCommand(nextCmd, emails) }
+                    }
+                }
             }
         }
     }
