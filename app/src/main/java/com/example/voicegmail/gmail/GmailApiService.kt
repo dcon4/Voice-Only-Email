@@ -1,25 +1,16 @@
 package com.example.voicegmail.gmail
 
 import retrofit2.http.Body
+import retrofit2.http.DELETE
 import retrofit2.http.GET
 import retrofit2.http.Header
 import retrofit2.http.POST
+import retrofit2.http.PUT
 import retrofit2.http.Path
 import retrofit2.http.Query
 
 interface GmailApiService {
 
-    /**
-     * Lists messages in the user's mailbox.
-     *
-     * [labelIds] filters to a specific label (e.g. "INBOX"). Pass **null** to
-     * search across all labels (required for the search feature so results are
-     * not restricted to the inbox).
-     *
-     * [query] is a Gmail search query string (e.g. `from:david is:unread`).
-     * Retrofit omits null @Query parameters, so callers that don't need a
-     * filter should leave it at the default null.
-     */
     @GET("gmail/v1/users/me/messages")
     suspend fun listMessages(
         @Header("Authorization") auth: String,
@@ -47,7 +38,6 @@ interface GmailApiService {
         @Path("id") id: String
     ): GmailMessage
 
-    /** Adds or removes labels (e.g. remove UNREAD to mark as read). Requires gmail.modify scope. */
     @POST("gmail/v1/users/me/messages/{id}/modify")
     suspend fun modifyMessage(
         @Header("Authorization") auth: String,
@@ -61,4 +51,57 @@ interface GmailApiService {
         @Path("messageId") messageId: String,
         @Path("attachmentId") attachmentId: String
     ): AttachmentResponse
+
+    // ── Draft endpoints ───────────────────────────────────────────────────
+
+    /** Create a new draft. Returns the saved draft with its Gmail id. */
+    @POST("gmail/v1/users/me/drafts")
+    suspend fun createDraft(
+        @Header("Authorization") auth: String,
+        @Body draft: DraftCreateRequest
+    ): DraftResponse
+
+    /**
+     * List all drafts.
+     * The list response only contains sparse message refs (id + threadId).
+     * Use [getDraft] to obtain the full body for each one.
+     */
+    @GET("gmail/v1/users/me/drafts")
+    suspend fun listDrafts(
+        @Header("Authorization") auth: String,
+        @Query("maxResults") maxResults: Int = 50
+    ): ListDraftsResponse
+
+    /** Fetch one draft with full message content (headers + body). */
+    @GET("gmail/v1/users/me/drafts/{id}")
+    suspend fun getDraft(
+        @Header("Authorization") auth: String,
+        @Path("id") id: String,
+        @Query("format") format: String = "full"
+    ): DraftResponse
+
+    /** Replace the content of an existing draft. */
+    @PUT("gmail/v1/users/me/drafts/{id}")
+    suspend fun updateDraft(
+        @Header("Authorization") auth: String,
+        @Path("id") id: String,
+        @Body draft: DraftCreateRequest
+    ): DraftResponse
+
+    /**
+     * Send an existing draft.
+     * This promotes the draft to a Sent message and removes the DRAFT label.
+     */
+    @POST("gmail/v1/users/me/drafts/send")
+    suspend fun sendDraft(
+        @Header("Authorization") auth: String,
+        @Body request: SendDraftRequest
+    ): GmailMessage
+
+    /** Permanently delete a draft. */
+    @DELETE("gmail/v1/users/me/drafts/{id}")
+    suspend fun deleteDraft(
+        @Header("Authorization") auth: String,
+        @Path("id") id: String
+    )
 }
