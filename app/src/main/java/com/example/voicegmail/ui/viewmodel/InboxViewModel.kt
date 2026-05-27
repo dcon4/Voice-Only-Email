@@ -238,11 +238,11 @@ class InboxViewModel @Inject constructor(
                     unread > 0 -> {
                         val u = if (unread == 1) "1 unread email" else "$unread unread emails"
                         val t = if (emails.size == 1) "1 email total" else "${emails.size} emails total"
-                        "${greeting}You have $u out of $t. Say 'read unread', 'read', 'search', or 'compose'."
+                        "${greeting}You have $u out of $t. Say 'reed unread', 'reed', 'search', or 'compose'."
                     }
                     else -> {
                         val t = if (emails.size == 1) "1 email" else "${emails.size} emails"
-                        "${greeting}Your inbox is all caught up. You have $t. Say 'read', 'search', or 'compose'."
+                        "${greeting}Your inbox is all caught up. You have $t. Say 'reed', 'search', or 'compose'."
                     }
                 }
                 voiceCommandEngine.speakThenListen(prompt) { cmd -> handleCommand(cmd, emails) }
@@ -282,7 +282,7 @@ class InboxViewModel @Inject constructor(
                 if (email != null) viewModelScope.launch {
                     _navigationEvent.emit(InboxNavEvent.NavigateToCompose(replyTo = email.from))
                 } else voiceCommandEngine.speakThenListen(
-                    "No email selected. Say 'read' to hear an email first."
+                    "No email selected. Say 'reed' to hear an email first."
                 ) { cmd -> handleCommand(cmd, emails) }
             }
             is VoiceCommand.Delete        -> confirmDelete(emails)
@@ -303,8 +303,8 @@ class InboxViewModel @Inject constructor(
                 ) { cmd -> handleCommand(cmd, emails) }
             is VoiceCommand.Help ->
                 voiceCommandEngine.speakThenListen(
-                    "Commands: read, next, previous, repeat, reply, forward, delete, compose, " +
-                        "search, refresh, read unread, mark as read, list attachments, " +
+                    "Commands: reed, next, previous, repeat, reply, forward, delete, compose, " +
+                        "search, refresh, reed unread, mark as read, list attachments, " +
                         "voice settings, instructions. Say a command."
                 ) { cmd -> handleCommand(cmd, emails) }
             is VoiceCommand.VoiceSettings -> handleVoiceSettings(emails)
@@ -348,7 +348,7 @@ class InboxViewModel @Inject constructor(
             _currentEmailIndex.value = newIdx
             voiceCommandEngine.speakThenListen(
                 "Email ${newIdx + 1} of ${emails.size}. From ${email.from}: ${email.subject}. " +
-                    "Say 'read' to hear the full message, 'reply', 'delete', or '${if (delta > 0) "next" else "previous"}'."
+                    "Say 'reed' to hear the full message, 'reply', 'delete', or '${if (delta > 0) "next" else "previous"}'."
             ) { cmd -> handleCommand(cmd, emails) }
         } else {
             val limit = if (delta > 0) "last" else "first"
@@ -366,7 +366,7 @@ class InboxViewModel @Inject constructor(
                     "Subject: ${email.subject}. ${email.body.take(500)}"
             ) { cmd -> handleCommand(cmd, emails) }
         else
-            voiceCommandEngine.speakThenListen("No email to repeat. Say 'read' first.") { cmd ->
+            voiceCommandEngine.speakThenListen("No email to repeat. Say 'reed' first.") { cmd ->
                 handleCommand(cmd, emails)
             }
     }
@@ -384,7 +384,7 @@ class InboxViewModel @Inject constructor(
         voiceCommandEngine.speakThenListen(
             "You have ${unread.size} unread email${if (unread.size == 1) "" else "s"}. " +
                 "First unread: From ${email.from}. Subject: ${email.subject}. " +
-                "Say 'read' to hear it in full, or 'next' for the next email."
+                "Say 'reed' to hear it in full, or 'next' for the next email."
         ) { cmd -> handleCommand(cmd, emails) }
     }
 
@@ -431,9 +431,9 @@ class InboxViewModel @Inject constructor(
                 val text = attachmentReader.readAttachment(email.id, attachment)
                 voiceCommandEngine.speakThenListen(text) { cmd -> handleCommand(cmd, emails) }
             } catch (e: Exception) {
-                voiceCommandEngine.speakThenListen("Could not read attachment. ${e.message ?: "Unknown error."}") { cmd ->
-                    handleCommand(cmd, emails)
-                }
+                voiceCommandEngine.speakThenListen(
+                    "Could not read attachment. ${e.message ?: "Unknown error."}"
+                ) { cmd -> handleCommand(cmd, emails) }
             }
         }
     }
@@ -465,7 +465,7 @@ class InboxViewModel @Inject constructor(
                     _uiState.value = InboxUiState.Success(updated)
                     val nextEmail = updated.getOrNull(_currentEmailIndex.value)
                     val msg = if (nextEmail != null)
-                        "Deleted. Next: From ${nextEmail.from}. ${nextEmail.subject}. Say 'read'."
+                        "Deleted. Next: From ${nextEmail.from}. ${nextEmail.subject}. Say 'reed'."
                     else "Deleted. No more emails."
                     voiceCommandEngine.speakThenListen(msg) { cmd -> handleCommand(cmd, updated) }
                 } catch (e: Exception) {
@@ -507,9 +507,9 @@ class InboxViewModel @Inject constructor(
                 _uiState.value = InboxUiState.Success(updated)
                 voiceCommandEngine.speakThenListen("Marked as read.") { cmd -> handleCommand(cmd, updated) }
             } catch (e: Exception) {
-                voiceCommandEngine.speakThenListen("Could not mark as read. ${e.message ?: "Unknown error."}") { cmd ->
-                    handleCommand(cmd, emails)
-                }
+                voiceCommandEngine.speakThenListen(
+                    "Could not mark as read. ${e.message ?: "Unknown error."}"
+                ) { cmd -> handleCommand(cmd, emails) }
             }
         }
     }
@@ -525,16 +525,18 @@ class InboxViewModel @Inject constructor(
                 handleCommand(cmd, emails)
             }; return
         }
-        voiceCommandEngine.speakThenListen("Who would you like to forward this to? Please say the email address.") { cmd ->
+        voiceCommandEngine.speakThenListen(
+            "Who would you like to forward this to? Please say the email address."
+        ) { cmd ->
             val raw = (cmd as? VoiceCommand.FreeText)?.text ?: voiceManager.recognizedText.value ?: ""
             when {
                 cmd is VoiceCommand.Cancel ->
                     voiceCommandEngine.speakThenListen("Forward cancelled.") { c -> handleCommand(c, emails) }
                 raw.isNotBlank() -> launchForward(email, raw, emails)
                 else ->
-                    voiceCommandEngine.speakThenListen("I didn't catch that. Say the email address or 'cancel'.") { c ->
-                        handleCommand(c, emails)
-                    }
+                    voiceCommandEngine.speakThenListen(
+                        "I didn't catch that. Say the email address or 'cancel'."
+                    ) { c -> handleCommand(c, emails) }
             }
         }
     }
@@ -555,12 +557,15 @@ class InboxViewModel @Inject constructor(
 
     private fun startSearch(originEmails: List<EmailItem>) {
         voiceCommandEngine.speakThenListen(
-            "What would you like to search for? For example: 'emails from David', 'subject meeting', or 'unread emails'."
+            "What would you like to search for? For example: 'emails from David', " +
+                "'subject meeting', or 'unread emails'."
         ) { cmd ->
             val raw = (cmd as? VoiceCommand.FreeText)?.text ?: voiceManager.recognizedText.value ?: ""
             when {
                 cmd is VoiceCommand.Cancel ->
-                    voiceCommandEngine.speakThenListen("Search cancelled.") { c -> handleCommand(c, originEmails) }
+                    voiceCommandEngine.speakThenListen("Search cancelled.") { c ->
+                        handleCommand(c, originEmails)
+                    }
                 raw.isNotBlank() -> executeSearch(raw, originEmails)
                 else ->
                     voiceCommandEngine.speakThenListen(
@@ -587,7 +592,8 @@ class InboxViewModel @Inject constructor(
                         when {
                             cmd is VoiceCommand.Search -> startSearch(originEmails)
                             cmd is VoiceCommand.Cancel ||
-                                (cmd is VoiceCommand.FreeText && cmd.text.lowercase().contains("inbox")) ->
+                                (cmd is VoiceCommand.FreeText &&
+                                    cmd.text.lowercase().contains("inbox")) ->
                                 handleCommand(VoiceCommand.Refresh, originEmails)
                             else -> handleCommand(cmd, originEmails)
                         }
@@ -597,8 +603,9 @@ class InboxViewModel @Inject constructor(
                     _currentEmailIndex.value = 0
                     _uiState.value = InboxUiState.Success(results)
                     voiceCommandEngine.speakThenListen(
-                        "Found ${results.size} email${if (results.size == 1) "" else "s"} matching '$query'. " +
-                            "Email 1: From ${first.from}: ${first.subject}. Say 'read', 'next', or 'search again'."
+                        "Found ${results.size} email${if (results.size == 1) "" else "s"} " +
+                            "matching '$query'. Email 1: From ${first.from}: ${first.subject}. " +
+                            "Say 'reed', 'next', or 'search again'."
                     ) { cmd ->
                         if (cmd is VoiceCommand.Search) startSearch(originEmails)
                         else handleCommand(cmd, results)
@@ -618,11 +625,22 @@ class InboxViewModel @Inject constructor(
     }
 
     // ------------------------------------------------------------------
-    // Voice settings — voice-guided English US voice chooser
+    // Voice settings — linear single-pass voice chooser
     // ------------------------------------------------------------------
 
+    /**
+     * Starts the voice chooser. Filters to English US voices only and
+     * begins a single linear pass: each voice plays its own sample, then
+     * the mic opens for one response.
+     *
+     *   "keep it" / "yes" / similar → save that voice and exit.
+     *   "cancel" / "stop" / "go back" / similar → restore original and exit.
+     *   Anything else (silence, "next", unrecognised) → advance automatically.
+     *
+     * After all voices have been presented once the chooser exits on its own.
+     * There is no looping.
+     */
     private fun handleVoiceSettings(emails: List<EmailItem>) {
-        // Filter to English United States voices only.
         val voices = voiceManager.getAvailableVoices().filter { voice ->
             voice.locale.language == Locale.US.language &&
                 voice.locale.country == Locale.US.country
@@ -638,104 +656,77 @@ class InboxViewModel @Inject constructor(
         val count = voices.size
         voiceCommandEngine.speakThenListen(
             "Voice chooser. $count English U.S. voice${if (count == 1) "" else "s"} available. " +
-                "Each will introduce itself. Say 'next' to move on, 'keep it' to save, or 'cancel' to go back."
-        ) { _ -> browseVoice(voices, 0, 0, originalVoiceName, emails) }
+                "Each will introduce itself in its own voice. " +
+                "Say 'keep it' when you hear one you like. " +
+                "Say 'cancel' to exit without changing. " +
+                "Otherwise I will move on automatically."
+        ) { _ -> browseVoice(voices, 0, originalVoiceName, emails) }
     }
 
     /**
-     * Plays each English US voice's sample in that voice itself so the user
-     * can audition it. Accepts "next", "keep it", "yes", "previous", or "cancel".
-     * Times out after [MAX_VOICE_BROWSE_FAILS] consecutive non-responses.
+     * Presents voice at [index] in its own voice, then listens once.
+     *
+     * Advances to [index]+1 on any non-keep, non-cancel response (including
+     * silence). Exits cleanly when [index] reaches the end of the list.
+     * This guarantees the loop is always finite — exactly one pass through
+     * all voices.
      */
     private fun browseVoice(
         voices: List<Voice>,
         index: Int,
-        failCount: Int,
         originalVoiceName: String?,
         emails: List<EmailItem>
     ) {
+        // All voices presented — exit without saving.
+        if (index >= voices.size) {
+            restoreOriginalVoice(originalVoiceName)
+            voiceCommandEngine.speakThenListen(
+                "End of voice list. No selection made. Voice unchanged."
+            ) { c -> handleCommand(c, emails) }
+            return
+        }
+
         val voice  = voices[index]
         val total  = voices.size
-        // The sample is spoken IN the candidate voice — the user hears what it sounds like.
         val sample = "Hello. This is English U.S.A. voice ${index + 1} of $total. What do you think?"
 
         voiceCommandEngine.speakWithVoiceAndListen(sample, voice) { cmd ->
-            val raw = ((cmd as? VoiceCommand.FreeText)?.text
-                ?: voiceManager.recognizedText.value ?: "").lowercase()
-
+            val raw = ((cmd as? VoiceCommand.FreeText)?.text ?: "").lowercase()
             when {
-                // --- Keep this voice ---
-                cmd is VoiceCommand.Confirm ||
-                    raw.contains("keep") || raw.contains("yes") || raw.contains("good") ||
-                    raw.contains("like") || raw.contains("love") || raw.contains("this one") ||
-                    raw.contains("that one") || raw.contains("perfect") || raw.contains("great") -> {
+                isVoiceKeepCommand(cmd, raw) -> {
                     voiceManager.setVoiceByName(voice.name)
                     voiceCommandEngine.speakThenListen(
                         "Voice ${index + 1} saved."
                     ) { c -> handleCommand(c, emails) }
                 }
-
-                // --- Next voice (wraps around) ---
-                cmd is VoiceCommand.Next || raw.contains("next") || raw.contains("skip") -> {
-                    browseVoice(voices, (index + 1) % total, 0, originalVoiceName, emails)
-                }
-
-                // --- Previous voice (wraps around) ---
-                cmd is VoiceCommand.Previous ||
-                    raw.contains("previous") || raw.contains("last") || raw.contains("back") -> {
-                    browseVoice(voices, if (index == 0) total - 1 else index - 1, 0, originalVoiceName, emails)
-                }
-
-                // --- Cancel — restore original ---
-                cmd is VoiceCommand.Cancel ||
-                    raw.contains("cancel") || raw.contains("stop") || raw.contains("never mind") -> {
+                isVoiceExitCommand(cmd, raw) -> {
                     restoreOriginalVoice(originalVoiceName)
                     voiceCommandEngine.speakThenListen(
                         "Voice unchanged."
                     ) { c -> handleCommand(c, emails) }
                 }
-
-                // --- No response or unrecognised ---
                 else -> {
-                    val newFail = failCount + 1
-                    if (newFail >= MAX_VOICE_BROWSE_FAILS) {
-                        // Timed out after 3 attempts — restore and return.
-                        restoreOriginalVoice(originalVoiceName)
-                        voiceCommandEngine.speakThenListen(
-                            "No selection made. Voice unchanged."
-                        ) { c -> handleCommand(c, emails) }
-                    } else {
-                        // Brief hint, then replay the same voice's sample.
-                        voiceCommandEngine.speakThenListen(
-                            "Say 'next' to hear the next voice, 'keep it' to save this one, or 'cancel'."
-                        ) { reminderCmd ->
-                            val reminderRaw = ((reminderCmd as? VoiceCommand.FreeText)?.text
-                                ?: voiceManager.recognizedText.value ?: "").lowercase()
-                            when {
-                                reminderCmd is VoiceCommand.Next || reminderRaw.contains("next") ->
-                                    browseVoice(voices, (index + 1) % total, 0, originalVoiceName, emails)
-                                reminderCmd is VoiceCommand.Confirm ||
-                                    reminderRaw.contains("keep") || reminderRaw.contains("yes") -> {
-                                    voiceManager.setVoiceByName(voice.name)
-                                    voiceCommandEngine.speakThenListen("Voice ${index + 1} saved.") { c ->
-                                        handleCommand(c, emails)
-                                    }
-                                }
-                                reminderCmd is VoiceCommand.Cancel || reminderRaw.contains("cancel") -> {
-                                    restoreOriginalVoice(originalVoiceName)
-                                    voiceCommandEngine.speakThenListen("Voice unchanged.") { c ->
-                                        handleCommand(c, emails)
-                                    }
-                                }
-                                // Still no response — loop back with incremented fail count.
-                                else -> browseVoice(voices, index, newFail, originalVoiceName, emails)
-                            }
-                        }
-                    }
+                    // Silence, "next", unrecognised — advance to next voice.
+                    browseVoice(voices, index + 1, originalVoiceName, emails)
                 }
             }
         }
     }
+
+    private fun isVoiceKeepCommand(cmd: VoiceCommand, raw: String): Boolean =
+        cmd is VoiceCommand.Confirm ||
+            raw.contains("keep")     || raw.contains("yes")      || raw.contains("good")  ||
+            raw.contains("like")     || raw.contains("love")      || raw.contains("great") ||
+            raw.contains("this one") || raw.contains("that one")  || raw.contains("perfect") ||
+            raw.contains("save")     || raw.contains("use this")  || raw.contains("use it") ||
+            raw.contains("i want")   || raw.contains("select")
+
+    private fun isVoiceExitCommand(cmd: VoiceCommand, raw: String): Boolean =
+        cmd is VoiceCommand.Cancel || cmd is VoiceCommand.GoBack ||
+            raw.contains("cancel")    || raw.contains("stop")      || raw.contains("exit")  ||
+            raw.contains("never mind")|| raw.contains("no thanks") || raw.contains("done")  ||
+            raw.contains("quit")      || raw.contains("go back")   || raw.contains("leave") ||
+            raw.contains("back")
 
     private fun restoreOriginalVoice(originalVoiceName: String?) {
         if (originalVoiceName != null) voiceManager.setVoiceByName(originalVoiceName)
@@ -756,9 +747,9 @@ class InboxViewModel @Inject constructor(
                     handleInstructions(emails, (section - 1).coerceAtLeast(0))
                 is VoiceCommand.Repeat -> handleInstructions(emails, section)
                 is VoiceCommand.Cancel, is VoiceCommand.GoBack ->
-                    voiceCommandEngine.speakThenListen("Returning to inbox. Say 'read' or 'help'.") { c ->
-                        handleCommand(c, emails)
-                    }
+                    voiceCommandEngine.speakThenListen(
+                        "Returning to inbox. Say 'reed' or 'help'."
+                    ) { c -> handleCommand(c, emails) }
                 else -> handleCommand(cmd, emails)
             }
         }
@@ -802,22 +793,19 @@ class InboxViewModel @Inject constructor(
         (_uiState.value as? InboxUiState.Success)?.emails ?: emptyList()
 
     private companion object {
-        /** Give up the voice chooser after this many consecutive non-responses. */
-        const val MAX_VOICE_BROWSE_FAILS = 3
-
         val INSTRUCTION_SECTIONS = listOf(
             "Instructions. Section 1 of 8: Overview. " +
                 "VoiceGmail is completely hands-free. After every spoken message, the microphone opens automatically. " +
                 "Wake the app at any time by pressing the power button. " +
                 "Navigate sections with: next, previous, repeat, cancel. Say 'next' to continue.",
             "Section 2 of 8: Reading your mail. " +
-                "Say 'read' to hear the current email. " +
+                "Say 'reed' to hear the current email. " +
                 "Say 'next' to move forward, 'previous' to go back, 'repeat' to hear again. " +
-                "Say 'read unread' to jump to your first unread message. Say 'next' to continue.",
+                "Say 'reed unread' to jump to your first unread message. Say 'next' to continue.",
             "Section 3 of 8: Replying and composing. " +
                 "Say 'reply' to reply to the current email. Say 'compose' to write a new email. " +
                 "When composing, the app guides you step by step. " +
-                "Say 'send' when done, 'read back' to review, or 'cancel' to discard. Say 'next' to continue.",
+                "Say 'send' when done, 'reed back' to review, or 'cancel' to discard. Say 'next' to continue.",
             "Section 4 of 8: Managing email. " +
                 "Say 'delete' — then 'yes' to confirm or 'cancel' to abort. " +
                 "Say 'mark as read' to clear the unread badge. " +
@@ -825,15 +813,16 @@ class InboxViewModel @Inject constructor(
             "Section 5 of 8: Searching. " +
                 "Say 'search' and then describe what you want: " +
                 "'emails from David', 'subject meeting', or 'unread emails'. " +
-                "Use 'next', 'previous', and 'read' in search results. Say 'next' to continue.",
+                "Use 'next', 'previous', and 'reed' in search results. Say 'next' to continue.",
             "Section 6 of 8: Attachments. " +
                 "Say 'list attachments' to hear what files are attached. " +
-                "Say 'read attachment one' to have the first attachment read aloud. " +
+                "Say 'reed attachment one' to have the first attachment read aloud. " +
                 "P D F, Word, and plain text files are supported. Say 'next' to continue.",
             "Section 7 of 8: Voice settings. " +
-                "Say 'voice settings' to browse and audition English U.S. voices by voice command. " +
-                "Each voice will introduce itself. Say 'next' to try the next, 'keep it' to save. " +
-                "Sighted helpers can also tap the Settings icon to open a visual panel. Say 'next' to continue.",
+                "Say 'voice settings' to browse English U.S. voices by voice command. " +
+                "Each voice introduces itself in its own voice. " +
+                "Say 'keep it' to save, or 'cancel' to exit. " +
+                "Silence moves to the next voice automatically. Say 'next' to continue.",
             "Section 8 of 8: Wake from lock screen. " +
                 "Press the power button to wake your device. " +
                 "VoiceGmail appears on screen and says: VoiceGmail ready, say a command. " +
