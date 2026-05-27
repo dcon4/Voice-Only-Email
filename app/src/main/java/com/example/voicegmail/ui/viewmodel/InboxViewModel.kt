@@ -13,6 +13,7 @@ import com.example.voicegmail.auth.OAuthDiagnostics
 import com.example.voicegmail.debug.DebugLogger
 import com.example.voicegmail.gmail.EmailItem
 import com.example.voicegmail.gmail.GmailRepository
+import com.example.voicegmail.voice.NaturalLanguageQueryParser
 import com.example.voicegmail.voice.VoiceCommand
 import com.example.voicegmail.voice.VoiceCommandEngine
 import com.example.voicegmail.voice.VoiceManager
@@ -36,7 +37,8 @@ class InboxViewModel @Inject constructor(
     private val authRepository: AuthRepository,
     private val gmailRepository: GmailRepository,
     private val voiceManager: VoiceManager,
-    private val voiceCommandEngine: VoiceCommandEngine
+    private val voiceCommandEngine: VoiceCommandEngine,
+    private val queryParser: NaturalLanguageQueryParser
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow<InboxUiState>(InboxUiState.Loading)
@@ -384,10 +386,11 @@ class InboxViewModel @Inject constructor(
         }
     }
 
-    private fun executeSearch(query: String, originEmails: List<EmailItem>) {
+    private fun executeSearch(rawQuery: String, originEmails: List<EmailItem>) {
         viewModelScope.launch {
-            // Show loading and announce the search so the user knows it's working.
-            voiceManager.speak("Searching for $query…")
+            // Translate natural language → Gmail query syntax on the fly.
+            val query = queryParser.parse(rawQuery)
+            voiceManager.speak("Searching…")
             try {
                 val results = gmailRepository.searchEmails(query)
                 if (results.isEmpty()) {
