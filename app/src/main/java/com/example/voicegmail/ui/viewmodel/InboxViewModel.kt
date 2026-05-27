@@ -460,11 +460,23 @@ class InboxViewModel @Inject constructor(
             append("Say 'search' followed by what you are looking for. ")
             append("Say 'refresh' to reload your inbox. ")
             append("Writing: say 'compose' to start a new email. ")
-            append("And say 'help' at any time to hear this list again.")
         }
-        // Speak part 1, then chain into part 2, then re-arm the mic.
+        val part3 = buildString {
+            append("Attachments on received emails: ")
+            append("Say 'list attachments' to hear the names of any files attached to the current email. ")
+            append("Say 'read attachment one' to read the first attachment aloud. ")
+            append("Say 'read attachment two' for the second, and so on. ")
+            append("Plain text, HTML, and PDF files can all be read aloud. ")
+            append("While composing or replying: ")
+            append("Say 'attach file' to add a file from your device. ")
+            append("Say 'remove attachment one' to remove a staged file before sending. ")
+            append("Say 'read back' to hear your full message — recipient, subject, body, and attachments — before you send it. ")
+            append("Say 'help' at any time to hear this list again.")
+        }
+        // Speak part 1 and 2 back-to-back, then re-arm the mic after part 3.
         voiceManager.speak(part1)
-        voiceCommandEngine.speakThenListen(part2) { cmd -> handleCommand(cmd, emails) }
+        voiceManager.speak(part2)
+        voiceCommandEngine.speakThenListen(part3) { cmd -> handleCommand(cmd, emails) }
     }
 
     /**
