@@ -34,6 +34,15 @@ sealed class VoiceCommand {
     object Cancel         : VoiceCommand()
     object VoiceSettings  : VoiceCommand()
     object Instructions   : VoiceCommand()
+    /** Decrease email-reading TTS rate by 5 %. */
+    object ReadSlower     : VoiceCommand()
+    /** Increase email-reading TTS rate by 5 %. */
+    object ReadFaster     : VoiceCommand()
+    /**
+     * Emitted after [NO_SPEECH_MAX_RETRIES] consecutive no-speech mic sessions.
+     * The app goes silent and waits for the next power-button wake event.
+     */
+    object SessionTimeout : VoiceCommand()
     data class FreeText(val text: String) : VoiceCommand()
 }
 
@@ -44,9 +53,22 @@ class VoiceCommandEngine @Inject constructor(
     private val _lastCommand = MutableStateFlow<VoiceCommand>(VoiceCommand.None)
     val lastCommand: StateFlow<VoiceCommand> = _lastCommand
 
-    /** Speak [prompt] then listen; calls [onCommand] with the best-matched command. */
+    /** Speak [prompt] at the normal UI rate, then listen. */
     fun speakThenListen(prompt: String, onCommand: (VoiceCommand) -> Unit) {
         voiceManager.speakAndThenListen(prompt) { candidates ->
+            val cmd = parseAll(candidates)
+            _lastCommand.value = cmd
+            onCommand(cmd)
+        }
+    }
+
+    /**
+     * Speak [prompt] at the user's chosen email-reading rate, then listen.
+     * Use this for reading email bodies, subjects, and attachment content
+     * so the speed follows "read slower" / "read faster" adjustments.
+     */
+    fun speakEmailThenListen(prompt: String, onCommand: (VoiceCommand) -> Unit) {
+        voiceManager.speakEmailAndThenListen(prompt) { candidates ->
             val cmd = parseAll(candidates)
             _lastCommand.value = cmd
             onCommand(cmd)
@@ -64,8 +86,7 @@ class VoiceCommandEngine @Inject constructor(
 
     /**
      * Speaks [text] in [voice] so the user can audition it, then opens the mic.
-     * Used by the voice chooser to play each candidate voice's sample before
-     * asking the user to keep or skip it.
+     * Used by the voice chooser — always at rate 1.0 regardless of email read rate.
      */
     fun speakWithVoiceAndListen(text: String, voice: Voice, onCommand: (VoiceCommand) -> Unit) {
         voiceManager.speakWithVoiceAndThenListen(text, voice) { candidates ->
@@ -83,6 +104,9 @@ class VoiceCommandEngine @Inject constructor(
 
     private fun parseAll(candidates: List<String>): VoiceCommand {
         if (candidates.isEmpty()) return VoiceCommand.FreeText("")
+        // Internal sentinel emitted by VoiceManager on session timeout.
+        if (candidates.size == 1 && candidates[0] == "SESSION_TIMEOUT")
+            return VoiceCommand.SessionTimeout
         for (raw in candidates) {
             val corrected = applyPhoneticCorrections(raw)
             val cmd = parse(corrected)
@@ -144,6 +168,17 @@ class VoiceCommandEngine @Inject constructor(
                 lower.contains("choose voice") || lower.contains("select voice") ||
                 lower.contains("pick voice") || lower.contains("different voice") ||
                 lower.contains("tts setting") -> VoiceCommand.VoiceSettings
+
+            // Speed controls — must come before the plain "read" checks.
+            lower.contains("read slower")    || lower.contains("slow down")       ||
+                lower.contains("read more slowly") || lower.contains("speak slower") ||
+                lower.contains("speak more slowly") ||
+                (lower == "slower") -> VoiceCommand.ReadSlower
+
+            lower.contains("read faster")    || lower.contains("speed up")        ||
+                lower.contains("read more quickly") || lower.contains("read more fast") ||
+                lower.contains("speak faster") || lower.contains("speak more quickly") ||
+                (lower == "faster") -> VoiceCommand.ReadFaster
 
             lower.contains("try again") || lower.contains("retry") -> VoiceCommand.TryAgain
 
