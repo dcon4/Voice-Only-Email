@@ -15,12 +15,6 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import com.example.voicegmail.ui.viewmodel.InboxViewModel
 
-/**
- * A [ModalBottomSheet] that lets a sighted helper (or the user themselves)
- * choose a TTS engine and voice without using voice commands.
- *
- * All state is driven by [InboxViewModel]; the composable is purely a view.
- */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun VoiceSettingsPanel(viewModel: InboxViewModel) {
@@ -102,6 +96,16 @@ fun VoiceSettingsPanel(viewModel: InboxViewModel) {
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             } else {
+                // Engine default option (clears any saved voice preference)
+                VoiceRow(
+                    voice    = null,
+                    label    = "Engine default",
+                    selected = selectedVoice == null,
+                    onSelect = {
+                        viewModel.clearVoicePreferenceFromPanel()
+                        viewModel.testVoice()
+                    }
+                )
                 voices.forEach { voice ->
                     VoiceRow(
                         voice      = voice,
@@ -110,16 +114,6 @@ fun VoiceSettingsPanel(viewModel: InboxViewModel) {
                         onSelect   = { viewModel.selectVoiceFromPanel(voice.name) }
                     )
                 }
-                // "Default" option — clears any saved voice preference
-                VoiceRow(
-                    voice    = null,
-                    label    = "Engine default",
-                    selected = selectedVoice == null,
-                    onSelect = {
-                        viewModel.selectVoiceFromPanel("")
-                        viewModel.testVoice()
-                    }
-                )
             }
 
             HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
