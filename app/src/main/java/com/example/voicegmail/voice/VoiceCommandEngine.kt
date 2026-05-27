@@ -21,6 +21,9 @@ sealed class VoiceCommand {
     object Forward : VoiceCommand()
     object ReadAllUnread : VoiceCommand()
     object Help : VoiceCommand()
+    object ListAttachments : VoiceCommand()
+    /** Read aloud the attachment at zero-based [index]. Defaults to the first. */
+    data class ReadAttachment(val index: Int = 0) : VoiceCommand()
     object Repeat : VoiceCommand()
     object GoBack : VoiceCommand()
     object Send : VoiceCommand()
@@ -94,6 +97,11 @@ class VoiceCommandEngine @Inject constructor(
             // "help" — checked before other single-word commands
             lower.contains("help") || lower.contains("what can i say") ||
                 lower.contains("commands") || lower.contains("what are my options") -> VoiceCommand.Help
+            // Attachments — "list" before "read attachment" to avoid collision
+            lower.contains("list attachment") || lower.contains("what attachment") ||
+                lower.contains("which attachment") || lower.contains("show attachment") -> VoiceCommand.ListAttachments
+            // "read attachment [ordinal]" or just "attachment"
+            lower.contains("attachment") -> VoiceCommand.ReadAttachment(extractOrdinalFromPhrase(lower))
             // "search" before "send" to avoid substring collision
             lower.contains("search") || lower.contains("find") ||
                 lower.contains("look for") -> VoiceCommand.Search
@@ -110,5 +118,24 @@ class VoiceCommandEngine @Inject constructor(
             lower.matches(Regex("(back|cancel|exit|stop|never mind)")) -> VoiceCommand.Cancel
             else -> VoiceCommand.FreeText(text)
         }
+    }
+
+    /**
+     * Extracts a zero-based attachment index from a spoken phrase.
+     * Recognises ordinals ("first", "second" …) and digits ("1", "2" …).
+     * Returns 0 (first attachment) when no ordinal is found.
+     */
+    private fun extractOrdinalFromPhrase(phrase: String): Int {
+        val ordinals = mapOf(
+            "first"  to 0, "one"   to 0, "1" to 0,
+            "second" to 1, "two"   to 1, "2" to 1,
+            "third"  to 2, "three" to 2, "3" to 2,
+            "fourth" to 3, "four"  to 3, "4" to 3,
+            "fifth"  to 4, "five"  to 4, "5" to 4
+        )
+        for ((word, idx) in ordinals) {
+            if (Regex("\\b${Regex.escape(word)}\\b").containsMatchIn(phrase)) return idx
+        }
+        return 0
     }
 }
