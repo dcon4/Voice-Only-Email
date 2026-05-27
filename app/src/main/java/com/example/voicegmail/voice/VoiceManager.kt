@@ -168,7 +168,7 @@ class VoiceManager @Inject constructor(
     fun adjustEmailReadRate(delta: Float) {
         emailReadRate = (emailReadRate + delta).coerceIn(0.25f, 3.0f)
         ttsSettings.saveEmailReadRate(emailReadRate)
-        Log.d(tag, "Email read rate → ${getEmailReadRatePct()}%")
+        Log.d(tag, "Email read rate -> ${getEmailReadRatePct()}%")
     }
 
     // ------------------------------------------------------------------
@@ -261,6 +261,40 @@ class VoiceManager @Inject constructor(
         }
     }
 
+    /**
+     * Speak one sentence/chunk of an email at email reading rate, then open a
+     * *brief* listening window ([noSpeechMaxRetries] = 0).  Silence returns
+     * an empty list immediately so the caller can advance to the next chunk
+     * without the full session-timeout delay.
+     */
+    fun speakEmailSentenceAndThenListen(text: String, onResults: (List<String>) -> Unit) {
+        mainHandler.post {
+            if (!ttsReady) {
+                startListeningOnMainThread(onResults, 0, 0, 0); return@post
+            }
+            tts?.setSpeechRate(emailReadRate)
+            tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
+                override fun onStart(uid: String?) {}
+                override fun onDone(uid: String?) {
+                    tts?.setSpeechRate(1.0f)
+                    tts?.setOnUtteranceProgressListener(null)
+                    mainHandler.postDelayed({
+                        startListeningOnMainThread(onResults, 0, 0, 0)
+                    }, TTS_TO_MIC_GAP_MS)
+                }
+                @Deprecated("Deprecated in API 21")
+                override fun onError(uid: String?) {
+                    tts?.setSpeechRate(1.0f)
+                    tts?.setOnUtteranceProgressListener(null)
+                    mainHandler.postDelayed({
+                        startListeningOnMainThread(onResults, 0, 0, 0)
+                    }, TTS_TO_MIC_GAP_MS)
+                }
+            })
+            tts?.speak(phoneticize(text), TextToSpeech.QUEUE_FLUSH, null, utteranceId)
+        }
+    }
+
     // ------------------------------------------------------------------
     // TTS output — voice audition (always rate 1.0)
     // ------------------------------------------------------------------
@@ -300,14 +334,15 @@ class VoiceManager @Inject constructor(
      * Checks permissions/availability, ensures Bluetooth SCO is active (in the
      * bt build), then delegates to [doStartRecognizer].
      *
-     * Keeping SCO "hot" between mic sessions avoids the 1–3 s reconnect delay
-     * on every listening window. SCO is stopped only on session timeout or
-     * explicit shutdown.
+     * [noSpeechMaxRetries] controls how many times the recognizer retries on
+     * silence before giving up.  Pass 0 for a brief "between-chunk" listen that
+     * returns an empty list immediately on silence instead of SESSION_TIMEOUT.
      */
     private fun startListeningOnMainThread(
         onResults: (List<String>) -> Unit,
         retryCount: Int = 0,
-        noSpeechRetries: Int = 0
+        noSpeechRetries: Int = 0,
+        noSpeechMaxRetries: Int = NO_SPEECH_MAX_RETRIES
     ) {
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO)
                 != PackageManager.PERMISSION_GRANTED) {
@@ -317,11 +352,8 @@ class VoiceManager @Inject constructor(
             Log.w(tag, "Speech recognition unavailable"); onResults(emptyList()); return
         }
 
-        // In the bt build, open the SCO channel before the mic. If SCO is
-        // already connected (kept hot from the previous round) this fires
-        // immediately with no overhead.
         bluetoothRouter.ensureScoActive {
-            doStartRecognizer(onResults, retryCount, noSpeechRetries)
+            doStartRecognizer(onResults, retryCount, noSpeechRetries, noSpeechMaxRetries)
         }
     }
 
@@ -332,7 +364,8 @@ class VoiceManager @Inject constructor(
     private fun doStartRecognizer(
         onResults: (List<String>) -> Unit,
         retryCount: Int = 0,
-        noSpeechRetries: Int = 0
+        noSpeechRetries: Int = 0,
+        noSpeechMaxRetries: Int = NO_SPEECH_MAX_RETRIES
     ) {
         acquireRecognitionWakeLock()
         muteRecognitionBeep()
@@ -350,7 +383,7 @@ class VoiceManager @Inject constructor(
 
                 override fun onBeginningOfSpeech() {
                     speechBegan = true
-                    Log.d(tag, "Speech began (retry=$retryCount noSpeech=$noSpeechRetries)")
+                    Log.d(tag, "Speech began (retry=$retryCount noSpeech=$noSpeechRetries max=$noSpeechMaxRetries)")
                 }
 
                 override fun onPartialResults(partial: Bundle?) {
@@ -376,20 +409,23 @@ class VoiceManager @Inject constructor(
                             Log.d(tag, "Results (${candidates.size}): ${candidates.take(3)}")
                             onResults(candidates)
                         }
-                        !speechBegan && noSpeechRetries < NO_SPEECH_MAX_RETRIES -> {
-                            Log.d(tag, "No speech — silent retry ${noSpeechRetries + 1}/$NO_SPEECH_MAX_RETRIES")
+                        !speechBegan && noSpeechRetries < noSpeechMaxRetries -> {
+                            Log.d(tag, "No speech — silent retry ${noSpeechRetries + 1}/$noSpeechMaxRetries")
                             mainHandler.postDelayed({
-                                startListeningOnMainThread(onResults, retryCount, noSpeechRetries + 1)
+                                startListeningOnMainThread(onResults, retryCount, noSpeechRetries + 1, noSpeechMaxRetries)
                             }, NO_SPEECH_RETRY_DELAY_MS)
                         }
                         !speechBegan -> {
-                            // Hit the no-speech cap — go to sleep.
-                            // Stop SCO so audio routes back to A2DP while idle.
-                            Log.d(tag, "Session timeout after $NO_SPEECH_MAX_RETRIES no-speech retries")
-                            bluetoothRouter.stopSco()
-                            onResults(listOf("SESSION_TIMEOUT"))
+                            if (noSpeechMaxRetries == 0) {
+                                Log.d(tag, "Brief listen: no speech — returning empty (continue reading)")
+                                onResults(emptyList())
+                            } else {
+                                Log.d(tag, "Session timeout after $noSpeechMaxRetries no-speech retries")
+                                bluetoothRouter.stopSco()
+                                onResults(listOf("SESSION_TIMEOUT"))
+                            }
                         }
-                        else -> retryOrFail(SpeechRecognizer.ERROR_NO_MATCH, onResults, retryCount)
+                        else -> retryOrFail(SpeechRecognizer.ERROR_NO_MATCH, onResults, retryCount, noSpeechMaxRetries)
                     }
                 }
 
@@ -397,20 +433,25 @@ class VoiceManager @Inject constructor(
                     _isListening.value = false
                     releaseRecognitionWakeLock()
                     unmuteRecognitionBeep()
-                    Log.w(tag, "Recognition error $error speechBegan=$speechBegan retry=$retryCount noSpeech=$noSpeechRetries")
+                    Log.w(tag, "Recognition error $error speechBegan=$speechBegan retry=$retryCount noSpeech=$noSpeechRetries max=$noSpeechMaxRetries")
 
                     when {
-                        !speechBegan && noSpeechRetries < NO_SPEECH_MAX_RETRIES -> {
+                        !speechBegan && noSpeechRetries < noSpeechMaxRetries -> {
                             mainHandler.postDelayed({
-                                startListeningOnMainThread(onResults, retryCount, noSpeechRetries + 1)
+                                startListeningOnMainThread(onResults, retryCount, noSpeechRetries + 1, noSpeechMaxRetries)
                             }, NO_SPEECH_RETRY_DELAY_MS)
                         }
                         !speechBegan -> {
-                            Log.d(tag, "Session timeout (error path) after $NO_SPEECH_MAX_RETRIES no-speech retries")
-                            bluetoothRouter.stopSco()
-                            onResults(listOf("SESSION_TIMEOUT"))
+                            if (noSpeechMaxRetries == 0) {
+                                Log.d(tag, "Brief listen error: no speech — returning empty (continue reading)")
+                                onResults(emptyList())
+                            } else {
+                                Log.d(tag, "Session timeout (error path) after $noSpeechMaxRetries no-speech retries")
+                                bluetoothRouter.stopSco()
+                                onResults(listOf("SESSION_TIMEOUT"))
+                            }
                         }
-                        else -> retryOrFail(error, onResults, retryCount)
+                        else -> retryOrFail(error, onResults, retryCount, noSpeechMaxRetries)
                     }
                 }
 
@@ -435,15 +476,20 @@ class VoiceManager @Inject constructor(
         speechRecognizer?.startListening(intent)
     }
 
-    private fun retryOrFail(error: Int, onResults: (List<String>) -> Unit, retryCount: Int) {
+    private fun retryOrFail(
+        error: Int,
+        onResults: (List<String>) -> Unit,
+        retryCount: Int,
+        noSpeechMaxRetries: Int = NO_SPEECH_MAX_RETRIES
+    ) {
         val retriable = error == SpeechRecognizer.ERROR_NO_MATCH ||
             error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT ||
             error == SpeechRecognizer.ERROR_RECOGNIZER_BUSY
         if (retriable && retryCount < MAX_RETRIES) {
             val delay = if (error == SpeechRecognizer.ERROR_RECOGNIZER_BUSY) 600L else 300L
-            Log.d(tag, "Retrying recognition ($retryCount → ${retryCount + 1})")
+            Log.d(tag, "Retrying recognition ($retryCount -> ${retryCount + 1})")
             mainHandler.postDelayed({
-                startListeningOnMainThread(onResults, retryCount + 1)
+                startListeningOnMainThread(onResults, retryCount + 1, 0, noSpeechMaxRetries)
             }, delay)
         } else {
             Log.e(tag, "Recognition giving up (error=$error retries=$retryCount)")
