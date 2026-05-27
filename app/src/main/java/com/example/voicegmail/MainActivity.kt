@@ -39,7 +39,7 @@ class MainActivity : ComponentActivity() {
 
     /**
      * PARTIAL_WAKE_LOCK keeps the CPU awake for the entire Activity lifetime so
-     * that the TTS→mic→command loop continues even after the screen turns off.
+     * that the TTS->mic->command loop continues even after the screen turns off.
      *
      * VoiceWakeService independently holds its own PARTIAL_WAKE_LOCK for when
      * the Activity is not in the foreground at all. Together they guarantee that
@@ -54,6 +54,10 @@ class MainActivity : ComponentActivity() {
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
             if (granted) {
                 DebugLogger.log("MainActivity", "RECORD_AUDIO granted")
+                // On Android 14+, FOREGROUND_SERVICE_TYPE_MICROPHONE requires
+                // RECORD_AUDIO to be granted before the service can start.
+                // Start here (deferred from onCreate) now that it is granted.
+                VoiceWakeService.start(this)
             } else {
                 DebugLogger.log("MainActivity", "RECORD_AUDIO DENIED")
                 voiceManager.speak(
@@ -85,8 +89,15 @@ class MainActivity : ComponentActivity() {
             "VoiceGmail:ActivityWakeLock"
         ).also { it.acquire() } // indefinite; released in onDestroy
 
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
-                != PackageManager.PERMISSION_GRANTED) {
+        val micGranted = ContextCompat.checkSelfPermission(
+            this, Manifest.permission.RECORD_AUDIO
+        ) == PackageManager.PERMISSION_GRANTED
+
+        if (!micGranted) {
+            // Request the permission; VoiceWakeService is started in the grant
+            // callback once RECORD_AUDIO is confirmed.  On Android 14+, starting
+            // a FOREGROUND_SERVICE_TYPE_MICROPHONE service without this permission
+            // throws SecurityException and crashes the process.
             micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
         }
 
@@ -96,10 +107,12 @@ class MainActivity : ComponentActivity() {
             notifPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
 
-        // Start the background wake service — monitors ACTION_SCREEN_ON, holds
-        // its own PARTIAL_WAKE_LOCK, and provides MICROPHONE foreground service
-        // type for the whole process.
-        VoiceWakeService.start(this)
+        // Start the background wake service only when RECORD_AUDIO is already
+        // granted (typical after the first install).  If not yet granted the
+        // micPermissionLauncher callback above will start it on approval.
+        if (micGranted) {
+            VoiceWakeService.start(this)
+        }
 
         setContent {
             VoiceGmailTheme {
