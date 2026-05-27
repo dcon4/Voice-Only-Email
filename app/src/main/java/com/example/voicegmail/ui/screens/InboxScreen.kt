@@ -1,7 +1,5 @@
 package com.example.voicegmail.ui.screens
 
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -34,12 +32,6 @@ fun InboxScreen(
     val uiState by viewModel.uiState.collectAsState()
     val isSignedIn by viewModel.isSignedIn.collectAsState()
     val context = LocalContext.current
-
-    val signInLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.StartActivityForResult()
-    ) { result ->
-        viewModel.handleSignInResult(result)
-    }
 
     // Observe one-shot navigation events from voice commands
     LaunchedEffect(Unit) {
@@ -128,7 +120,7 @@ fun InboxScreen(
                             modifier = Modifier.semantics { heading() }
                         )
                         Button(
-                            onClick = { signInLauncher.launch(viewModel.getSignInIntent()) },
+                            onClick = { context.startActivity(viewModel.getSignInIntent()) },
                             modifier = Modifier.semantics {
                                 contentDescription = "Sign in with Google"
                             }
@@ -160,7 +152,7 @@ fun InboxScreen(
                         Spacer(Modifier.height(12.dp))
                         if (state.isAuthError) {
                             Button(
-                                onClick = { signInLauncher.launch(viewModel.getSignInIntent()) },
+                                onClick = { context.startActivity(viewModel.getSignInIntent()) },
                                 modifier = Modifier.semantics {
                                     contentDescription = "Sign in with Google"
                                 }
