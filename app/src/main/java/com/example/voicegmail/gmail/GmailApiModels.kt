@@ -32,18 +32,36 @@ data class MessageHeader(
 )
 
 data class MessageBody(
+    @SerializedName("attachmentId") val attachmentId: String? = null,
     @SerializedName("data") val data: String? = null,
     @SerializedName("size") val size: Int = 0
 )
 
 data class MessagePart(
     @SerializedName("mimeType") val mimeType: String = "",
+    @SerializedName("filename") val filename: String? = null,
     @SerializedName("body") val body: MessageBody? = null,
     @SerializedName("parts") val parts: List<MessagePart>? = null
 )
 
 data class SendMessageRequest(
     @SerializedName("raw") val raw: String
+)
+
+/** Metadata for one email attachment — use [id] to download its content. */
+data class Attachment(
+    val id: String,
+    val filename: String,
+    val mimeType: String,
+    val size: Int
+)
+
+/** Response from `GET …/messages/{id}/attachments/{attachmentId}`. */
+data class AttachmentResponse(
+    @SerializedName("attachmentId") val attachmentId: String = "",
+    @SerializedName("size") val size: Int = 0,
+    /** Base64url-encoded attachment bytes. */
+    @SerializedName("data") val data: String = ""
 )
 
 data class ModifyLabelsRequest(
@@ -58,7 +76,9 @@ data class EmailItem(
     val snippet: String,
     val body: String,
     /** True when the Gmail UNREAD label is present on this message. */
-    val isUnread: Boolean = false
+    val isUnread: Boolean = false,
+    /** Non-empty when the message carries file attachments. */
+    val attachments: List<Attachment> = emptyList()
 )
 
 fun GmailMessage.toEmailItem(): EmailItem {
@@ -72,8 +92,34 @@ fun GmailMessage.toEmailItem(): EmailItem {
         subject = subject,
         snippet = snippet,
         body = body,
-        isUnread = labelIds?.contains("UNREAD") == true
+        isUnread = labelIds?.contains("UNREAD") == true,
+        attachments = extractAttachments(payload)
     )
+}
+
+private fun extractAttachments(payload: MessagePayload?): List<Attachment> {
+    val result = mutableListOf<Attachment>()
+    collectAttachments(payload?.parts, result)
+    return result
+}
+
+private fun collectAttachments(parts: List<MessagePart>?, result: MutableList<Attachment>) {
+    parts?.forEach { part ->
+        val filename = part.filename
+        val attachmentId = part.body?.attachmentId
+        if (!filename.isNullOrBlank() && !attachmentId.isNullOrBlank()) {
+            result.add(
+                Attachment(
+                    id = attachmentId,
+                    filename = filename,
+                    mimeType = part.mimeType,
+                    size = part.body?.size ?: 0
+                )
+            )
+        }
+        // Recurse — attachments can be nested inside multipart/* parts.
+        collectAttachments(part.parts, result)
+    }
 }
 
 private fun extractBody(payload: MessagePayload?): String {
