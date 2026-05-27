@@ -36,4 +36,12 @@ interface GmailApiService {
         @Header("Authorization") auth: String,
         @Path("id") id: String
     ): GmailMessage
+
+    /** Adds or removes labels (e.g. remove UNREAD to mark as read). */
+    @POST("gmail/v1/users/me/messages/{id}/modify")
+    suspend fun modifyMessage(
+        @Header("Authorization") auth: String,
+        @Path("id") id: String,
+        @Body request: ModifyLabelsRequest
+    ): GmailMessage
 }
