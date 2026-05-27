@@ -19,6 +19,7 @@ sealed class VoiceCommand {
     object Search : VoiceCommand()
     object MarkAsRead : VoiceCommand()
     object Forward : VoiceCommand()
+    object ReadAllUnread : VoiceCommand()
     object Repeat : VoiceCommand()
     object GoBack : VoiceCommand()
     object Send : VoiceCommand()
@@ -85,6 +86,10 @@ class VoiceCommandEngine @Inject constructor(
                 lower.contains("mark it read") || lower.contains("mark this read") -> VoiceCommand.MarkAsRead
             // "forward" — checked before "refresh"
             lower.contains("forward") -> VoiceCommand.Forward
+            // "read unread" / "check unread" — checked before generic "read"
+            lower.contains("read unread") || lower.contains("read all unread") ||
+                lower.contains("unread emails") || lower.contains("check unread") ||
+                lower.contains("hear unread") || lower.contains("show unread") -> VoiceCommand.ReadAllUnread
             // "search" before "send" to avoid substring collision
             lower.contains("search") || lower.contains("find") ||
                 lower.contains("look for") -> VoiceCommand.Search
