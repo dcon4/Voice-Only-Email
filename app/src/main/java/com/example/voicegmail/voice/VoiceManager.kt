@@ -153,22 +153,18 @@ class VoiceManager @Inject constructor(
     }
 
     // ------------------------------------------------------------------
-    // Phonetic correction
+    // Phonetic correction — applied to every TTS string
     // ------------------------------------------------------------------
 
     /**
-     * Fixes TTS mispronunciations before any text is handed to the speech
-     * engine.  The primary correction is the command verb "read" (meaning
-     * "read aloud now") which must be pronounced "reed", not "red".
+     * Forces the command verb "read" (meaning "listen to now") to be
+     * pronounced "reed" instead of "red".
      *
-     * Strategy — protect compound forms where "red" is the correct
-     * pronunciation (unread, mark as read, already read, …), then replace
-     * every remaining standalone "read" with "reed".
+     * Strategy: protect compound forms where "red" is correct
+     * (unread, mark as read, …) with null-byte tokens, replace every
+     * remaining standalone "read" with "reed", then restore the tokens.
      */
     private fun phoneticize(text: String): String {
-        // Phrases where "read" is an adjective/past-tense and must stay "red".
-        // Null-byte tokens are used as placeholders because they cannot appear
-        // in natural TTS strings.
         val protections = listOf(
             "unread"         to "\u0000A\u0000",
             "marked as read" to "\u0000B\u0000",
@@ -179,15 +175,11 @@ class VoiceManager @Inject constructor(
             "is read"        to "\u0000G\u0000",
             "not read"       to "\u0000H\u0000"
         )
-
         var result = text
-        // Protect — case-insensitive so "Unread", "MARK AS READ", etc. are covered.
         for ((phrase, token) in protections) {
             result = result.replace(phrase, token, ignoreCase = true)
         }
-        // Replace the command verb "read" → "reed".
         result = result.replace(Regex("\\bread\\b", RegexOption.IGNORE_CASE), "reed")
-        // Restore protected phrases (lowercase is fine for TTS).
         for ((phrase, token) in protections) {
             result = result.replace(token, phrase)
         }
@@ -195,7 +187,7 @@ class VoiceManager @Inject constructor(
     }
 
     // ------------------------------------------------------------------
-    // TTS output — all three speak paths run through phoneticize()
+    // TTS output — all speak paths run through phoneticize()
     // ------------------------------------------------------------------
 
     fun speak(text: String) {
@@ -208,8 +200,13 @@ class VoiceManager @Inject constructor(
     }
 
     /**
-     * Speaks [prompt] then opens the mic after a 500 ms gap so TTS audio
-     * fully decays before recognition starts.
+     * Speaks [prompt] then opens the mic after [TTS_TO_MIC_GAP_MS].
+     *
+     * The gap is deliberately generous: the TTS engine's `onDone` fires when
+     * the last audio packet is *sent*, not when it has finished *playing*.
+     * On most hardware the speaker adds another 200–400 ms of reverberation.
+     * Without enough headroom the recogniser picks up TTS echo and times out
+     * immediately before the user can speak.
      */
     fun speakAndThenListen(prompt: String, onResults: (List<String>) -> Unit) {
         mainHandler.post {
@@ -221,12 +218,12 @@ class VoiceManager @Inject constructor(
                 override fun onStart(uid: String?) {}
                 override fun onDone(uid: String?) {
                     tts?.setOnUtteranceProgressListener(null)
-                    mainHandler.postDelayed({ startListeningOnMainThread(onResults) }, 500)
+                    mainHandler.postDelayed({ startListeningOnMainThread(onResults) }, TTS_TO_MIC_GAP_MS)
                 }
                 @Deprecated("Deprecated in API 21")
                 override fun onError(uid: String?) {
                     tts?.setOnUtteranceProgressListener(null)
-                    mainHandler.postDelayed({ startListeningOnMainThread(onResults) }, 300)
+                    mainHandler.postDelayed({ startListeningOnMainThread(onResults) }, TTS_TO_MIC_GAP_MS)
                 }
             })
             tts?.speak(phoneticize(prompt), TextToSpeech.QUEUE_FLUSH, null, utteranceId)
@@ -234,12 +231,9 @@ class VoiceManager @Inject constructor(
     }
 
     /**
-     * Temporarily switches TTS to [voice], speaks [text] in that voice so the
-     * user can audition it, then opens the microphone.
-     *
-     * The voice stays set after the sample — the caller is responsible for
-     * calling [setVoiceByName] to commit the choice or [clearVoicePreference]
-     * to revert.
+     * Speaks [text] in [voice] so the user can audition it, then opens the
+     * microphone. The voice stays set — caller is responsible for committing
+     * or reverting via [setVoiceByName] / [clearVoicePreference].
      */
     fun speakWithVoiceAndThenListen(text: String, voice: Voice, onResults: (List<String>) -> Unit) {
         mainHandler.post {
@@ -252,16 +246,14 @@ class VoiceManager @Inject constructor(
                 override fun onStart(uid: String?) {}
                 override fun onDone(uid: String?) {
                     tts?.setOnUtteranceProgressListener(null)
-                    mainHandler.postDelayed({ startListeningOnMainThread(onResults) }, 500)
+                    mainHandler.postDelayed({ startListeningOnMainThread(onResults) }, TTS_TO_MIC_GAP_MS)
                 }
                 @Deprecated("Deprecated in API 21")
                 override fun onError(uid: String?) {
                     tts?.setOnUtteranceProgressListener(null)
-                    mainHandler.postDelayed({ startListeningOnMainThread(onResults) }, 300)
+                    mainHandler.postDelayed({ startListeningOnMainThread(onResults) }, TTS_TO_MIC_GAP_MS)
                 }
             })
-            // No phoneticize here — voice-chooser samples are natural sentences,
-            // not command lists, so "read" won't appear in them.
             tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, utteranceId)
         }
     }
@@ -274,9 +266,19 @@ class VoiceManager @Inject constructor(
     // Core recognition loop
     // ------------------------------------------------------------------
 
+    /**
+     * @param retryCount   How many times we've retried after the user DID
+     *                     begin speaking but we couldn't understand. Capped
+     *                     at [MAX_RETRIES] before giving up with "sorry".
+     * @param noSpeechRetries  How many times we've silently restarted because
+     *                     the recogniser fired before the user could begin
+     *                     speaking at all. Capped at [NO_SPEECH_MAX_RETRIES]
+     *                     — these are transparent to the user (no "sorry").
+     */
     private fun startListeningOnMainThread(
         onResults: (List<String>) -> Unit,
-        retryCount: Int = 0
+        retryCount: Int = 0,
+        noSpeechRetries: Int = 0
     ) {
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO)
                 != PackageManager.PERMISSION_GRANTED) {
@@ -289,12 +291,33 @@ class VoiceManager @Inject constructor(
         acquireRecognitionWakeLock()
         muteRecognitionBeep()
 
+        // Track whether the user's voice was detected in this attempt.
+        var speechBegan = false
+
         speechRecognizer?.destroy()
         speechRecognizer = SpeechRecognizer.createSpeechRecognizer(context).apply {
             setRecognitionListener(object : RecognitionListener {
+
                 override fun onReadyForSpeech(params: Bundle?) {
                     _isListening.value = true
                     unmuteRecognitionBeep()
+                }
+
+                override fun onBeginningOfSpeech() {
+                    // The VAD confirmed the user started speaking.
+                    speechBegan = true
+                    Log.d(tag, "Speech began (retry=$retryCount noSpeech=$noSpeechRetries)")
+                }
+
+                override fun onPartialResults(partial: Bundle?) {
+                    // Partial text arriving → user is definitely speaking.
+                    val text = partial
+                        ?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                        ?.firstOrNull { it.isNotBlank() }
+                    if (!text.isNullOrBlank()) {
+                        speechBegan = true
+                        Log.d(tag, "Partial: $text")
+                    }
                 }
 
                 override fun onResults(results: Bundle?) {
@@ -304,12 +327,20 @@ class VoiceManager @Inject constructor(
                         ?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                         ?.filter { it.isNotBlank() }
                         ?: emptyList()
-                    if (candidates.isNotEmpty()) {
-                        _recognizedText.value = candidates[0]
-                        Log.d(tag, "Results (${candidates.size}): ${candidates.take(3)}")
-                        onResults(candidates)
-                    } else {
-                        retryOrFail(SpeechRecognizer.ERROR_NO_MATCH, onResults, retryCount)
+                    when {
+                        candidates.isNotEmpty() -> {
+                            _recognizedText.value = candidates[0]
+                            Log.d(tag, "Results (${candidates.size}): ${candidates.take(3)}")
+                            onResults(candidates)
+                        }
+                        !speechBegan && noSpeechRetries < NO_SPEECH_MAX_RETRIES -> {
+                            // Recogniser fired before user had a chance to speak.
+                            Log.d(tag, "No speech detected — silent retry ${noSpeechRetries + 1}/$NO_SPEECH_MAX_RETRIES")
+                            mainHandler.postDelayed({
+                                startListeningOnMainThread(onResults, retryCount, noSpeechRetries + 1)
+                            }, NO_SPEECH_RETRY_DELAY_MS)
+                        }
+                        else -> retryOrFail(SpeechRecognizer.ERROR_NO_MATCH, onResults, retryCount)
                     }
                 }
 
@@ -317,15 +348,21 @@ class VoiceManager @Inject constructor(
                     _isListening.value = false
                     releaseRecognitionWakeLock()
                     unmuteRecognitionBeep()
-                    Log.w(tag, "Recognition error $error (retry $retryCount/$MAX_RETRIES)")
-                    retryOrFail(error, onResults, retryCount)
+                    Log.w(tag, "Recognition error $error speechBegan=$speechBegan retry=$retryCount noSpeech=$noSpeechRetries")
+
+                    if (!speechBegan && noSpeechRetries < NO_SPEECH_MAX_RETRIES) {
+                        // User hadn't spoken yet — give them more time silently.
+                        mainHandler.postDelayed({
+                            startListeningOnMainThread(onResults, retryCount, noSpeechRetries + 1)
+                        }, NO_SPEECH_RETRY_DELAY_MS)
+                    } else {
+                        retryOrFail(error, onResults, retryCount)
+                    }
                 }
 
-                override fun onBeginningOfSpeech() {}
                 override fun onBufferReceived(buf: ByteArray?) {}
                 override fun onEndOfSpeech() {}
                 override fun onEvent(type: Int, params: Bundle?) {}
-                override fun onPartialResults(partial: Bundle?) {}
                 override fun onRmsChanged(rmsdB: Float) {}
             })
         }
@@ -335,9 +372,12 @@ class VoiceManager @Inject constructor(
                 RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
             putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.US.toString())
             putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 5)
+            putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
             putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
-            putExtra("android.speech.extra.SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS", 2000L)
-            putExtra("android.speech.extra.SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS", 1200L)
+            // Ask for generous silence windows. Many OEM recognisers ignore
+            // these, which is why the speechBegan logic above is essential.
+            putExtra("android.speech.extra.SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS", 5000L)
+            putExtra("android.speech.extra.SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS", 2500L)
             putExtra("android.speech.extra.SPEECH_INPUT_MINIMUM_LENGTH_MILLIS", 500L)
         }
         speechRecognizer?.startListening(intent)
@@ -348,10 +388,13 @@ class VoiceManager @Inject constructor(
             error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT ||
             error == SpeechRecognizer.ERROR_RECOGNIZER_BUSY
         if (retriable && retryCount < MAX_RETRIES) {
-            val delay = if (error == SpeechRecognizer.ERROR_RECOGNIZER_BUSY) 600L else 250L
-            mainHandler.postDelayed({ startListeningOnMainThread(onResults, retryCount + 1) }, delay)
+            val delay = if (error == SpeechRecognizer.ERROR_RECOGNIZER_BUSY) 600L else 300L
+            Log.d(tag, "Retrying recognition ($retryCount → ${retryCount + 1})")
+            mainHandler.postDelayed({
+                startListeningOnMainThread(onResults, retryCount + 1)
+            }, delay)
         } else {
-            Log.e(tag, "Recognition giving up after $retryCount retries (error=$error)")
+            Log.e(tag, "Recognition giving up (error=$error retries=$retryCount)")
             onResults(emptyList())
         }
     }
@@ -415,6 +458,23 @@ class VoiceManager @Inject constructor(
     }
 
     private companion object {
-        const val MAX_RETRIES = 2
+        /** Gap between TTS onDone and mic open. Generous to let speaker reverb decay. */
+        const val TTS_TO_MIC_GAP_MS = 1200L
+
+        /**
+         * Retries after the user DID speak but we couldn't understand.
+         * Each retry re-opens the mic. After this many attempts "Sorry" is said.
+         */
+        const val MAX_RETRIES = 3
+
+        /**
+         * Silent mic restarts when the recogniser fires before the user has
+         * had a chance to begin speaking. These are invisible to the user —
+         * no "Sorry" is ever said for a no-speech failure.
+         */
+        const val NO_SPEECH_MAX_RETRIES = 4
+
+        /** Delay before a no-speech silent retry — lets the audio bus settle. */
+        const val NO_SPEECH_RETRY_DELAY_MS = 250L
     }
 }
