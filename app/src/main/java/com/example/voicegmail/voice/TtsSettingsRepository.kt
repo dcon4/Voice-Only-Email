@@ -15,6 +15,7 @@ class TtsSettingsRepository @Inject constructor(
 
     fun getEnginePackage(): String? = prefs.getString("engine_package", null)
     fun getVoiceName(): String?     = prefs.getString("voice_name", null)
+    fun getEmailReadRate(): Float   = prefs.getFloat("email_read_rate", 1.0f)
 
     fun saveEnginePackage(pkg: String) {
         prefs.edit().putString("engine_package", pkg).apply()
@@ -26,5 +27,9 @@ class TtsSettingsRepository @Inject constructor(
 
     fun clearVoiceName() {
         prefs.edit().remove("voice_name").apply()
+    }
+
+    fun saveEmailReadRate(rate: Float) {
+        prefs.edit().putFloat("email_read_rate", rate).apply()
     }
 }
