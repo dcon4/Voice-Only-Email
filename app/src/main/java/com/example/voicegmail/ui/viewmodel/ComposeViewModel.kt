@@ -3,6 +3,7 @@ package com.example.voicegmail.ui.viewmodel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.voicegmail.gmail.GmailRepository
+import com.example.voicegmail.voice.ForwardDraft
 import com.example.voicegmail.voice.VoiceCommand
 import com.example.voicegmail.voice.VoiceCommandEngine
 import com.example.voicegmail.voice.VoiceManager
@@ -18,7 +19,8 @@ import javax.inject.Inject
 class ComposeViewModel @Inject constructor(
     private val gmailRepository: GmailRepository,
     private val voiceManager: VoiceManager,
-    private val voiceCommandEngine: VoiceCommandEngine
+    private val voiceCommandEngine: VoiceCommandEngine,
+    private val forwardDraft: ForwardDraft
 ) : ViewModel() {
 
     private val _sendState = MutableStateFlow<SendState>(SendState.Idle)
@@ -44,6 +46,9 @@ class ComposeViewModel @Inject constructor(
     // Guided voice flow
     // ------------------------------------------------------------------
 
+    /** True once [initForwardFromDraft] has loaded the forward fields. */
+    private var isForwardMode = false
+
     /**
      * Pre-fills the recipient for a reply and marks it so the guided flow
      * skips asking "Who would you like to send to?". Call this before
@@ -54,18 +59,31 @@ class ComposeViewModel @Inject constructor(
     }
 
     /**
+     * Reads the pending [ForwardDraft] (if any) and pre-fills all three
+     * fields (to, subject, body). Idempotent — safe to call even when no
+     * draft is waiting. Call this before [startGuidedVoiceFlow].
+     */
+    fun initForwardFromDraft() {
+        val draft = forwardDraft.consume() ?: return
+        _to.value = draft.to
+        _subject.value = draft.subject
+        _body.value = draft.body
+        isForwardMode = true
+    }
+
+    /**
      * Starts the hands-free guided compose flow.
      *
-     * If [_to] is already set (reply mode), skips the "To" step and opens
-     * with "Replying to {address}. What is the subject?"
-     *
-     * For a fresh compose, the flow goes:
-     *   1. Capture recipient ("To")
-     *   2. Capture subject
-     *   3. Capture body
-     *   4. Confirm and send
+     * - Forward mode: all fields are pre-filled; asks for an optional extra
+     *   message to prepend, then offers "send" or "cancel".
+     * - Reply mode: [_to] is pre-filled; skips the "To" step.
+     * - Fresh compose: collects To → Subject → Body → Confirm.
      */
     fun startGuidedVoiceFlow() {
+        if (isForwardMode) {
+            askForForwardExtra()
+            return
+        }
         val existingTo = _to.value
         if (existingTo.isNotBlank()) {
             // Reply mode — recipient is pre-filled; jump straight to subject.
@@ -74,6 +92,41 @@ class ComposeViewModel @Inject constructor(
             ) { cmd -> handleSubjectResult(cmd) }
         } else {
             askForTo()
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Forward-mode helpers
+    // ------------------------------------------------------------------
+
+    private fun askForForwardExtra() {
+        voiceCommandEngine.speakThenListen(
+            "Forwarding to ${_to.value}. Subject: ${_subject.value}. " +
+                "Say your additional message to add before the forwarded email, " +
+                "or say 'send' to forward it as is."
+        ) { cmd -> handleForwardExtraResult(cmd) }
+    }
+
+    private fun handleForwardExtraResult(cmd: VoiceCommand) {
+        when (cmd) {
+            is VoiceCommand.Send -> confirmAndSend()
+            is VoiceCommand.Cancel -> cancel()
+            is VoiceCommand.FreeText -> {
+                // Prepend the extra note before the forwarded content.
+                _body.value = "${cmd.text}\n${_body.value}"
+                confirmAndSend()
+            }
+            else -> {
+                val raw = voiceManager.recognizedText.value ?: ""
+                if (raw.isNotBlank()) {
+                    _body.value = "$raw\n${_body.value}"
+                    confirmAndSend()
+                } else {
+                    voiceCommandEngine.speakThenListen(
+                        "I didn't catch that. Say your message, 'send' to forward as is, or 'cancel'."
+                    ) { retry -> handleForwardExtraResult(retry) }
+                }
+            }
         }
     }
 
