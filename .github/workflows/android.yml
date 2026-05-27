@@ -29,7 +29,7 @@ jobs:
       - name: Make gradlew executable
         run: chmod +x ./gradlew
 
-      - name: Build Debug APK
+      - name: Build Debug APKs (all flavors)
         run: ./gradlew :app:assembleDebug --stacktrace
 
       - name: List APK outputs
@@ -54,14 +54,24 @@ jobs:
             rm -f /tmp/release.keystore.jks
           fi
 
-      - name: Upload Debug APK
+      # Two separate artifacts so each can be downloaded independently.
+      # "standard" = phone speaker + built-in mic (original behaviour).
+      # "bt"       = Bluetooth headset mic/audio via SCO routing.
+      - name: Upload standard debug APK
         uses: actions/upload-artifact@v4
         with:
-          name: debug-apk
+          name: debug-apk-standard
           if-no-files-found: error
-          path: app/build/outputs/apk/debug/app-debug.apk
+          path: app/build/outputs/apk/standard/debug/app-standard-debug.apk
 
-      - name: Build Release APK
+      - name: Upload bt debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: debug-apk-bt
+          if-no-files-found: error
+          path: app/build/outputs/apk/bt/debug/app-bt-debug.apk
+
+      - name: Build Release APKs (all flavors)
         env:
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
@@ -78,9 +88,9 @@ jobs:
           echo "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$ANDROID_KEYSTORE_PATH"
           ./gradlew :app:assembleRelease --stacktrace
 
-      - name: Upload Release APK
+      - name: Upload Release APKs
         uses: actions/upload-artifact@v4
         with:
-          name: release-apk
+          name: release-apks
           if-no-files-found: ignore
           path: app/build/outputs/apk/**/*release*.apk
