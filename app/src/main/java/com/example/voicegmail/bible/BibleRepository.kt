@@ -139,16 +139,16 @@ class BibleRepository @Inject constructor(
                 setDataSource(url)
                 setOnPreparedListener { mp ->
                     mp.start()
-                    isPlaying = true
+                    this@BibleRepository.isPlaying = true
                     DebugLogger.log(TAG, "Playback started")
                 }
                 setOnCompletionListener {
-                    isPlaying = false
+                    this@BibleRepository.isPlaying = false
                     DebugLogger.log(TAG, "Playback complete")
                     mainHandler.post(onComplete)
                 }
                 setOnErrorListener { _, what, extra ->
-                    isPlaying = false
+                    this@BibleRepository.isPlaying = false
                     val msg = "MediaPlayer error: what=$what extra=$extra"
                     Log.e(TAG, msg)
                     DebugLogger.log(TAG, msg)
