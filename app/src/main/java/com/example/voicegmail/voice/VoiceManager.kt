@@ -143,17 +143,8 @@ class VoiceManager @Inject constructor(
                     } catch (_: Exception) { null }
                     val label = appInfo?.let { pm.getApplicationLabel(it).toString() } ?: pkgName
                     val info = TextToSpeech.EngineInfo()
-                    try {
-                        TextToSpeech.EngineInfo::class.java.getDeclaredField("name").apply {
-                            isAccessible = true; set(info, pkgName)
-                        }
-                        TextToSpeech.EngineInfo::class.java.getDeclaredField("label").apply {
-                            isAccessible = true; set(info, label)
-                        }
-                    } catch (e: Exception) {
-                        DebugLogger.log(tag, "Reflection failed for $pkgName: ${e.message}")
-                        continue
-                    }
+                    info.name = pkgName
+                    info.label = label
                     combined.add(info)
                 }
             }

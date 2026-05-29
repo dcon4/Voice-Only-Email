@@ -4,7 +4,6 @@ import com.example.voicegmail.debug.DebugLogger
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
-import org.jsoup.safety.Safelist
 import javax.inject.Inject
 import javax.inject.Singleton
 
