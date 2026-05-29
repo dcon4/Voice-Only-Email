@@ -194,6 +194,9 @@ class VoiceCommandEngine @Inject constructor(
             .replace(Regex("\\bmark it red\\b"), "mark as read")
             .replace(Regex("\\bmark read\\b"), "mark as read")
             .replace(Regex("\\bmark it read\\b"), "mark as read")
+            .replace(Regex("\\bmarked red\\b"), "marked as read")
+            .replace(Regex("\\bmark on red\\b"), "mark unread")
+            .replace(Regex("\\bmark it on red\\b"), "mark it unread")
             .replace(Regex("\\bread back\\b"), "read back")
             .replace(Regex("\\bgo next\\b"), "next")
             .replace(Regex("\\bgo back\\b"), "go back")
@@ -308,11 +311,15 @@ class VoiceCommandEngine @Inject constructor(
 
             // MarkAsUnread before MarkAsRead to avoid substring collision
             lower.contains("mark as unread") || lower.contains("mark unread") ||
-                lower.contains("mark it unread") || lower.contains("mark this unread") ->
+                lower.contains("mark it unread") || lower.contains("mark this unread") ||
+                lower.contains("marked unread") || lower.contains("marked as unread") ||
+                lower.contains("mark it as unread") || lower.contains("mark this as unread") ->
                 VoiceCommand.MarkAsUnread
 
             lower.contains("mark as read") || lower.contains("mark read") ||
-                lower.contains("mark it read") || lower.contains("mark this read") ->
+                lower.contains("mark it read") || lower.contains("mark this read") ||
+                lower.contains("marked read") || lower.contains("marked as read") ||
+                lower.contains("mark it as read") || lower.contains("mark this as read") ->
                 VoiceCommand.MarkAsRead
 
             lower.contains("read back") || lower.contains("read my message") ||
