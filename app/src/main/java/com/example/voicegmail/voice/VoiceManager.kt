@@ -114,45 +114,9 @@ class VoiceManager @Inject constructor(
     // Engine & voice introspection
     // ------------------------------------------------------------------
 
-    /**
-     * Returns all installed TTS engines.
-     *
-     * Uses [TextToSpeech.getEngines] first, then falls back to a direct
-     * PackageManager query for services declaring TTS_SERVICE. This catches
-     * engines that some devices don't report through the standard API
-     * (Samsung, IVONA, Supertonic, etc.).
-     */
     fun getAvailableEngines(): List<TextToSpeech.EngineInfo> {
         val engines = tts?.engines?.sortedBy { it.label } ?: emptyList()
-        DebugLogger.log(tag, "getAvailableEngines (tts.engines): ${engines.map { "${it.label}(${it.name})" }}")
-
-        // Fallback: query PackageManager directly for TTS services
-        val pm = context.packageManager
-        val intent = android.content.Intent("android.intent.action.TTS_SERVICE")
-        val resolvedServices = pm.queryIntentServices(intent, android.content.pm.PackageManager.GET_META_DATA)
-        val pmPackages = resolvedServices.map { it.serviceInfo.packageName }.distinct()
-        DebugLogger.log(tag, "getAvailableEngines (PackageManager): $pmPackages")
-
-        // If PM found more than tts.engines, rebuild the list with full info
-        if (pmPackages.size > engines.size) {
-            val combined = engines.toMutableList()
-            for (pkgName in pmPackages) {
-                if (combined.none { it.name == pkgName }) {
-                    val appInfo = try {
-                        pm.getApplicationInfo(pkgName, 0)
-                    } catch (_: Exception) { null }
-                    val label = appInfo?.let { pm.getApplicationLabel(it).toString() } ?: pkgName
-                    val info = TextToSpeech.EngineInfo()
-                    info.name = pkgName
-                    info.label = label
-                    combined.add(info)
-                }
-            }
-            val sorted = combined.sortedBy { it.label }
-            DebugLogger.log(tag, "getAvailableEngines (combined): ${sorted.map { "${it.label}(${it.name})" }}")
-            return sorted
-        }
-
+        DebugLogger.log(tag, "getAvailableEngines: ${engines.map { "${it.label}(${it.name})" }}")
         return engines
     }
 

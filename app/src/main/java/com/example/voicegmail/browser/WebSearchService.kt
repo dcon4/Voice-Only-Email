@@ -1,6 +1,8 @@
 package com.example.voicegmail.browser
 
 import com.example.voicegmail.debug.DebugLogger
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.jsoup.Jsoup
@@ -47,12 +49,14 @@ class WebSearchService @Inject constructor(
             .build()
 
         return try {
-            val response = okHttpClient.newCall(request).execute()
-            val body = response.body?.string() ?: return emptyList()
+            withContext(Dispatchers.IO) {
+                val response = okHttpClient.newCall(request).execute()
+                val body = response.body?.string() ?: return@withContext emptyList()
 
-            val results = parseDuckDuckGoHtml(body)
-            DebugLogger.log(tag, "Found ${results.size} results for '$query'")
-            results.take(WebBrowserConfig.MAX_SEARCH_RESULTS)
+                val results = parseDuckDuckGoHtml(body)
+                DebugLogger.log(tag, "Found ${results.size} results for '$query'")
+                results.take(WebBrowserConfig.MAX_SEARCH_RESULTS)
+            }
         } catch (e: Exception) {
             DebugLogger.log(tag, "Search failed: ${e.message}")
             emptyList()

@@ -1,6 +1,8 @@
 package com.example.voicegmail.browser
 
 import com.example.voicegmail.debug.DebugLogger
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.util.concurrent.TimeUnit
@@ -54,46 +56,48 @@ class BrowserRepository @Inject constructor(
         DebugLogger.log(tag, "Fetching page: $url")
 
         return try {
-            val client = okHttpClient.newBuilder()
-                .callTimeout(WebBrowserConfig.PAGE_FETCH_TIMEOUT_SECONDS, TimeUnit.SECONDS)
-                .build()
+            withContext(Dispatchers.IO) {
+                val client = okHttpClient.newBuilder()
+                    .callTimeout(WebBrowserConfig.PAGE_FETCH_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+                    .build()
 
-            val request = Request.Builder()
-                .url(url)
-                .header("User-Agent", WebBrowserConfig.USER_AGENT)
-                .get()
-                .build()
+                val request = Request.Builder()
+                    .url(url)
+                    .header("User-Agent", WebBrowserConfig.USER_AGENT)
+                    .get()
+                    .build()
 
-            val response = client.newCall(request).execute()
+                val response = client.newCall(request).execute()
 
-            // Check content length if available
-            val contentLength = response.header("Content-Length")?.toLongOrNull() ?: 0L
-            if (contentLength > WebBrowserConfig.MAX_PAGE_BYTES) {
-                DebugLogger.log(tag, "Page too large: $contentLength bytes")
-                response.close()
-                return null
-            }
-
-            // Only process text/html content
-            val contentType = response.header("Content-Type") ?: ""
-            if (!contentType.contains("text/html") && !contentType.contains("text/plain")) {
-                DebugLogger.log(tag, "Non-HTML content type: $contentType")
-                response.close()
-                return null
-            }
-
-            val body = response.body?.let { responseBody ->
-                val bytes = responseBody.bytes()
-                if (bytes.size > WebBrowserConfig.MAX_PAGE_BYTES) {
-                    DebugLogger.log(tag, "Page body exceeds limit: ${bytes.size} bytes")
-                    return null
+                // Check content length if available
+                val contentLength = response.header("Content-Length")?.toLongOrNull() ?: 0L
+                if (contentLength > WebBrowserConfig.MAX_PAGE_BYTES) {
+                    DebugLogger.log(tag, "Page too large: $contentLength bytes")
+                    response.close()
+                    return@withContext null
                 }
-                String(bytes, Charsets.UTF_8)
-            } ?: return null
 
-            val page = pageExtractor.extract(body, url)
-            lastPage = page
-            page
+                // Only process text/html content
+                val contentType = response.header("Content-Type") ?: ""
+                if (!contentType.contains("text/html") && !contentType.contains("text/plain")) {
+                    DebugLogger.log(tag, "Non-HTML content type: $contentType")
+                    response.close()
+                    return@withContext null
+                }
+
+                val body = response.body?.let { responseBody ->
+                    val bytes = responseBody.bytes()
+                    if (bytes.size > WebBrowserConfig.MAX_PAGE_BYTES) {
+                        DebugLogger.log(tag, "Page body exceeds limit: ${bytes.size} bytes")
+                        return@withContext null
+                    }
+                    String(bytes, Charsets.UTF_8)
+                } ?: return@withContext null
+
+                val page = pageExtractor.extract(body, url)
+                lastPage = page
+                page
+            }
         } catch (e: Exception) {
             DebugLogger.log(tag, "Fetch failed for $url: ${e.message}")
             null
