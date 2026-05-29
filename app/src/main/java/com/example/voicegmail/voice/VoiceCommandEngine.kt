@@ -231,7 +231,8 @@ class VoiceCommandEngine @Inject constructor(
                 lower.contains("change tts") || lower.contains("speech setting") ||
                 lower.contains("choose voice") || lower.contains("select voice") ||
                 lower.contains("pick voice") || lower.contains("different voice") ||
-                lower.contains("tts setting") -> VoiceCommand.VoiceSettings
+                lower.contains("voice chooser") || lower.contains("tts setting") ->
+                VoiceCommand.VoiceSettings
 
             lower.contains("read slower") || lower.contains("slow down") ||
                 lower.contains("read more slowly") || lower.contains("speak slower") ||

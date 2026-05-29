@@ -47,6 +47,10 @@ object DebugLogger {
 
     fun getLogFile(): File? = if (BuildConfig.DEBUG) logFile else null
 
+    fun clearLog() {
+        logFile?.writeText("")
+    }
+
     private fun appendLine(line: String) {
         val file = logFile ?: return
         try {

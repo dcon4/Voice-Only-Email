@@ -17,6 +17,7 @@ import android.speech.tts.UtteranceProgressListener
 import android.speech.tts.Voice
 import android.util.Log
 import androidx.core.content.ContextCompat
+import com.example.voicegmail.debug.DebugLogger
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -68,13 +69,17 @@ class VoiceManager @Inject constructor(
 
     private fun initTts() {
         val savedEngine = ttsSettings.getEnginePackage()
+        DebugLogger.log(tag, "initTts — savedEngine=$savedEngine")
         val listener = TextToSpeech.OnInitListener { status ->
             if (status == TextToSpeech.SUCCESS) {
                 tts?.language = Locale.US
                 ttsReady = true
                 applyVoicePreference()
-                Log.d(tag, "TTS ready — engine=$savedEngine")
+                val engineName = tts?.defaultEngine
+                val allEngines = tts?.engines?.map { "${it.label} (${it.name})" } ?: emptyList()
+                DebugLogger.log(tag, "TTS ready — defaultEngine=$engineName, allEngines=$allEngines")
             } else {
+                DebugLogger.log(tag, "TTS initialization FAILED: status=$status")
                 Log.e(tag, "TTS initialization failed: $status")
             }
         }
@@ -98,13 +103,20 @@ class VoiceManager @Inject constructor(
     // Engine & voice introspection
     // ------------------------------------------------------------------
 
-    fun getAvailableEngines(): List<TextToSpeech.EngineInfo> =
-        tts?.engines?.sortedBy { it.label } ?: emptyList()
+    fun getAvailableEngines(): List<TextToSpeech.EngineInfo> {
+        val engines = tts?.engines?.sortedBy { it.label } ?: emptyList()
+        DebugLogger.log(tag, "getAvailableEngines: ${engines.map { "${it.label}(${it.name})" }}")
+        return engines
+    }
 
-    fun getAvailableVoices(): List<Voice> =
-        tts?.voices?.toList()?.sortedWith(
+    fun getAvailableVoices(): List<Voice> {
+        val voices = tts?.voices?.toList()?.sortedWith(
             compareBy({ it.isNetworkConnectionRequired }, { it.locale.displayLanguage }, { it.name })
         ) ?: emptyList()
+        DebugLogger.log(tag, "getAvailableVoices: ${voices.size} voices" +
+            if (voices.isNotEmpty()) " (first: ${voices[0].name})" else "")
+        return voices
+    }
 
     fun getCurrentEngineName(): String? = ttsSettings.getEnginePackage()
     fun getCurrentVoiceName(): String? = tts?.voice?.name ?: ttsSettings.getVoiceName()
