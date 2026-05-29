@@ -9,6 +9,7 @@ import androidx.core.content.FileProvider
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.voicegmail.BuildConfig
+import com.example.voicegmail.VoiceWakeService
 import com.example.voicegmail.WakeEventBus
 import com.example.voicegmail.auth.AuthRepository
 import com.example.voicegmail.auth.OAuthDiagnostics
@@ -53,7 +54,8 @@ class InboxViewModel @Inject constructor(
     private val oAuthRedirectBus: OAuthRedirectBus,
     private val wakeEventBus: WakeEventBus,
     private val bibleVoiceFlow: BibleVoiceFlow,
-    private val browserVoiceFlow: BrowserVoiceFlow
+    private val browserVoiceFlow: BrowserVoiceFlow,
+    private val wakePreferences: com.example.voicegmail.voice.WakePreferences
 ) : ViewModel() {
 
     private var isFirstLoad = true
@@ -87,6 +89,9 @@ class InboxViewModel @Inject constructor(
 
     private val _isSwitchingEngine = MutableStateFlow(false)
     val isSwitchingEngine: StateFlow<Boolean> = _isSwitchingEngine
+
+    private val _runInBackground = MutableStateFlow(true)
+    val runInBackground: StateFlow<Boolean> = _runInBackground
 
     // ------------------------------------------------------------------
     // Pause/resume reading state
@@ -155,10 +160,26 @@ class InboxViewModel @Inject constructor(
         _settingsVoices.value     = voiceManager.getAvailableVoices()
         _selectedEngineName.value = voiceManager.getCurrentEngineName()
         _selectedVoiceName.value  = voiceManager.getCurrentVoiceName()
+        _runInBackground.value    = wakePreferences.isRunInBackground()
         _settingsPanelVisible.value = true
     }
 
     fun closeSettingsPanel() { _settingsPanelVisible.value = false }
+
+    /**
+     * Toggle between background mode (wake on power button) and foreground-only mode.
+     * Starts or stops VoiceWakeService accordingly.
+     */
+    fun setRunInBackground(enabled: Boolean) {
+        wakePreferences.setRunInBackground(enabled)
+        _runInBackground.value = enabled
+        if (enabled) {
+            VoiceWakeService.start(context)
+        } else {
+            VoiceWakeService.stop(context)
+        }
+        DebugLogger.log("InboxViewModel", "Run in background = $enabled")
+    }
 
     fun selectEngineFromPanel(engineName: String) {
         if (engineName == _selectedEngineName.value) {

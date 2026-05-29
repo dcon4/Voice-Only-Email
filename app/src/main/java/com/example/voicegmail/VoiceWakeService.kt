@@ -36,12 +36,17 @@ import javax.inject.Inject
 class VoiceWakeService : Service() {
 
     @Inject lateinit var wakeEventBus: WakeEventBus
+    @Inject lateinit var wakePreferences: com.example.voicegmail.voice.WakePreferences
 
     private var wakeLock: PowerManager.WakeLock? = null
 
     private val screenOnReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             if (intent?.action == Intent.ACTION_SCREEN_ON) {
+                if (!wakePreferences.isRunInBackground()) {
+                    DebugLogger.log("WakeService", "Screen on — ignored (foreground-only mode)")
+                    return
+                }
                 DebugLogger.log("WakeService", "Screen on — waking app")
                 wakeApp()
             }

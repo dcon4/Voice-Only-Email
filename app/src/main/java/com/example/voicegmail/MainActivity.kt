@@ -36,6 +36,7 @@ class MainActivity : ComponentActivity() {
 
     @Inject lateinit var voiceManager: VoiceManager
     @Inject lateinit var oAuthRedirectBus: OAuthRedirectBus
+    @Inject lateinit var wakePreferences: com.example.voicegmail.voice.WakePreferences
 
     /**
      * PARTIAL_WAKE_LOCK keeps the CPU awake for the entire Activity lifetime so
@@ -57,7 +58,9 @@ class MainActivity : ComponentActivity() {
                 // On Android 14+, FOREGROUND_SERVICE_TYPE_MICROPHONE requires
                 // RECORD_AUDIO to be granted before the service can start.
                 // Start here (deferred from onCreate) now that it is granted.
-                VoiceWakeService.start(this)
+                if (wakePreferences.isRunInBackground()) {
+                    VoiceWakeService.start(this)
+                }
             } else {
                 DebugLogger.log("MainActivity", "RECORD_AUDIO DENIED")
                 voiceManager.speak(
@@ -110,7 +113,7 @@ class MainActivity : ComponentActivity() {
         // Start the background wake service only when RECORD_AUDIO is already
         // granted (typical after the first install).  If not yet granted the
         // micPermissionLauncher callback above will start it on approval.
-        if (micGranted) {
+        if (micGranted && wakePreferences.isRunInBackground()) {
             VoiceWakeService.start(this)
         }
 
