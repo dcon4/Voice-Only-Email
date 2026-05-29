@@ -221,7 +221,7 @@ class InboxViewModel @Inject constructor(
                             is VoiceCommand.SessionTimeout  ->
                                 voiceManager.speak("Going to sleep. Say 'continue' after waking to resume.")
                             is VoiceCommand.GoToSleep -> {
-                                voiceCommandEngine.stopAll()
+                                voiceCommandEngine.cancelListening()
                                 voiceManager.speak("Going to sleep. Press the power button to wake me and say 'continue' to resume.")
                             }
                             is VoiceCommand.Cancel, is VoiceCommand.Pause ->
@@ -331,6 +331,8 @@ class InboxViewModel @Inject constructor(
     // ------------------------------------------------------------------
 
     fun handleCommand(command: VoiceCommand, emails: List<EmailItem> = currentEmails()) {
+        DebugLogger.log("InboxViewModel", "handleCommand: ${command::class.simpleName}" +
+            if (command is VoiceCommand.FreeText) " text='${command.text}'" else "")
         when (command) {
             is VoiceCommand.Read         -> readCurrentEmail(emails)
             is VoiceCommand.Next         -> advanceEmail(+1, emails)
@@ -424,17 +426,27 @@ class InboxViewModel @Inject constructor(
                 voiceManager.speak("Going to sleep. Press the power button to wake me.")
 
             is VoiceCommand.GoToSleep -> {
-                voiceCommandEngine.stopAll()
+                // Use cancelListening (destroy) instead of stopAll (stopListening)
+                // because stopListening fires onError which races back into this
+                // callback chain with FreeText("") → "I didn't understand".
+                voiceCommandEngine.cancelListening()
+                pausedPosition = null
                 voiceManager.speak("Going to sleep. Press the power button to wake me.")
             }
 
             is VoiceCommand.VoiceSettings -> handleVoiceSettings(emails)
             is VoiceCommand.Instructions  -> handleInstructions(emails)
 
-            else ->
+            else -> {
+                val detail = when (command) {
+                    is VoiceCommand.FreeText -> "FreeText='${command.text}'"
+                    else -> command::class.simpleName ?: "unknown"
+                }
+                DebugLogger.log("InboxViewModel", "UNHANDLED command: $detail")
                 voiceCommandEngine.speakThenListen(
-                    "Sorry, I didn't understand: ${(command as? VoiceCommand.FreeText)?.text ?: "unknown"}. Say 'help' to hear available commands."
+                    "Sorry, I didn't understand: $detail. Say 'help' to hear available commands."
                 ) { cmd -> handleCommand(cmd, emails) }
+            }
         }
     }
 
