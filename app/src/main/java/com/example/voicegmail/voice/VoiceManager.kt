@@ -75,9 +75,20 @@ class VoiceManager @Inject constructor(
                 tts?.language = Locale.US
                 ttsReady = true
                 applyVoicePreference()
+                // If no voice was applied (no saved preference) and TTS has no
+                // default voice selected, pick the first available English voice.
+                if (tts?.voice == null) {
+                    val fallbackVoice = tts?.voices
+                        ?.filter { it.locale.language == "en" && !it.isNetworkConnectionRequired }
+                        ?.minByOrNull { it.name }
+                    if (fallbackVoice != null) {
+                        tts?.voice = fallbackVoice
+                        DebugLogger.log(tag, "No voice set — auto-selected: ${fallbackVoice.name}")
+                    }
+                }
                 val engineName = tts?.defaultEngine
                 val allEngines = tts?.engines?.map { "${it.label} (${it.name})" } ?: emptyList()
-                DebugLogger.log(tag, "TTS ready — defaultEngine=$engineName, allEngines=$allEngines")
+                DebugLogger.log(tag, "TTS ready — defaultEngine=$engineName, activeVoice=${tts?.voice?.name}, allEngines=$allEngines")
             } else {
                 DebugLogger.log(tag, "TTS initialization FAILED: status=$status")
                 Log.e(tag, "TTS initialization failed: $status")
@@ -103,9 +114,54 @@ class VoiceManager @Inject constructor(
     // Engine & voice introspection
     // ------------------------------------------------------------------
 
+    /**
+     * Returns all installed TTS engines.
+     *
+     * Uses [TextToSpeech.getEngines] first, then falls back to a direct
+     * PackageManager query for services declaring TTS_SERVICE. This catches
+     * engines that some devices don't report through the standard API
+     * (Samsung, IVONA, Supertonic, etc.).
+     */
     fun getAvailableEngines(): List<TextToSpeech.EngineInfo> {
         val engines = tts?.engines?.sortedBy { it.label } ?: emptyList()
-        DebugLogger.log(tag, "getAvailableEngines: ${engines.map { "${it.label}(${it.name})" }}")
+        DebugLogger.log(tag, "getAvailableEngines (tts.engines): ${engines.map { "${it.label}(${it.name})" }}")
+
+        // Fallback: query PackageManager directly for TTS services
+        val pm = context.packageManager
+        val intent = android.content.Intent("android.intent.action.TTS_SERVICE")
+        val resolvedServices = pm.queryIntentServices(intent, android.content.pm.PackageManager.GET_META_DATA)
+        val pmPackages = resolvedServices.map { it.serviceInfo.packageName }.distinct()
+        DebugLogger.log(tag, "getAvailableEngines (PackageManager): $pmPackages")
+
+        // If PM found more than tts.engines, rebuild the list with full info
+        if (pmPackages.size > engines.size) {
+            val combined = engines.toMutableList()
+            for (pkgName in pmPackages) {
+                if (combined.none { it.name == pkgName }) {
+                    val appInfo = try {
+                        pm.getApplicationInfo(pkgName, 0)
+                    } catch (_: Exception) { null }
+                    val label = appInfo?.let { pm.getApplicationLabel(it).toString() } ?: pkgName
+                    val info = TextToSpeech.EngineInfo()
+                    try {
+                        TextToSpeech.EngineInfo::class.java.getDeclaredField("name").apply {
+                            isAccessible = true; set(info, pkgName)
+                        }
+                        TextToSpeech.EngineInfo::class.java.getDeclaredField("label").apply {
+                            isAccessible = true; set(info, label)
+                        }
+                    } catch (e: Exception) {
+                        DebugLogger.log(tag, "Reflection failed for $pkgName: ${e.message}")
+                        continue
+                    }
+                    combined.add(info)
+                }
+            }
+            val sorted = combined.sortedBy { it.label }
+            DebugLogger.log(tag, "getAvailableEngines (combined): ${sorted.map { "${it.label}(${it.name})" }}")
+            return sorted
+        }
+
         return engines
     }
 
