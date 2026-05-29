@@ -43,6 +43,9 @@ sealed class VoiceCommand {
     /** User explicitly said "go to sleep" — stop all audio and listening until power button wake. */
     object GoToSleep       : VoiceCommand()
 
+    /** User wants to listen to the Bible via Bible Brain audio. */
+    object Bible           : VoiceCommand()
+
     /** Pause mid-email reading. */
     object Pause           : VoiceCommand()
     /** Resume reading from the last paused position. */
@@ -269,6 +272,14 @@ class VoiceCommandEngine @Inject constructor(
                 lower.startsWith("sleep") || lower.endsWith("sleep") ||
                 lower == "i want to sleep" || lower.contains("time to sleep") ->
                 VoiceCommand.GoToSleep
+
+            // ── Bible audio ───────────────────────────────────────────────────
+
+            lower == "bible" || lower == "read the bible" || lower == "play bible" ||
+                lower.contains("bible") || lower.contains("scripture") ||
+                lower.contains("read the bible") || lower.contains("listen to the bible") ||
+                lower.contains("play bible") || lower.contains("bible audio") ->
+                VoiceCommand.Bible
 
             // ── Pause / resume reading ────────────────────────────────────────
 

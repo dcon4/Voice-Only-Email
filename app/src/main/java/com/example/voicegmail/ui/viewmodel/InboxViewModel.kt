@@ -13,6 +13,7 @@ import com.example.voicegmail.WakeEventBus
 import com.example.voicegmail.auth.AuthRepository
 import com.example.voicegmail.auth.OAuthDiagnostics
 import com.example.voicegmail.auth.OAuthRedirectBus
+import com.example.voicegmail.bible.BibleVoiceFlow
 import com.example.voicegmail.debug.DebugLogger
 import com.example.voicegmail.gmail.AttachmentReader
 import com.example.voicegmail.gmail.DraftItem
@@ -49,7 +50,8 @@ class InboxViewModel @Inject constructor(
     @Suppress("unused") private val forwardDraft: ForwardDraft,
     private val attachmentReader: AttachmentReader,
     private val oAuthRedirectBus: OAuthRedirectBus,
-    private val wakeEventBus: WakeEventBus
+    private val wakeEventBus: WakeEventBus,
+    private val bibleVoiceFlow: BibleVoiceFlow
 ) : ViewModel() {
 
     private var isFirstLoad = true
@@ -200,6 +202,8 @@ class InboxViewModel @Inject constructor(
 
     private fun handleWakeEvent() {
         DebugLogger.log("InboxViewModel", "Wake event — state=${_uiState.value::class.simpleName}")
+        // Stop any Bible audio that may be playing
+        bibleVoiceFlow.stop()
         // Destroy the in-flight recognizer silently so its error/result callback
         // cannot race with this new session. TTS is handled by QUEUE_FLUSH inside
         // the following speakThenListen call.
@@ -401,7 +405,7 @@ class InboxViewModel @Inject constructor(
                 voiceCommandEngine.speakThenListen(
                     "Commands: reed, next, previous, repeat, reply, forward, delete, compose, " +
                         "search, refresh, reed unread, mark as read, mark as unread, " +
-                        "pause, continue, go to sleep, list attachments, " +
+                        "pause, continue, go to sleep, bible, list attachments, " +
                         "list drafts, read slower, read faster, voice settings, instructions. " +
                         "While composing: add more, delete last word or sentence, start over, " +
                         "save draft, read back, send, cancel."
@@ -432,6 +436,19 @@ class InboxViewModel @Inject constructor(
                 voiceCommandEngine.cancelListening()
                 pausedPosition = null
                 voiceManager.speak("Going to sleep. Press the power button to wake me.")
+            }
+
+            is VoiceCommand.Bible -> {
+                bibleVoiceFlow.start(viewModelScope) { exitCmd ->
+                    // Bible flow exited — handle the exit command (or resume inbox)
+                    if (exitCmd is VoiceCommand.None) {
+                        voiceCommandEngine.speakThenListen("Back to inbox. Say a command.") { cmd ->
+                            handleCommand(cmd, emails)
+                        }
+                    } else {
+                        handleCommand(exitCmd, emails)
+                    }
+                }
             }
 
             is VoiceCommand.VoiceSettings -> handleVoiceSettings(emails)
