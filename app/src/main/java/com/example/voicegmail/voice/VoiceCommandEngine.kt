@@ -1,6 +1,7 @@
 package com.example.voicegmail.voice
 
 import android.speech.tts.Voice
+import com.example.voicegmail.debug.DebugLogger
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import javax.inject.Inject
@@ -38,6 +39,9 @@ sealed class VoiceCommand {
     object ReadSlower      : VoiceCommand()
     object ReadFaster      : VoiceCommand()
     object SessionTimeout  : VoiceCommand()
+
+    /** User explicitly said "go to sleep" — stop all audio and listening until power button wake. */
+    object GoToSleep       : VoiceCommand()
 
     /** Pause mid-email reading. */
     object Pause           : VoiceCommand()
@@ -148,12 +152,16 @@ class VoiceCommandEngine @Inject constructor(
         if (candidates.isEmpty()) return VoiceCommand.FreeText("")
         if (candidates.size == 1 && candidates[0] == "SESSION_TIMEOUT")
             return VoiceCommand.SessionTimeout
+        DebugLogger.log("VoiceCommandEngine", "parseAll candidates=$candidates")
         for (raw in candidates) {
             val corrected = applyPhoneticCorrections(raw)
             val cmd = parse(corrected)
+            DebugLogger.log("VoiceCommandEngine", "  raw='$raw' corrected='$corrected' -> ${cmd::class.simpleName}")
             if (cmd !is VoiceCommand.FreeText) return cmd
         }
-        return VoiceCommand.FreeText(applyPhoneticCorrections(candidates[0]))
+        val fallback = VoiceCommand.FreeText(applyPhoneticCorrections(candidates[0]))
+        DebugLogger.log("VoiceCommandEngine", "  UNRECOGNIZED — falling through as FreeText: '${fallback.text}'")
+        return fallback
     }
 
     // ------------------------------------------------------------------
@@ -192,6 +200,9 @@ class VoiceCommandEngine @Inject constructor(
             .replace(Regex("\\bwon\\b"), "one")
             .replace(Regex("\\bate\\b"), "eight")
             .replace(Regex("\\band more\\b"), "add more")
+            .replace(Regex("\\bgo to sleep\\b"), "go to sleep")
+            .replace(Regex("\\bgoto sleep\\b"), "go to sleep")
+            .replace(Regex("\\bgo too sleep\\b"), "go to sleep")
         return s
     }
 
@@ -243,6 +254,18 @@ class VoiceCommandEngine @Inject constructor(
                 lower.contains("open drafts") || lower.contains("view drafts") ||
                 lower.contains("all drafts") || lower.contains("see my drafts") ->
                 VoiceCommand.ListDrafts
+
+            // ── Sleep — stop listening entirely until power button ─────────────
+
+            lower == "go to sleep" || lower == "sleep" || lower == "go sleep" ||
+                lower == "go to bed" || lower == "stop listening" ||
+                lower == "goodnight" || lower == "good night" ||
+                lower.contains("go to sleep") || lower.contains("go sleep") ||
+                lower.contains("goodnight") || lower.contains("good night") ||
+                lower.contains("stop listening") || lower.contains("go to bed") ||
+                lower.startsWith("sleep") || lower.endsWith("sleep") ||
+                lower == "i want to sleep" || lower.contains("time to sleep") ->
+                VoiceCommand.GoToSleep
 
             // ── Pause / resume reading ────────────────────────────────────────
 
