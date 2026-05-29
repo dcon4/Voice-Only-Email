@@ -2,7 +2,7 @@ name: Android CI
 
 on:
   push:
-    branches: [ "main", "GPT-5.2-Assist", "copilot/**" ]
+    branches: [ "main", "GPT-5.2-Assist", "copilot/**", "feature/**" ]
   pull_request:
     branches: [ "main" ]
   workflow_dispatch:
