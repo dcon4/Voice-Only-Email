@@ -156,10 +156,12 @@ class VoiceCommandEngine @Inject constructor(
         for (raw in candidates) {
             val corrected = applyPhoneticCorrections(raw)
             val cmd = parse(corrected)
-            DebugLogger.log("VoiceCommandEngine", "  raw='$raw' corrected='$corrected' -> $cmd")
+            DebugLogger.log("VoiceCommandEngine", "  raw='$raw' corrected='$corrected' -> ${cmd::class.simpleName}")
             if (cmd !is VoiceCommand.FreeText) return cmd
         }
-        return VoiceCommand.FreeText(applyPhoneticCorrections(candidates[0]))
+        val fallback = VoiceCommand.FreeText(applyPhoneticCorrections(candidates[0]))
+        DebugLogger.log("VoiceCommandEngine", "  UNRECOGNIZED — falling through as FreeText: '${fallback.text}'")
+        return fallback
     }
 
     // ------------------------------------------------------------------

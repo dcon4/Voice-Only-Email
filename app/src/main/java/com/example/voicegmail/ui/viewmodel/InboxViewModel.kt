@@ -433,7 +433,7 @@ class InboxViewModel @Inject constructor(
 
             else ->
                 voiceCommandEngine.speakThenListen(
-                    "Sorry, I didn't understand that. Say 'help' to hear available commands."
+                    "Sorry, I didn't understand: ${(command as? VoiceCommand.FreeText)?.text ?: "unknown"}. Say 'help' to hear available commands."
                 ) { cmd -> handleCommand(cmd, emails) }
         }
     }
