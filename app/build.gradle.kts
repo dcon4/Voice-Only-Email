@@ -169,6 +169,8 @@ dependencies {
 
     implementation("com.tom-roush:pdfbox-android:2.0.27.0")
 
+    implementation("org.jsoup:jsoup:1.17.2")
+
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test.ext:junit:1.2.1")
     androidTestImplementation("androidx.test.espresso:espresso-core:3.6.1")

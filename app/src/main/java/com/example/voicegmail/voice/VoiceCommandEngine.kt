@@ -46,6 +46,9 @@ sealed class VoiceCommand {
     /** User wants to listen to the Bible via Bible Brain audio. */
     object Bible           : VoiceCommand()
 
+    /** User wants to browse the web by voice. */
+    object Browser         : VoiceCommand()
+
     /** Pause mid-email reading. */
     object Pause           : VoiceCommand()
     /** Resume reading from the last paused position. */
@@ -280,6 +283,18 @@ class VoiceCommandEngine @Inject constructor(
                 lower.contains("read the bible") || lower.contains("listen to the bible") ||
                 lower.contains("play bible") || lower.contains("bible audio") ->
                 VoiceCommand.Bible
+
+            // ── Browser — in-app voice web browsing ───────────────────────────
+
+            lower == "browser" || lower == "browse" || lower == "internet" ||
+                lower == "browse the web" || lower == "search the web" ||
+                lower == "web search" || lower == "web browser" ||
+                lower.contains("browse the web") || lower.contains("search the web") ||
+                lower.contains("web search") || lower.contains("open browser") ||
+                lower.contains("internet") || lower.contains("browse the internet") ||
+                lower == "google" || lower == "search online" ||
+                lower.contains("search online") || lower.contains("look up online") ->
+                VoiceCommand.Browser
 
             // ── Pause / resume reading ────────────────────────────────────────
 
