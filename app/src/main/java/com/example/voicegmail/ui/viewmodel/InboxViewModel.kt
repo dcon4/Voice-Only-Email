@@ -220,6 +220,10 @@ class InboxViewModel @Inject constructor(
                             is VoiceCommand.ContinueReading -> resumeFromPause(state.emails)
                             is VoiceCommand.SessionTimeout  ->
                                 voiceManager.speak("Going to sleep. Say 'continue' after waking to resume.")
+                            is VoiceCommand.GoToSleep -> {
+                                voiceCommandEngine.stopAll()
+                                voiceManager.speak("Going to sleep. Press the power button to wake me and say 'continue' to resume.")
+                            }
                             is VoiceCommand.Cancel, is VoiceCommand.Pause ->
                                 voiceCommandEngine.speakThenListen(
                                     "Paused. Press the power button and say 'continue' to resume later."
@@ -395,7 +399,7 @@ class InboxViewModel @Inject constructor(
                 voiceCommandEngine.speakThenListen(
                     "Commands: reed, next, previous, repeat, reply, forward, delete, compose, " +
                         "search, refresh, reed unread, mark as read, mark as unread, " +
-                        "pause, continue, list attachments, " +
+                        "pause, continue, go to sleep, list attachments, " +
                         "list drafts, read slower, read faster, voice settings, instructions. " +
                         "While composing: add more, delete last word or sentence, start over, " +
                         "save draft, read back, send, cancel."
@@ -418,6 +422,11 @@ class InboxViewModel @Inject constructor(
 
             is VoiceCommand.SessionTimeout ->
                 voiceManager.speak("Going to sleep. Press the power button to wake me.")
+
+            is VoiceCommand.GoToSleep -> {
+                voiceCommandEngine.stopAll()
+                voiceManager.speak("Going to sleep. Press the power button to wake me.")
+            }
 
             is VoiceCommand.VoiceSettings -> handleVoiceSettings(emails)
             is VoiceCommand.Instructions  -> handleInstructions(emails)

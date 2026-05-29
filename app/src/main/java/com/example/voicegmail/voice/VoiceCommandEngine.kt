@@ -39,6 +39,9 @@ sealed class VoiceCommand {
     object ReadFaster      : VoiceCommand()
     object SessionTimeout  : VoiceCommand()
 
+    /** User explicitly said "go to sleep" — stop all audio and listening until power button wake. */
+    object GoToSleep       : VoiceCommand()
+
     /** Pause mid-email reading. */
     object Pause           : VoiceCommand()
     /** Resume reading from the last paused position. */
@@ -243,6 +246,13 @@ class VoiceCommandEngine @Inject constructor(
                 lower.contains("open drafts") || lower.contains("view drafts") ||
                 lower.contains("all drafts") || lower.contains("see my drafts") ->
                 VoiceCommand.ListDrafts
+
+            // ── Sleep — stop listening entirely until power button ─────────────
+
+            lower == "go to sleep" || lower == "sleep" || lower == "go sleep" ||
+                lower.contains("go to sleep") || lower.contains("goodnight") ||
+                lower.contains("good night") || lower == "stop listening" ->
+                VoiceCommand.GoToSleep
 
             // ── Pause / resume reading ────────────────────────────────────────
 
