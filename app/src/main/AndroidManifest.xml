@@ -30,6 +30,18 @@
         android:name="android.permission.BLUETOOTH_CONNECT"
         android:minSdkVersion="31" />
 
+    <!--
+        Package visibility: On Android 11+ (API 30+), apps must declare which
+        other packages they need to interact with. Without this, getEngines()
+        only returns a limited subset of installed TTS engines.
+    -->
+    <queries>
+        <!-- Discover all installed TTS engines (Samsung, IVONA, Supertonic, etc.) -->
+        <intent>
+            <action android:name="android.intent.action.TTS_SERVICE" />
+        </intent>
+    </queries>
+
     <application
         android:name=".VoiceGmailApp"
         android:allowBackup="false"
