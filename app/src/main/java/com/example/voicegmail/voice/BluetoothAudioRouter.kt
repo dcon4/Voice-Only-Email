@@ -23,18 +23,20 @@ import javax.inject.Singleton
  * == true). In the **standard** flavor every method is a no-op and
  * [ensureScoActive] fires its callback immediately with no side effects.
  *
- * ## Why keep SCO "hot"
- * Starting a Bluetooth SCO channel takes 1–3 seconds because the Android
- * Bluetooth stack must negotiate the synchronous link with the headset. If we
- * started and stopped SCO around every microphone session the user would
- * experience an audible gap before each listening window. Instead, once SCO
- * connects we leave it open for the entire voice session. Call [stopSco] only
- * when the app goes to sleep ([VoiceCommand.SessionTimeout]) or shuts down.
+ * ## Revised approach: SCO only around mic sessions
  *
- * ## Audio quality trade-off
- * While SCO is active the TTS output is also routed through the HFP channel
- * (narrowband voice quality, ~8 kHz). This is acceptable for voice prompts.
- * When SCO is off the audio route falls back to A2DP (stereo quality).
+ * The previous approach kept SCO "hot" for the entire voice session, but this
+ * caused problems with Bluetooth hearing aids and headsets:
+ * - TTS spoke via SCO (narrowband, poor quality) instead of A2DP (wideband)
+ * - Audio stream flipped between A2DP and SCO repeatedly, causing audible
+ *   connect/disconnect artifacts (bells, pops, silence gaps)
+ * - Some devices immediately disconnected SCO (state 2 → 0)
+ *
+ * New approach:
+ * - TTS always plays via the normal media stream (A2DP if BT connected)
+ * - SCO is activated ONLY when the mic needs to open
+ * - SCO is deactivated IMMEDIATELY after recognition completes
+ * - This eliminates the A2DP↔SCO flip-flop that caused audio gaps
  */
 @Singleton
 class BluetoothAudioRouter @Inject constructor(
@@ -54,6 +56,9 @@ class BluetoothAudioRouter @Inject constructor(
     /** Audio mode saved before we switch to MODE_IN_COMMUNICATION. */
     private var savedAudioMode = AudioManager.MODE_NORMAL
 
+    /** Whether SCO is currently connected. */
+    @Volatile private var scoConnected = false
+
     // ------------------------------------------------------------------
     // SCO state receiver
     // ------------------------------------------------------------------
@@ -65,19 +70,24 @@ class BluetoothAudioRouter @Inject constructor(
             Log.d(tag, "SCO state update: $state")
             when (state) {
                 AudioManager.SCO_AUDIO_STATE_CONNECTED -> {
+                    scoConnected = true
                     DebugLogger.log(tag, "BT SCO connected ✓")
                     Log.i(tag, "BT SCO connected ✓")
                     firePendingCallback()
                 }
                 AudioManager.SCO_AUDIO_STATE_ERROR -> {
+                    scoConnected = false
                     DebugLogger.log(tag, "BT SCO error — proceeding with fallback mic")
                     Log.w(tag, "BT SCO error — proceeding with fallback mic")
                     firePendingCallback()
                 }
                 AudioManager.SCO_AUDIO_STATE_DISCONNECTED -> {
+                    scoConnected = false
                     DebugLogger.verbose(tag, "BT SCO disconnected")
                     Log.d(tag, "BT SCO disconnected")
-                    pendingCallback = null
+                    // If we were waiting for a connection and it disconnected,
+                    // fire the callback anyway so the mic opens with built-in mic
+                    firePendingCallback()
                 }
             }
         }
@@ -89,7 +99,7 @@ class BluetoothAudioRouter @Inject constructor(
                 scoStateReceiver,
                 IntentFilter(AudioManager.ACTION_SCO_AUDIO_STATE_UPDATED)
             )
-            Log.d(tag, "BluetoothAudioRouter initialised (bt flavor)")
+            DebugLogger.log(tag, "BluetoothAudioRouter initialised (bt flavor)")
         }
     }
 
@@ -106,15 +116,15 @@ class BluetoothAudioRouter @Inject constructor(
         get() = BuildConfig.BLUETOOTH_AUDIO && audioManager.isBluetoothScoAvailableOffCall
 
     /**
-     * Ensure the Bluetooth SCO channel is active, then invoke [onReady].
+     * Ensure the Bluetooth SCO channel is active for microphone use,
+     * then invoke [onReady].
      *
      * Behaviour:
      * - **Standard build** or **no BT headset connected**: [onReady] fires
      *   immediately on the calling thread.
      * - **SCO already connected**: [onReady] fires immediately.
      * - **SCO not yet connected**: starts the SCO channel and fires [onReady]
-     *   once [AudioManager.SCO_AUDIO_STATE_CONNECTED] is received (or after
-     *   [SCO_CONNECT_TIMEOUT_MS] as a safety fallback).
+     *   once connected (or after timeout as fallback).
      *
      * Must be called on the main thread.
      */
@@ -127,14 +137,13 @@ class BluetoothAudioRouter @Inject constructor(
             onReady(); return
         }
 
-        @Suppress("DEPRECATION")
-        if (audioManager.isBluetoothScoOn) {
+        if (scoConnected) {
             DebugLogger.verbose(tag, "ensureScoActive: SCO already active")
             onReady(); return
         }
 
-        DebugLogger.log(tag, "Starting BT SCO…")
-        Log.d(tag, "Starting BT SCO…")
+        DebugLogger.log(tag, "Starting BT SCO for mic…")
+        Log.d(tag, "Starting BT SCO for mic…")
         savedAudioMode = audioManager.mode
         audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
         pendingCallback = onReady
@@ -143,30 +152,31 @@ class BluetoothAudioRouter @Inject constructor(
         audioManager.startBluetoothSco()
 
         // Safety net: if the BT stack never confirms the connection, proceed
-        // after the timeout so the mic opens regardless.
+        // after the timeout so the mic opens regardless (using built-in mic).
         mainHandler.postDelayed({
             if (pendingCallback != null) {
-                Log.w(tag, "BT SCO connect timed out after ${SCO_CONNECT_TIMEOUT_MS} ms — using fallback")
+                DebugLogger.log(tag, "BT SCO connect timed out after ${SCO_CONNECT_TIMEOUT_MS}ms — using fallback")
+                Log.w(tag, "BT SCO connect timed out — using fallback mic")
                 firePendingCallback()
             }
         }, SCO_CONNECT_TIMEOUT_MS)
     }
 
     /**
-     * Tear down the SCO channel and restore the audio mode that was active
-     * before we switched to [AudioManager.MODE_IN_COMMUNICATION].
+     * Tear down the SCO channel immediately after mic use is complete.
+     * This allows audio to return to A2DP (wideband media quality) for TTS.
      *
-     * Call this when the app is going to sleep (session timeout) or shutting
-     * down — not between individual microphone sessions.
+     * Called after every recognition session completes (success, error, or timeout).
      */
     @Suppress("DEPRECATION")
     fun stopSco() {
         if (!BuildConfig.BLUETOOTH_AUDIO) return
         pendingCallback = null
-        if (audioManager.isBluetoothScoOn) {
+        if (scoConnected || audioManager.isBluetoothScoOn) {
             audioManager.stopBluetoothSco()
             audioManager.mode = savedAudioMode
-            DebugLogger.log(tag, "BT SCO stopped; audio mode restored to $savedAudioMode")
+            scoConnected = false
+            DebugLogger.verbose(tag, "BT SCO stopped after mic use; audio mode restored to $savedAudioMode")
             Log.d(tag, "BT SCO stopped; audio mode restored to $savedAudioMode")
         }
     }

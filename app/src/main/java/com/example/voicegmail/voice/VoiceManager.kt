@@ -433,6 +433,7 @@ class VoiceManager @Inject constructor(
                             _recognizedText.value = candidates[0]
                             DebugLogger.verbose(tag, "Recognition results (${candidates.size}): ${candidates.take(3)}")
                             Log.d(tag, "Results (${candidates.size}): ${candidates.take(3)}")
+                            bluetoothRouter.stopSco() // Release SCO so TTS uses A2DP
                             onResults(candidates)
                         }
                         !speechBegan && noSpeechRetries < noSpeechMaxRetries -> {
@@ -444,6 +445,7 @@ class VoiceManager @Inject constructor(
                         !speechBegan -> {
                             if (noSpeechMaxRetries == 0) {
                                 Log.d(tag, "Brief listen: no speech — returning empty (continue reading)")
+                                bluetoothRouter.stopSco()
                                 onResults(emptyList())
                             } else {
                                 Log.d(tag, "Session timeout after $noSpeechMaxRetries no-speech retries")
@@ -470,6 +472,7 @@ class VoiceManager @Inject constructor(
                         !speechBegan -> {
                             if (noSpeechMaxRetries == 0) {
                                 Log.d(tag, "Brief listen error: no speech — returning empty (continue reading)")
+                                bluetoothRouter.stopSco()
                                 onResults(emptyList())
                             } else {
                                 Log.d(tag, "Session timeout (error path) after $noSpeechMaxRetries no-speech retries")
@@ -519,6 +522,7 @@ class VoiceManager @Inject constructor(
             }, delay)
         } else {
             Log.e(tag, "Recognition giving up (error=$error retries=$retryCount)")
+            bluetoothRouter.stopSco()
             onResults(emptyList())
         }
     }
