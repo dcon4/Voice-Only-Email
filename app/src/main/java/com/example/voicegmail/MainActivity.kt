@@ -73,6 +73,15 @@ class MainActivity : ComponentActivity() {
     private val notifPermissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
             DebugLogger.log("MainActivity", "POST_NOTIFICATIONS granted=$granted")
+            if (granted) {
+                voiceManager.speak("Notification permission granted. The app will show a status indicator while running in the background.")
+            } else {
+                voiceManager.speak(
+                    "Notification permission was denied. The app still works, but Android " +
+                        "may stop it in the background without showing a notification. " +
+                        "You can grant this later in your device settings under App Notifications."
+                )
+            }
         }
 
     // ---- Lifecycle -----------------------------------------------------------
@@ -107,7 +116,15 @@ class MainActivity : ComponentActivity() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
             ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
                 != PackageManager.PERMISSION_GRANTED) {
-            notifPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+            // Speak rationale before showing the system permission dialog
+            voiceManager.speak(
+                "VoiceGmail needs notification permission to show a status indicator " +
+                    "while running in the background. Please allow notifications when prompted."
+            )
+            // Delay the request slightly so TTS can deliver the rationale
+            android.os.Handler(mainLooper).postDelayed({
+                notifPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+            }, 4500)
         }
 
         // Start the background wake service only when RECORD_AUDIO is already

@@ -10,19 +10,20 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 private const val TAG = "BrowserVoiceFlow"
+private const val PAGE_SIZE = 5
 
 /**
  * Voice-driven web browser flow.
  *
  * When the user says "Browser" / "Browse the web" / "Internet", this flow:
  * 1. Asks what to search for
- * 2. Reads back search result titles
- * 3. User picks a result by number
- * 4. Fetches and reads the page content aloud (chunked, like emails)
- * 5. Offers navigation: "next result", "new search", "back", "cancel"
+ * 2. Reads back search result titles (in groups of [PAGE_SIZE])
+ * 3. User picks a result by number, or "read all"
+ * 4. Fetches and reads the page content aloud (chunked, no beep — same as email)
+ * 5. Power button pauses reading; "continue" resumes from the same position
+ * 6. Offers navigation: "next", "more results", "new search", "cancel"
  *
- * Calls [onExit] when the user leaves browser mode so the caller
- * (InboxViewModel) can resume the normal command loop.
+ * Calls [onExit] when the user leaves browser mode.
  */
 @Singleton
 class BrowserVoiceFlow @Inject constructor(
@@ -30,10 +31,19 @@ class BrowserVoiceFlow @Inject constructor(
     private val voiceCommandEngine: VoiceCommandEngine,
     private val voiceManager: VoiceManager
 ) {
-    private var currentResults: List<SearchResult> = emptyList()
+    // All results from the search (up to 20)
+    private var allResults: List<SearchResult> = emptyList()
+    // Current page offset (0-based, groups of PAGE_SIZE)
+    private var pageOffset: Int = 0
+    // Index within allResults of the currently open/read result
     private var currentResultIndex: Int = 0
+    // Chunk state for reading a page
     private var currentPageChunks: List<String> = emptyList()
     private var currentChunkIndex: Int = 0
+    // Generation counter for reading sessions (same pattern as email reading)
+    private var readingGen: Int = 0
+    // Whether we're reading all results sequentially
+    private var readingAllSequentially: Boolean = false
 
     /**
      * Entry point — start the browser voice flow.
@@ -41,7 +51,30 @@ class BrowserVoiceFlow @Inject constructor(
     fun start(scope: CoroutineScope, onExit: (VoiceCommand) -> Unit) {
         DebugLogger.log(TAG, "Browser flow started")
         browserRepository.clear()
+        allResults = emptyList()
+        pageOffset = 0
+        readingAllSequentially = false
         askForSearch(scope, onExit)
+    }
+
+    /**
+     * Called by InboxViewModel on wake event to pause reading.
+     * Returns the resume prompt if reading was in progress, null otherwise.
+     */
+    fun handleWakeInterrupt(): Boolean {
+        if (currentPageChunks.isNotEmpty() && currentChunkIndex > 0 && currentChunkIndex < currentPageChunks.size) {
+            readingGen++ // invalidate in-flight chunk callbacks
+            return true
+        }
+        return false
+    }
+
+    /**
+     * Resume reading from current position after a wake interrupt.
+     */
+    fun resumeReading(scope: CoroutineScope, onExit: (VoiceCommand) -> Unit) {
+        readingGen++
+        readNextChunk(scope, onExit, readingGen)
     }
 
     // ── Search ────────────────────────────────────────────────────────────
@@ -54,12 +87,8 @@ class BrowserVoiceFlow @Inject constructor(
 
     private fun handleSearchInput(cmd: VoiceCommand, scope: CoroutineScope, onExit: (VoiceCommand) -> Unit) {
         when (cmd) {
-            is VoiceCommand.Cancel, is VoiceCommand.GoBack -> {
-                exitFlow(onExit)
-            }
-            is VoiceCommand.GoToSleep, is VoiceCommand.SessionTimeout -> {
-                onExit(cmd)
-            }
+            is VoiceCommand.Cancel, is VoiceCommand.GoBack -> exitFlow(onExit)
+            is VoiceCommand.GoToSleep, is VoiceCommand.SessionTimeout -> onExit(cmd)
             is VoiceCommand.FreeText -> {
                 val query = cmd.text.trim()
                 if (query.isBlank()) {
@@ -70,10 +99,7 @@ class BrowserVoiceFlow @Inject constructor(
                 }
                 performSearch(query, scope, onExit)
             }
-            else -> {
-                // Any other recognized command exits browser mode
-                onExit(cmd)
-            }
+            else -> onExit(cmd)
         }
     }
 
@@ -81,29 +107,48 @@ class BrowserVoiceFlow @Inject constructor(
         voiceManager.speak("Searching for: $query.")
         scope.launch {
             val results = browserRepository.search(query)
-            currentResults = results
+            allResults = results
+            pageOffset = 0
             currentResultIndex = 0
+            readingAllSequentially = false
 
             if (results.isEmpty()) {
                 voiceCommandEngine.speakThenListen(
                     "No results found for '$query'. Say another search query, or 'cancel'."
                 ) { cmd -> handleSearchInput(cmd, scope, onExit) }
             } else {
-                readResults(scope, onExit)
+                presentCurrentPage(scope, onExit)
             }
         }
     }
 
-    // ── Results navigation ────────────────────────────────────────────────
+    // ── Results presentation (paginated in groups of PAGE_SIZE) ────────────
 
-    private fun readResults(scope: CoroutineScope, onExit: (VoiceCommand) -> Unit) {
-        val count = currentResults.size
+    private fun currentPageResults(): List<SearchResult> {
+        val start = pageOffset
+        val end = (pageOffset + PAGE_SIZE).coerceAtMost(allResults.size)
+        return allResults.subList(start, end)
+    }
+
+    private fun presentCurrentPage(scope: CoroutineScope, onExit: (VoiceCommand) -> Unit) {
+        val pageResults = currentPageResults()
+        val totalResults = allResults.size
+        val startNum = pageOffset + 1
+        val endNum = pageOffset + pageResults.size
+
         val summary = buildString {
-            append("Found $count result${if (count == 1) "" else "s"}. ")
-            currentResults.forEachIndexed { i, r ->
-                append("${i + 1}: ${r.title}. ")
+            if (pageOffset == 0) {
+                append("Found $totalResults result${if (totalResults == 1) "" else "s"}. ")
+            } else {
+                append("Results $startNum to $endNum of $totalResults. ")
             }
-            append("Say a number to open, 'new search', or 'cancel'.")
+            pageResults.forEachIndexed { i, r ->
+                append("${pageOffset + i + 1}: ${r.title}. ")
+            }
+            append("Say a number to open")
+            if (pageResults.size > 1) append(", 'read all'")
+            if (endNum < totalResults) append(", 'more results'")
+            append(", 'new search', or 'cancel'.")
         }
         voiceCommandEngine.speakThenListen(summary) { cmd ->
             handleResultSelection(cmd, scope, onExit)
@@ -115,30 +160,56 @@ class BrowserVoiceFlow @Inject constructor(
             is VoiceCommand.Cancel, is VoiceCommand.GoBack -> exitFlow(onExit)
             is VoiceCommand.GoToSleep, is VoiceCommand.SessionTimeout -> onExit(cmd)
             is VoiceCommand.Search -> askForSearch(scope, onExit)
-            is VoiceCommand.Refresh -> readResults(scope, onExit) // re-read the list
-            is VoiceCommand.Repeat -> readResults(scope, onExit)
+            is VoiceCommand.Refresh, is VoiceCommand.Repeat -> presentCurrentPage(scope, onExit)
+            is VoiceCommand.ReadAllUnread -> {
+                // "read all" / "read all five" — read all results on this page sequentially
+                startReadingAll(scope, onExit)
+            }
+            is VoiceCommand.Next -> {
+                // "next" after listing → show next page of results if available
+                val nextPageStart = pageOffset + PAGE_SIZE
+                if (nextPageStart < allResults.size) {
+                    pageOffset = nextPageStart
+                    presentCurrentPage(scope, onExit)
+                } else {
+                    voiceCommandEngine.speakThenListen(
+                        "No more results. Say 'new search' or 'cancel' to leave browser."
+                    ) { retry -> handleResultSelection(retry, scope, onExit) }
+                }
+            }
             is VoiceCommand.FreeText -> {
-                val text = cmd.text.trim()
+                val text = cmd.text.trim().lowercase()
+                // Check for "read all" / "all five" / "read all five"
+                if (text.contains("read all") || text.contains("all five") ||
+                    text.contains("all of them") || text == "all") {
+                    startReadingAll(scope, onExit)
+                    return
+                }
+                // Check for "more results" / "next five" / "more"
+                if (text.contains("more result") || text.contains("next five") ||
+                    text.contains("more findings") || text == "more") {
+                    val nextPageStart = pageOffset + PAGE_SIZE
+                    if (nextPageStart < allResults.size) {
+                        pageOffset = nextPageStart
+                        presentCurrentPage(scope, onExit)
+                    } else {
+                        voiceCommandEngine.speakThenListen(
+                            "No more results available. Say a number, 'new search', or 'cancel'."
+                        ) { retry -> handleResultSelection(retry, scope, onExit) }
+                    }
+                    return
+                }
                 val number = extractNumber(text)
-                if (number != null && number in 1..currentResults.size) {
+                if (number != null && number in 1..allResults.size) {
                     currentResultIndex = number - 1
+                    readingAllSequentially = false
                     openResult(currentResultIndex, scope, onExit)
                 } else if (text.isNotBlank()) {
                     // Treat as a new search query
                     performSearch(text, scope, onExit)
                 } else {
                     voiceCommandEngine.speakThenListen(
-                        "Say a result number (1 to ${currentResults.size}), 'new search', or 'cancel'."
-                    ) { retry -> handleResultSelection(retry, scope, onExit) }
-                }
-            }
-            is VoiceCommand.Next -> {
-                if (currentResultIndex < currentResults.size - 1) {
-                    currentResultIndex++
-                    openResult(currentResultIndex, scope, onExit)
-                } else {
-                    voiceCommandEngine.speakThenListen(
-                        "That's the last result. Say 'new search', a number, or 'cancel'."
+                        "Say a result number, 'read all', 'more results', 'new search', or 'cancel'."
                     ) { retry -> handleResultSelection(retry, scope, onExit) }
                 }
             }
@@ -146,10 +217,18 @@ class BrowserVoiceFlow @Inject constructor(
         }
     }
 
-    // ── Page reading ──────────────────────────────────────────────────────
+    // ── Read all sequentially ─────────────────────────────────────────────
+
+    private fun startReadingAll(scope: CoroutineScope, onExit: (VoiceCommand) -> Unit) {
+        readingAllSequentially = true
+        currentResultIndex = pageOffset // start from first in current page
+        openResult(currentResultIndex, scope, onExit)
+    }
+
+    // ── Page reading (no-beep chunk pattern, same as email) ───────────────
 
     private fun openResult(index: Int, scope: CoroutineScope, onExit: (VoiceCommand) -> Unit) {
-        val result = currentResults.getOrNull(index)
+        val result = allResults.getOrNull(index)
         if (result == null) {
             voiceCommandEngine.speakThenListen("Invalid result. Say a number or 'cancel'.") { cmd ->
                 handleResultSelection(cmd, scope, onExit)
@@ -164,94 +243,122 @@ class BrowserVoiceFlow @Inject constructor(
                 voiceCommandEngine.speakThenListen(
                     "I couldn't read that page. It may be blocked or not a text page. " +
                         "Say 'next' for the next result, a number, 'new search', or 'cancel'."
-                ) { cmd -> handleResultSelection(cmd, scope, onExit) }
+                ) { cmd -> handlePostPageCommand(cmd, scope, onExit) }
                 return@launch
             }
 
             // Chunk the page text for reading
             currentPageChunks = chunkText(page.text)
             currentChunkIndex = 0
+            readingGen++ // new reading session
 
             voiceManager.speak("${page.title}.")
-            readNextChunk(scope, onExit)
+            // Small delay to let the title finish before starting chunk reading
+            voiceCommandEngine.speakEmailChunk("") {
+                readNextChunk(scope, onExit, readingGen)
+            }
         }
     }
 
-    private fun readNextChunk(scope: CoroutineScope, onExit: (VoiceCommand) -> Unit) {
+    /**
+     * Read chunk-by-chunk using speakEmailChunk (no mic, no beep).
+     * Same pattern as InboxViewModel.readNextChunk — power button interrupts
+     * by incrementing readingGen, causing stale callbacks to be discarded.
+     */
+    private fun readNextChunk(scope: CoroutineScope, onExit: (VoiceCommand) -> Unit, gen: Int) {
+        if (gen != readingGen) return // stale callback — new session is active
+
         if (currentChunkIndex >= currentPageChunks.size) {
             // Finished reading the page
-            voiceCommandEngine.speakThenListen(
-                "End of page. Say 'next' for the next search result, " +
-                    "'repeat' to read again, 'new search', or 'cancel'."
-            ) { cmd -> handlePostPageCommand(cmd, scope, onExit) }
+            handlePageFinished(scope, onExit)
             return
         }
 
         val chunk = currentPageChunks[currentChunkIndex]
         currentChunkIndex++
 
-        // Use email chunk reading pattern — speak chunk then auto-advance
-        voiceCommandEngine.speakEmailSentenceAndListen(chunk) { cmd ->
-            when (cmd) {
-                is VoiceCommand.FreeText -> {
-                    if (cmd.text.isBlank()) {
-                        // Silence — continue reading
-                        readNextChunk(scope, onExit)
-                    } else {
-                        handleReadingInterrupt(cmd, scope, onExit)
+        voiceCommandEngine.speakEmailChunk(chunk) {
+            readNextChunk(scope, onExit, gen)
+        }
+    }
+
+    private fun handlePageFinished(scope: CoroutineScope, onExit: (VoiceCommand) -> Unit) {
+        if (readingAllSequentially) {
+            // Check if there's a next result in the current page
+            val pageEnd = (pageOffset + PAGE_SIZE).coerceAtMost(allResults.size)
+            if (currentResultIndex + 1 < pageEnd) {
+                currentResultIndex++
+                voiceCommandEngine.speakThenListen(
+                    "End of article. Moving to the next result. Say 'skip' to skip, or 'cancel'."
+                ) { cmd ->
+                    when (cmd) {
+                        is VoiceCommand.Cancel, is VoiceCommand.GoBack -> {
+                            readingAllSequentially = false
+                            handlePostPageCommand(VoiceCommand.Cancel, scope, onExit)
+                        }
+                        is VoiceCommand.GoToSleep, is VoiceCommand.SessionTimeout -> onExit(cmd)
+                        else -> openResult(currentResultIndex, scope, onExit)
                     }
                 }
-                is VoiceCommand.Pause -> {
+            } else {
+                // Finished all in current page
+                readingAllSequentially = false
+                val nextPageStart = pageOffset + PAGE_SIZE
+                if (nextPageStart < allResults.size) {
                     voiceCommandEngine.speakThenListen(
-                        "Paused. Say 'continue' to resume reading, or another command."
-                    ) { resumeCmd ->
-                        when (resumeCmd) {
-                            is VoiceCommand.ContinueReading -> readNextChunk(scope, onExit)
-                            else -> handleReadingInterrupt(resumeCmd, scope, onExit)
+                        "I've read all the articles in this set. " +
+                            "Would you like me to list the next five results? Say 'yes' or 'no'."
+                    ) { cmd ->
+                        when (cmd) {
+                            is VoiceCommand.Confirm -> {
+                                pageOffset = nextPageStart
+                                presentCurrentPage(scope, onExit)
+                            }
+                            is VoiceCommand.Cancel, is VoiceCommand.GoBack -> exitFlow(onExit)
+                            is VoiceCommand.GoToSleep, is VoiceCommand.SessionTimeout -> onExit(cmd)
+                            is VoiceCommand.FreeText -> {
+                                val lower = cmd.text.trim().lowercase()
+                                if (lower == "yes" || lower == "yeah" || lower == "sure" ||
+                                    lower == "ok" || lower == "okay") {
+                                    pageOffset = nextPageStart
+                                    presentCurrentPage(scope, onExit)
+                                } else {
+                                    voiceCommandEngine.speakThenListen(
+                                        "OK. Say a number, 'new search', or 'cancel' to leave browser."
+                                    ) { retry -> handleResultSelection(retry, scope, onExit) }
+                                }
+                            }
+                            else -> handleResultSelection(cmd, scope, onExit)
                         }
                     }
-                }
-                is VoiceCommand.GoToSleep, is VoiceCommand.SessionTimeout -> onExit(cmd)
-                is VoiceCommand.Cancel, is VoiceCommand.GoBack -> {
+                } else {
                     voiceCommandEngine.speakThenListen(
-                        "Stopped reading. Say 'next' for next result, 'new search', or 'cancel' to leave browser."
-                    ) { retry -> handlePostPageCommand(retry, scope, onExit) }
+                        "I've read all the search results. Say 'new search' or 'cancel' to leave browser."
+                    ) { cmd -> handlePostPageCommand(cmd, scope, onExit) }
                 }
-                else -> handleReadingInterrupt(cmd, scope, onExit)
+            }
+        } else {
+            // Single article finished
+            val prompt = buildString {
+                append("End of page. ")
+                if (currentResultIndex < allResults.size - 1)
+                    append("Say 'next' for the next result, ")
+                append("'repeat' to read again, 'new search', or 'cancel'.")
+            }
+            voiceCommandEngine.speakThenListen(prompt) { cmd ->
+                handlePostPageCommand(cmd, scope, onExit)
             }
         }
     }
 
-    private fun handleReadingInterrupt(cmd: VoiceCommand, scope: CoroutineScope, onExit: (VoiceCommand) -> Unit) {
-        when (cmd) {
-            is VoiceCommand.Cancel, is VoiceCommand.GoBack -> {
-                voiceCommandEngine.speakThenListen(
-                    "Stopped reading. Say 'next', 'new search', or 'cancel' to leave browser."
-                ) { retry -> handlePostPageCommand(retry, scope, onExit) }
-            }
-            is VoiceCommand.ContinueReading -> readNextChunk(scope, onExit)
-            is VoiceCommand.GoToSleep, is VoiceCommand.SessionTimeout -> onExit(cmd)
-            is VoiceCommand.Next -> {
-                if (currentResultIndex < currentResults.size - 1) {
-                    currentResultIndex++
-                    openResult(currentResultIndex, scope, onExit)
-                } else {
-                    voiceCommandEngine.speakThenListen(
-                        "No more results. Say 'new search' or 'cancel'."
-                    ) { retry -> handlePostPageCommand(retry, scope, onExit) }
-                }
-            }
-            is VoiceCommand.Search -> askForSearch(scope, onExit)
-            else -> onExit(cmd)
-        }
-    }
+    // ── Post-page commands ────────────────────────────────────────────────
 
     private fun handlePostPageCommand(cmd: VoiceCommand, scope: CoroutineScope, onExit: (VoiceCommand) -> Unit) {
         when (cmd) {
             is VoiceCommand.Cancel, is VoiceCommand.GoBack -> exitFlow(onExit)
             is VoiceCommand.GoToSleep, is VoiceCommand.SessionTimeout -> onExit(cmd)
             is VoiceCommand.Next -> {
-                if (currentResultIndex < currentResults.size - 1) {
+                if (currentResultIndex < allResults.size - 1) {
                     currentResultIndex++
                     openResult(currentResultIndex, scope, onExit)
                 } else {
@@ -272,15 +379,34 @@ class BrowserVoiceFlow @Inject constructor(
             }
             is VoiceCommand.Repeat -> {
                 currentChunkIndex = 0
-                readNextChunk(scope, onExit)
+                readingGen++
+                readNextChunk(scope, onExit, readingGen)
+            }
+            is VoiceCommand.ContinueReading -> {
+                // Resume from where we left off
+                readingGen++
+                readNextChunk(scope, onExit, readingGen)
             }
             is VoiceCommand.Search -> askForSearch(scope, onExit)
-            is VoiceCommand.Refresh -> readResults(scope, onExit)
+            is VoiceCommand.Refresh -> presentCurrentPage(scope, onExit)
             is VoiceCommand.FreeText -> {
-                val text = cmd.text.trim()
+                val text = cmd.text.trim().lowercase()
+                if (text.contains("more result") || text.contains("next five") || text == "more") {
+                    val nextPageStart = pageOffset + PAGE_SIZE
+                    if (nextPageStart < allResults.size) {
+                        pageOffset = nextPageStart
+                        presentCurrentPage(scope, onExit)
+                    } else {
+                        voiceCommandEngine.speakThenListen(
+                            "No more results. Say 'new search' or 'cancel'."
+                        ) { retry -> handlePostPageCommand(retry, scope, onExit) }
+                    }
+                    return
+                }
                 val number = extractNumber(text)
-                if (number != null && number in 1..currentResults.size) {
+                if (number != null && number in 1..allResults.size) {
                     currentResultIndex = number - 1
+                    readingAllSequentially = false
                     openResult(currentResultIndex, scope, onExit)
                 } else if (text.isNotBlank()) {
                     performSearch(text, scope, onExit)
@@ -297,13 +423,15 @@ class BrowserVoiceFlow @Inject constructor(
     // ── Helpers ───────────────────────────────────────────────────────────
 
     private fun exitFlow(onExit: (VoiceCommand) -> Unit) {
+        readingGen++
+        currentPageChunks = emptyList()
+        readingAllSequentially = false
         browserRepository.clear()
         onExit(VoiceCommand.None)
     }
 
     /**
-     * Split text into chunks of roughly 200-250 chars at sentence boundaries.
-     * Same approach as email chunk reading.
+     * Split text into chunks at sentence boundaries — same as email reading.
      */
     private fun chunkText(text: String, maxChars: Int = 240): List<String> {
         val sentences = Regex("(?<=[.!?])\\s+")
@@ -327,15 +455,13 @@ class BrowserVoiceFlow @Inject constructor(
         return chunks
     }
 
-    /**
-     * Extract a number from spoken text like "1", "one", "number 3", "result two".
-     */
     private fun extractNumber(text: String): Int? {
         val lower = text.trim().lowercase()
         lower.toIntOrNull()?.let { return it }
         Regex("(\\d+)").find(lower)?.groupValues?.get(1)?.toIntOrNull()?.let { return it }
         val wordNumbers = mapOf(
             "one" to 1, "two" to 2, "three" to 3, "four" to 4, "five" to 5,
+            "six" to 6, "seven" to 7, "eight" to 8, "nine" to 9, "ten" to 10,
             "first" to 1, "second" to 2, "third" to 3, "fourth" to 4, "fifth" to 5
         )
         return wordNumbers.entries.firstOrNull { lower.contains(it.key) }?.value

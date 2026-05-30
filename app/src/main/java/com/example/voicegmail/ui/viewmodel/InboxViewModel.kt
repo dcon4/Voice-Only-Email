@@ -227,6 +227,8 @@ class InboxViewModel @Inject constructor(
         DebugLogger.log("InboxViewModel", "Wake event — state=${_uiState.value::class.simpleName}")
         // Stop any Bible audio that may be playing
         bibleVoiceFlow.stop()
+        // Check if browser was reading an article
+        val browserWasReading = browserVoiceFlow.handleWakeInterrupt()
         // Destroy the in-flight recognizer silently so its error/result callback
         // cannot race with this new session. TTS is handled by QUEUE_FLUSH inside
         // the following speakThenListen call.
@@ -234,6 +236,32 @@ class InboxViewModel @Inject constructor(
         readingGen++ // invalidate any in-flight speakEmailChunk onDone callbacks
         when (val state = _uiState.value) {
             is InboxUiState.Success -> {
+                if (browserWasReading) {
+                    // Browser article reading was interrupted
+                    voiceCommandEngine.speakThenListen(
+                        "Browser reading paused. Say 'continue' to resume, 'next' for the next article, or 'cancel'."
+                    ) { cmd ->
+                        when (cmd) {
+                            is VoiceCommand.ContinueReading -> {
+                                browserVoiceFlow.resumeReading(viewModelScope) { exitCmd ->
+                                    if (exitCmd is VoiceCommand.None) {
+                                        voiceCommandEngine.speakThenListen("Back to inbox. Say a command.") { c ->
+                                            handleCommand(c, state.emails)
+                                        }
+                                    } else handleCommand(exitCmd, state.emails)
+                                }
+                            }
+                            is VoiceCommand.GoToSleep -> {
+                                voiceCommandEngine.cancelListening()
+                                voiceManager.speak("Going to sleep. Press the power button to wake me and say 'continue' to resume.")
+                            }
+                            is VoiceCommand.SessionTimeout ->
+                                voiceManager.speak("Going to sleep. Say 'continue' after waking to resume the article.")
+                            else -> handleCommand(cmd, state.emails)
+                        }
+                    }
+                    return
+                }
                 val pos = pausedPosition
                 if (pos != null) {
                     // Reading was in progress when the user pressed the power button

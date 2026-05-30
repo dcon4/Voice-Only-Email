@@ -18,8 +18,8 @@ object WebBrowserConfig {
     const val USER_AGENT = "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 " +
         "(KHTML, like Gecko) Chrome/125.0 Mobile Safari/537.36 VoiceGmail/1.0"
 
-    /** Maximum number of search results to present to the user. */
-    const val MAX_SEARCH_RESULTS = 5
+    /** Maximum number of search results to fetch from search engine. */
+    const val MAX_SEARCH_RESULTS = 20
 
     /** Maximum page body size to fetch (2 MB). Prevents OOM on huge pages. */
     const val MAX_PAGE_BYTES = 2 * 1024 * 1024
