@@ -72,23 +72,34 @@ class VoiceManager @Inject constructor(
         DebugLogger.log(tag, "initTts — savedEngine=$savedEngine")
         val listener = TextToSpeech.OnInitListener { status ->
             if (status == TextToSpeech.SUCCESS) {
-                tts?.language = Locale.US
                 ttsReady = true
                 applyVoicePreference()
-                // If no voice was applied (no saved preference) and TTS has no
-                // default voice selected, pick the first available English voice.
-                if (tts?.voice == null) {
-                    val fallbackVoice = tts?.voices
-                        ?.filter { it.locale.language == "en" && !it.isNetworkConnectionRequired }
-                        ?.minByOrNull { it.name }
-                    if (fallbackVoice != null) {
-                        tts?.voice = fallbackVoice
-                        DebugLogger.log(tag, "No voice set — auto-selected: ${fallbackVoice.name}")
+
+                // Only set language explicitly if the engine exposes voices.
+                // Engines like IVONA manage their own voice/language internally
+                // and setting language can interfere with their default behavior.
+                val availableVoices = tts?.voices
+                if (!availableVoices.isNullOrEmpty()) {
+                    tts?.language = Locale.US
+                    // If no voice was applied (no saved preference) and TTS has no
+                    // default voice selected, pick the first available English voice.
+                    if (tts?.voice == null) {
+                        val fallbackVoice = availableVoices
+                            .filter { it.locale.language == "en" && !it.isNetworkConnectionRequired }
+                            .minByOrNull { it.name }
+                        if (fallbackVoice != null) {
+                            tts?.voice = fallbackVoice
+                            DebugLogger.log(tag, "No voice set — auto-selected: ${fallbackVoice.name}")
+                        }
                     }
+                } else {
+                    DebugLogger.log(tag, "Engine reports 0 voices — using engine's internal default")
                 }
+
                 val engineName = tts?.defaultEngine
+                val voiceCount = availableVoices?.size ?: 0
                 val allEngines = tts?.engines?.map { "${it.label} (${it.name})" } ?: emptyList()
-                DebugLogger.log(tag, "TTS ready — defaultEngine=$engineName, activeVoice=${tts?.voice?.name}, allEngines=$allEngines")
+                DebugLogger.log(tag, "TTS ready — defaultEngine=$engineName, activeVoice=${tts?.voice?.name}, voices=$voiceCount, allEngines=$allEngines")
             } else {
                 DebugLogger.log(tag, "TTS initialization FAILED: status=$status")
                 Log.e(tag, "TTS initialization failed: $status")
