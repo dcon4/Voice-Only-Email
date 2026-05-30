@@ -227,6 +227,7 @@ class VoiceManager @Inject constructor(
     fun speak(text: String) {
         mainHandler.post {
             if (ttsReady) {
+                DebugLogger.verbose(tag, "speak: ${text.take(80)}")
                 tts?.setSpeechRate(1.0f)
                 tts?.setOnUtteranceProgressListener(null)
                 tts?.speak(phoneticize(text), TextToSpeech.QUEUE_FLUSH, null, utteranceId)
@@ -376,6 +377,7 @@ class VoiceManager @Inject constructor(
         }
 
         bluetoothRouter.ensureScoActive {
+            DebugLogger.verbose(tag, "Mic starting (retry=$retryCount noSpeech=$noSpeechRetries max=$noSpeechMaxRetries)")
             doStartRecognizer(onResults, retryCount, noSpeechRetries, noSpeechMaxRetries)
         }
     }
@@ -429,6 +431,7 @@ class VoiceManager @Inject constructor(
                     when {
                         candidates.isNotEmpty() -> {
                             _recognizedText.value = candidates[0]
+                            DebugLogger.verbose(tag, "Recognition results (${candidates.size}): ${candidates.take(3)}")
                             Log.d(tag, "Results (${candidates.size}): ${candidates.take(3)}")
                             onResults(candidates)
                         }

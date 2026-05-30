@@ -93,6 +93,9 @@ class InboxViewModel @Inject constructor(
     private val _runInBackground = MutableStateFlow(true)
     val runInBackground: StateFlow<Boolean> = _runInBackground
 
+    private val _verboseLogging = MutableStateFlow(false)
+    val verboseLogging: StateFlow<Boolean> = _verboseLogging
+
     // ------------------------------------------------------------------
     // Pause/resume reading state
     // ------------------------------------------------------------------
@@ -161,6 +164,7 @@ class InboxViewModel @Inject constructor(
         _selectedEngineName.value = voiceManager.getCurrentEngineName()
         _selectedVoiceName.value  = voiceManager.getCurrentVoiceName()
         _runInBackground.value    = wakePreferences.isRunInBackground()
+        _verboseLogging.value     = wakePreferences.isVerboseLogging()
         _settingsPanelVisible.value = true
     }
 
@@ -179,6 +183,13 @@ class InboxViewModel @Inject constructor(
             VoiceWakeService.stop(context)
         }
         DebugLogger.log("InboxViewModel", "Run in background = $enabled")
+    }
+
+    fun setVerboseLogging(enabled: Boolean) {
+        wakePreferences.setVerboseLogging(enabled)
+        _verboseLogging.value = enabled
+        DebugLogger.verboseEnabled = enabled
+        DebugLogger.log("InboxViewModel", "Verbose logging = $enabled")
     }
 
     fun selectEngineFromPanel(engineName: String) {

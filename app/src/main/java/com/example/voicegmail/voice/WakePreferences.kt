@@ -26,6 +26,7 @@ class WakePreferences @Inject constructor(
 
     companion object {
         private const val KEY_RUN_IN_BACKGROUND = "run_in_background"
+        private const val KEY_VERBOSE_LOGGING = "verbose_logging"
     }
 
     /** Whether the app should run in background mode (wake on power button). Default: true. */
@@ -34,5 +35,13 @@ class WakePreferences @Inject constructor(
 
     fun setRunInBackground(enabled: Boolean) {
         prefs.edit().putBoolean(KEY_RUN_IN_BACKGROUND, enabled).apply()
+    }
+
+    /** Whether verbose logging is enabled. Default: false. */
+    fun isVerboseLogging(): Boolean =
+        prefs.getBoolean(KEY_VERBOSE_LOGGING, false)
+
+    fun setVerboseLogging(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_VERBOSE_LOGGING, enabled).apply()
     }
 }

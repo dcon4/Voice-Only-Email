@@ -9,6 +9,7 @@ import android.os.Handler
 import android.os.Looper
 import android.util.Log
 import com.example.voicegmail.BuildConfig
+import com.example.voicegmail.debug.DebugLogger
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -60,19 +61,21 @@ class BluetoothAudioRouter @Inject constructor(
     private val scoStateReceiver = object : BroadcastReceiver() {
         override fun onReceive(ctx: Context, intent: Intent) {
             val state = intent.getIntExtra(AudioManager.EXTRA_SCO_AUDIO_STATE, -1)
+            DebugLogger.verbose(tag, "SCO state update: $state")
             Log.d(tag, "SCO state update: $state")
             when (state) {
                 AudioManager.SCO_AUDIO_STATE_CONNECTED -> {
+                    DebugLogger.log(tag, "BT SCO connected ✓")
                     Log.i(tag, "BT SCO connected ✓")
                     firePendingCallback()
                 }
                 AudioManager.SCO_AUDIO_STATE_ERROR -> {
-                    // Headset present but SCO negotiation failed.
-                    // Fire anyway — the recogniser will fall back to built-in mic.
+                    DebugLogger.log(tag, "BT SCO error — proceeding with fallback mic")
                     Log.w(tag, "BT SCO error — proceeding with fallback mic")
                     firePendingCallback()
                 }
                 AudioManager.SCO_AUDIO_STATE_DISCONNECTED -> {
+                    DebugLogger.verbose(tag, "BT SCO disconnected")
                     Log.d(tag, "BT SCO disconnected")
                     pendingCallback = null
                 }
@@ -120,16 +123,17 @@ class BluetoothAudioRouter @Inject constructor(
 
         @Suppress("DEPRECATION")
         if (!audioManager.isBluetoothScoAvailableOffCall) {
-            // No compatible headset is currently connected.
+            DebugLogger.verbose(tag, "ensureScoActive: no BT headset available — using built-in mic")
             onReady(); return
         }
 
         @Suppress("DEPRECATION")
         if (audioManager.isBluetoothScoOn) {
-            // SCO is already up — nothing to do.
+            DebugLogger.verbose(tag, "ensureScoActive: SCO already active")
             onReady(); return
         }
 
+        DebugLogger.log(tag, "Starting BT SCO…")
         Log.d(tag, "Starting BT SCO…")
         savedAudioMode = audioManager.mode
         audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
@@ -162,6 +166,7 @@ class BluetoothAudioRouter @Inject constructor(
         if (audioManager.isBluetoothScoOn) {
             audioManager.stopBluetoothSco()
             audioManager.mode = savedAudioMode
+            DebugLogger.log(tag, "BT SCO stopped; audio mode restored to $savedAudioMode")
             Log.d(tag, "BT SCO stopped; audio mode restored to $savedAudioMode")
         }
     }

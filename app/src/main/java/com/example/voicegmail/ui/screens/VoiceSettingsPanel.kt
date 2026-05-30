@@ -88,6 +88,44 @@ fun VoiceSettingsPanel(viewModel: InboxViewModel) {
 
             HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
 
+            // ---- Verbose Logging ---------------------------------------------
+            val verboseLogging by viewModel.verboseLogging.collectAsState()
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 8.dp)
+                    .semantics(mergeDescendants = true) {
+                        contentDescription = if (verboseLogging)
+                            "Verbose logging is on. Detailed events are written to the log file."
+                        else
+                            "Verbose logging is off. Only important events are logged."
+                    },
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Verbose logging",
+                        style = MaterialTheme.typography.bodyLarge
+                    )
+                    Text(
+                        text = if (verboseLogging)
+                            "Logs TTS, mic, Bluetooth, and all events (for debugging)"
+                        else
+                            "Logs only commands and errors",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Switch(
+                    checked = verboseLogging,
+                    onCheckedChange = { viewModel.setVerboseLogging(it) }
+                )
+            }
+
+            HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
+
             // ---- TTS Engine ------------------------------------------------
             Text(
                 text = "Text-to-Speech Engine",
