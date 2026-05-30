@@ -241,23 +241,25 @@ class InboxViewModel @Inject constructor(
                     voiceCommandEngine.speakThenListen(
                         "Browser reading paused. Say 'continue' to resume, 'next' for the next article, or 'cancel'."
                     ) { cmd ->
-                        when (cmd) {
-                            is VoiceCommand.ContinueReading -> {
-                                browserVoiceFlow.resumeReading(viewModelScope) { exitCmd ->
-                                    if (exitCmd is VoiceCommand.None) {
-                                        voiceCommandEngine.speakThenListen("Back to inbox. Say a command.") { c ->
-                                            handleCommand(c, state.emails)
-                                        }
-                                    } else handleCommand(exitCmd, state.emails)
+                        val browserOnExit: (VoiceCommand) -> Unit = { exitCmd ->
+                            if (exitCmd is VoiceCommand.None) {
+                                voiceCommandEngine.speakThenListen("Back to inbox. Say a command.") { c ->
+                                    handleCommand(c, state.emails)
                                 }
-                            }
+                            } else handleCommand(exitCmd, state.emails)
+                        }
+                        when (cmd) {
                             is VoiceCommand.GoToSleep -> {
                                 voiceCommandEngine.cancelListening()
                                 voiceManager.speak("Going to sleep. Press the power button to wake me and say 'continue' to resume.")
                             }
                             is VoiceCommand.SessionTimeout ->
                                 voiceManager.speak("Going to sleep. Say 'continue' after waking to resume the article.")
-                            else -> handleCommand(cmd, state.emails)
+                            else -> {
+                                // Route to browser flow first; if it doesn't handle it, fall through to inbox
+                                val handled = browserVoiceFlow.handleWakeCommand(cmd, viewModelScope, browserOnExit)
+                                if (!handled) handleCommand(cmd, state.emails)
+                            }
                         }
                     }
                     return

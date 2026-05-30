@@ -49,6 +49,11 @@ sealed class VoiceCommand {
     /** User wants to browse the web by voice. */
     object Browser         : VoiceCommand()
 
+    /** Read all results in a browser set sequentially. */
+    object ReadAll         : VoiceCommand()
+    /** Show the next page of browser results. */
+    object MoreResults     : VoiceCommand()
+
     /** Pause mid-email reading. */
     object Pause           : VoiceCommand()
     /** Resume reading from the last paused position. */
@@ -387,6 +392,18 @@ class VoiceCommandEngine @Inject constructor(
             lower.matches(Regex("(read( (it|next|this|email|message))?|hear( it)?)")) -> VoiceCommand.Read
 
             lower.contains("send") -> VoiceCommand.Send
+
+            // "more results" / "next five" / "next results" — must be before plain "next"
+            lower.contains("more result") || lower.contains("next five") ||
+                lower.contains("next result") || lower.contains("more findings") ||
+                lower.contains("next set") || lower.contains("next batch") ||
+                lower == "more" -> VoiceCommand.MoreResults
+
+            // "read all" / "all five" / "read them all" — must be before plain "read"
+            lower.contains("read all") || lower.contains("all five") ||
+                lower.contains("all of them") || lower.contains("read them all") ||
+                lower == "all" -> VoiceCommand.ReadAll
+
             lower.contains("next") -> VoiceCommand.Next
             lower.matches(Regex("(go back( one)?|previous|prior|last|back)")) -> VoiceCommand.Previous
             lower.contains("refresh") || lower.contains("reload") -> VoiceCommand.Refresh

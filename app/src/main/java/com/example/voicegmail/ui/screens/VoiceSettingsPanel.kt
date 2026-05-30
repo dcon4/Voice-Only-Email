@@ -43,6 +43,51 @@ fun VoiceSettingsPanel(viewModel: InboxViewModel) {
                 modifier = Modifier.padding(bottom = 8.dp)
             )
 
+            // ---- Run Mode (at top for easy access) ---------------------------
+            val runInBackground by viewModel.runInBackground.collectAsState()
+
+            Text(
+                text = "Run Mode",
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.padding(top = 4.dp, bottom = 4.dp)
+            )
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 8.dp)
+                    .semantics(mergeDescendants = true) {
+                        contentDescription = if (runInBackground)
+                            "Run in background is on. App wakes when power button is pressed."
+                        else
+                            "Run in background is off. App only works when in the foreground."
+                    },
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Run in background",
+                        style = MaterialTheme.typography.bodyLarge
+                    )
+                    Text(
+                        text = if (runInBackground)
+                            "Wakes on power button press (accessibility mode)"
+                        else
+                            "Only active when app is open (foreground only)",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Switch(
+                    checked = runInBackground,
+                    onCheckedChange = { viewModel.setRunInBackground(it) }
+                )
+            }
+
+            HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
+
             // ---- TTS Engine ------------------------------------------------
             Text(
                 text = "Text-to-Speech Engine",
@@ -114,51 +159,6 @@ fun VoiceSettingsPanel(viewModel: InboxViewModel) {
                         onSelect   = { viewModel.selectVoiceFromPanel(voice.name) }
                     )
                 }
-            }
-
-            HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
-
-            // ---- Run Mode ----------------------------------------------------
-            Text(
-                text = "Run Mode",
-                style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.padding(top = 4.dp, bottom = 4.dp)
-            )
-
-            val runInBackground by viewModel.runInBackground.collectAsState()
-
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(vertical = 8.dp)
-                    .semantics(mergeDescendants = true) {
-                        contentDescription = if (runInBackground)
-                            "Run in background is on. App wakes when power button is pressed."
-                        else
-                            "Run in background is off. App only works when in the foreground."
-                    },
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = "Run in background",
-                        style = MaterialTheme.typography.bodyLarge
-                    )
-                    Text(
-                        text = if (runInBackground)
-                            "Wakes on power button press (accessibility mode)"
-                        else
-                            "Only active when app is open (foreground only)",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-                Switch(
-                    checked = runInBackground,
-                    onCheckedChange = { viewModel.setRunInBackground(it) }
-                )
             }
 
             HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))

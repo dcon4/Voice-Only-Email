@@ -62,7 +62,7 @@ class BrowserVoiceFlow @Inject constructor(
      * Returns the resume prompt if reading was in progress, null otherwise.
      */
     fun handleWakeInterrupt(): Boolean {
-        if (currentPageChunks.isNotEmpty() && currentChunkIndex > 0 && currentChunkIndex < currentPageChunks.size) {
+        if (currentPageChunks.isNotEmpty() && currentChunkIndex > 0) {
             readingGen++ // invalidate in-flight chunk callbacks
             return true
         }
@@ -75,6 +75,54 @@ class BrowserVoiceFlow @Inject constructor(
     fun resumeReading(scope: CoroutineScope, onExit: (VoiceCommand) -> Unit) {
         readingGen++
         readNextChunk(scope, onExit, readingGen)
+    }
+
+    /**
+     * Handle a command received during browser wake pause.
+     * Returns true if the command was handled by the browser, false to let inbox handle it.
+     */
+    fun handleWakeCommand(cmd: VoiceCommand, scope: CoroutineScope, onExit: (VoiceCommand) -> Unit): Boolean {
+        return when (cmd) {
+            is VoiceCommand.ContinueReading -> {
+                resumeReading(scope, onExit); true
+            }
+            is VoiceCommand.Next -> {
+                // Next article in browser context
+                if (currentResultIndex < allResults.size - 1) {
+                    currentResultIndex++
+                    openResult(currentResultIndex, scope, onExit)
+                } else {
+                    voiceCommandEngine.speakThenListen(
+                        "No more articles. Say 'new search' or 'cancel' to leave browser."
+                    ) { c -> handlePostPageCommand(c, scope, onExit) }
+                }
+                true
+            }
+            is VoiceCommand.Previous -> {
+                if (currentResultIndex > 0) {
+                    currentResultIndex--
+                    openResult(currentResultIndex, scope, onExit)
+                } else {
+                    voiceCommandEngine.speakThenListen(
+                        "That's the first article. Say 'next', 'continue', or 'cancel'."
+                    ) { c -> handlePostPageCommand(c, scope, onExit) }
+                }
+                true
+            }
+            is VoiceCommand.Repeat -> {
+                currentChunkIndex = 0
+                readingGen++
+                readNextChunk(scope, onExit, readingGen)
+                true
+            }
+            is VoiceCommand.Search -> {
+                askForSearch(scope, onExit); true
+            }
+            is VoiceCommand.Cancel, is VoiceCommand.GoBack -> {
+                exitFlow(onExit); true
+            }
+            else -> false // let inbox handle it
+        }
     }
 
     // ── Search ────────────────────────────────────────────────────────────
@@ -161,9 +209,20 @@ class BrowserVoiceFlow @Inject constructor(
             is VoiceCommand.GoToSleep, is VoiceCommand.SessionTimeout -> onExit(cmd)
             is VoiceCommand.Search -> askForSearch(scope, onExit)
             is VoiceCommand.Refresh, is VoiceCommand.Repeat -> presentCurrentPage(scope, onExit)
-            is VoiceCommand.ReadAllUnread -> {
-                // "read all" / "read all five" — read all results on this page sequentially
+            is VoiceCommand.ReadAll, is VoiceCommand.ReadAllUnread -> {
+                // "read all" / "read all five"
                 startReadingAll(scope, onExit)
+            }
+            is VoiceCommand.MoreResults -> {
+                val nextPageStart = pageOffset + PAGE_SIZE
+                if (nextPageStart < allResults.size) {
+                    pageOffset = nextPageStart
+                    presentCurrentPage(scope, onExit)
+                } else {
+                    voiceCommandEngine.speakThenListen(
+                        "No more results available. Say a number, 'new search', or 'cancel'."
+                    ) { retry -> handleResultSelection(retry, scope, onExit) }
+                }
             }
             is VoiceCommand.Next -> {
                 // "next" after listing → show next page of results if available
