@@ -55,7 +55,8 @@ class InboxViewModel @Inject constructor(
     private val wakeEventBus: WakeEventBus,
     private val bibleVoiceFlow: BibleVoiceFlow,
     private val browserVoiceFlow: BrowserVoiceFlow,
-    private val wakePreferences: com.example.voicegmail.voice.WakePreferences
+    private val wakePreferences: com.example.voicegmail.voice.WakePreferences,
+    private val mediaSessionController: com.example.voicegmail.media.MediaSessionController
 ) : ViewModel() {
 
     private var isFirstLoad = true
@@ -130,6 +131,13 @@ class InboxViewModel @Inject constructor(
     // ------------------------------------------------------------------
 
     init {
+        // Initialize media session for BT/headset/notification controls
+        mediaSessionController.initialize()
+        mediaSessionController.onPlay = { handleMediaPlay() }
+        mediaSessionController.onPause = { handleMediaPause() }
+        mediaSessionController.onNext = { handleMediaNext() }
+        mediaSessionController.onPrevious = { handleMediaPrevious() }
+
         viewModelScope.launch {
             val earlyRedirect = oAuthRedirectBus.redirectUri.value
             if (earlyRedirect != null) {
@@ -231,6 +239,66 @@ class InboxViewModel @Inject constructor(
     }
 
     // ------------------------------------------------------------------
+    // Media session button handlers (BT headset, notification, lock screen)
+    // ------------------------------------------------------------------
+
+    private fun handleMediaPlay() {
+        DebugLogger.log("InboxViewModel", "Media: PLAY (continue reading)")
+        val emails = currentEmails()
+        // If browser was paused, resume browser
+        if (browserVoiceFlow.handleWakeInterrupt()) {
+            browserVoiceFlow.resumeReading(viewModelScope) { exitCmd ->
+                if (exitCmd is VoiceCommand.None) {
+                    mediaSessionController.setStopped()
+                    voiceCommandEngine.speakThenListen("Back to inbox. Say a command.") { cmd ->
+                        handleCommand(cmd, emails)
+                    }
+                } else handleCommand(exitCmd, emails)
+            }
+            return
+        }
+        // If email was paused, resume email
+        if (pausedPosition != null) {
+            resumeFromPause(emails)
+        } else {
+            // Nothing paused — read current email
+            handleCommand(VoiceCommand.Read, emails)
+        }
+    }
+
+    private fun handleMediaPause() {
+        DebugLogger.log("InboxViewModel", "Media: PAUSE")
+        voiceCommandEngine.cancelListening()
+        voiceManager.stopAll()
+        mediaSessionController.setPaused()
+    }
+
+    private fun handleMediaNext() {
+        DebugLogger.log("InboxViewModel", "Media: NEXT")
+        val emails = currentEmails()
+        // If in browser, advance to next article
+        if (browserVoiceFlow.handleWakeInterrupt()) {
+            browserVoiceFlow.handleWakeCommand(VoiceCommand.Next, viewModelScope) { exitCmd ->
+                if (exitCmd is VoiceCommand.None) {
+                    mediaSessionController.setStopped()
+                    voiceCommandEngine.speakThenListen("Back to inbox. Say a command.") { cmd ->
+                        handleCommand(cmd, emails)
+                    }
+                } else handleCommand(exitCmd, emails)
+            }
+            return
+        }
+        // Otherwise advance to next email
+        handleCommand(VoiceCommand.Next, emails)
+    }
+
+    private fun handleMediaPrevious() {
+        DebugLogger.log("InboxViewModel", "Media: PREVIOUS")
+        val emails = currentEmails()
+        handleCommand(VoiceCommand.Previous, emails)
+    }
+
+    // ------------------------------------------------------------------
     // Wake — power button interrupt
     // ------------------------------------------------------------------
 
@@ -249,6 +317,7 @@ class InboxViewModel @Inject constructor(
             is InboxUiState.Success -> {
                 if (browserWasReading) {
                     // Browser article reading was interrupted
+                    mediaSessionController.setPaused()
                     voiceCommandEngine.speakThenListen(
                         "Browser reading paused. Say 'continue' to resume, 'next' for the next article, or 'cancel'."
                     ) { cmd ->
@@ -278,6 +347,7 @@ class InboxViewModel @Inject constructor(
                 val pos = pausedPosition
                 if (pos != null) {
                     // Reading was in progress when the user pressed the power button
+                    mediaSessionController.setPaused()
                     val chunkNum = pos.chunkIndex + 1
                     val total    = pos.chunks.size
                     voiceCommandEngine.speakThenListen(
@@ -499,6 +569,7 @@ class InboxViewModel @Inject constructor(
                 // callback chain with FreeText("") → "I didn't understand".
                 voiceCommandEngine.cancelListening()
                 pausedPosition = null
+                mediaSessionController.setStopped()
                 voiceManager.speak("Going to sleep. Press the power button to wake me.")
             }
 
@@ -516,7 +587,9 @@ class InboxViewModel @Inject constructor(
             }
 
             is VoiceCommand.Browser -> {
+                mediaSessionController.setPlaying("Browser", "Searching...")
                 browserVoiceFlow.start(viewModelScope) { exitCmd ->
+                    mediaSessionController.setStopped()
                     if (exitCmd is VoiceCommand.None) {
                         voiceCommandEngine.speakThenListen("Back to inbox. Say a command.") { cmd ->
                             handleCommand(cmd, emails)
@@ -555,6 +628,7 @@ class InboxViewModel @Inject constructor(
             }; return
         }
         pausedPosition = null // clear any stale bookmark before starting fresh
+        mediaSessionController.setPlaying("Email: ${email.subject}", "From ${email.from}")
         val unreadPrefix = if (email.isUnread) "Unread. " else ""
         val bodyForSpeech = email.body.forSpeech()
         val fullText = "${unreadPrefix}Email ${_currentEmailIndex.value + 1} of ${emails.size}. " +
@@ -631,6 +705,7 @@ class InboxViewModel @Inject constructor(
         if (index >= chunks.size) {
             // Reached the end — clear the bookmark
             pausedPosition = null
+            mediaSessionController.setStopped()
             val attachHint = when (email.attachments.size) {
                 0    -> ""
                 1    -> " This email has 1 attachment: ${email.attachments[0].filename}."
