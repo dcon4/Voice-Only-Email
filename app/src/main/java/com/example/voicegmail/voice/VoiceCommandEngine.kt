@@ -196,6 +196,16 @@ class VoiceCommandEngine @Inject constructor(
             "for"                            -> "four"
             "ate"                            -> "eight"
             "add more", "and more"           -> "add more"
+            // "read all" classically misrecognised by Android STT (especially
+            // on Bluetooth SCO narrowband audio) as "redial" / "re-dial" /
+            // "read it all".  Map them all back to "read all unread" so the
+            // parser routes to ReadAllUnread instead of accidentally treating
+            // them as free-form text (which a search-prompt window would then
+            // use as a query string).
+            "redial", "re-dial", "re dial",
+            "read all", "reed all", "red all", "read it all",
+            "read 'em all", "read them all", "read everything",
+            "hear all", "hear them all"      -> "read all unread"
             else                             -> s
         }
         s = s
@@ -217,6 +227,11 @@ class VoiceCommandEngine @Inject constructor(
             .replace(Regex("\\bgo to sleep\\b"), "go to sleep")
             .replace(Regex("\\bgoto sleep\\b"), "go to sleep")
             .replace(Regex("\\bgo too sleep\\b"), "go to sleep")
+            // Also catch "redial" / "read all" appearing as part of a longer
+            // misrecognised phrase, e.g. "redial please", "please redial".
+            .replace(Regex("\\bredial\\b"), "read all unread")
+            .replace(Regex("\\bre-dial\\b"), "read all unread")
+            .replace(Regex("\\bread all\\b(?! unread)"), "read all unread")
         return s
     }
 

@@ -1454,8 +1454,26 @@ class InboxViewModel @Inject constructor(
             "Search. What would you like to find? Say something like 'emails from David' or 'subject meeting'."
         ) { cmd ->
             val raw = rawText(cmd)
-            if (raw.isBlank() || cmd is VoiceCommand.Cancel) {
+            // Hard cancel
+            if (cmd is VoiceCommand.Cancel || cmd is VoiceCommand.GoBack) {
                 voiceCommandEngine.speakThenListen("Search cancelled.") { c -> handleCommand(c, emails) }
+                return@speakThenListen
+            }
+            // Empty / silence → cancel
+            if (raw.isBlank()) {
+                voiceCommandEngine.speakThenListen("Search cancelled.") { c -> handleCommand(c, emails) }
+                return@speakThenListen
+            }
+            // The recogniser sometimes turns short app commands (e.g. "read all"
+            // → "redial", "next", "cancel", "pause") into single-word phrases
+            // that are nonsensical as Gmail queries.  If the user clearly meant
+            // a control command, route to that instead of running a junk search.
+            if (cmd !is VoiceCommand.FreeText) {
+                DebugLogger.log(
+                    "InboxViewModel",
+                    "startSearch: heard control command ${cmd::class.simpleName} instead of a query — dispatching it"
+                )
+                handleCommand(cmd, emails)
                 return@speakThenListen
             }
             val query = queryParser.parse(raw)
@@ -1474,7 +1492,9 @@ class InboxViewModel @Inject constructor(
                         voiceCommandEngine.speakThenListen(
                             "${results.size} result${if (results.size == 1) "" else "s"} for $raw. " +
                                 "First: From ${first.from}. ${first.subject}. " +
-                                "Say 'reed' to hear it, 'next' for more, or 'refresh' to go back to your inbox."
+                                "Say 'reed' to hear it, 'next' for more, " +
+                                "'read all' to hear every result, " +
+                                "or 'refresh' to go back to your inbox."
                         ) { c -> handleCommand(c, results) }
                     }
                 } catch (e: Exception) {
