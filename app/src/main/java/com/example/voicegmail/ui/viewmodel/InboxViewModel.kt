@@ -316,32 +316,11 @@ class InboxViewModel @Inject constructor(
         when (val state = _uiState.value) {
             is InboxUiState.Success -> {
                 if (browserWasReading) {
-                    // Browser article reading was interrupted
+                    // Browser article reading was interrupted — open a pause
+                    // listener that PRESERVES the browser's chunk bookmark on
+                    // unrecognized speech, sleep, and timeout.
                     mediaSessionController.setPaused()
-                    voiceCommandEngine.speakThenListen(
-                        "Browser reading paused. Say 'continue' to resume, 'next' for the next article, or 'cancel'."
-                    ) { cmd ->
-                        val browserOnExit: (VoiceCommand) -> Unit = { exitCmd ->
-                            if (exitCmd is VoiceCommand.None) {
-                                voiceCommandEngine.speakThenListen("Back to inbox. Say a command.") { c ->
-                                    handleCommand(c, state.emails)
-                                }
-                            } else handleCommand(exitCmd, state.emails)
-                        }
-                        when (cmd) {
-                            is VoiceCommand.GoToSleep -> {
-                                voiceCommandEngine.cancelListening()
-                                voiceManager.speak("Going to sleep. Press the power button to wake me and say 'continue' to resume.")
-                            }
-                            is VoiceCommand.SessionTimeout ->
-                                voiceManager.speak("Going to sleep. Say 'continue' after waking to resume the article.")
-                            else -> {
-                                // Route to browser flow first; if it doesn't handle it, fall through to inbox
-                                val handled = browserVoiceFlow.handleWakeCommand(cmd, viewModelScope, browserOnExit)
-                                if (!handled) handleCommand(cmd, state.emails)
-                            }
-                        }
-                    }
+                    promptBrowserResumeAndListen(state.emails)
                     return
                 }
                 val pos = pausedPosition
@@ -369,6 +348,65 @@ class InboxViewModel @Inject constructor(
                 voiceCommandEngine.speakThenListen(
                     "VoiceGmail. ${state.message}. Say 'retry' to try again."
                 ) { cmd -> handleCommand(cmd, emptyList()) }
+        }
+    }
+
+    /**
+     * Browser-flow equivalent of [promptResumeAndListen].  Opens a listening
+     * window after the user pressed the power button while reading a search
+     * result article.  Preserves [BrowserVoiceFlow]'s internal chunk bookmark
+     * for SessionTimeout, GoToSleep, Cancel-during-listening, and unrecognized
+     * speech — so the user can later wake the app and say "continue" to
+     * resume the article from the chunk that was interrupted.
+     *
+     * This fixes the bug where, after browser-reading was paused by the power
+     * button, saying "go to sleep" or letting the prompt time out (or being
+     * misheard a single time) caused the next "continue" to fall through to
+     * the INBOX dispatcher — which has no browser bookmark of its own and
+     * therefore answered "No reading in progress."
+     */
+    private fun promptBrowserResumeAndListen(emails: List<EmailItem>) {
+        val browserOnExit: (VoiceCommand) -> Unit = { exitCmd ->
+            if (exitCmd is VoiceCommand.None) {
+                voiceCommandEngine.speakThenListen("Back to inbox. Say a command.") { c ->
+                    handleCommand(c, emails)
+                }
+            } else handleCommand(exitCmd, emails)
+        }
+        voiceCommandEngine.speakThenListen(
+            "Browser reading paused. Say 'continue' to resume, 'next' for the next article, or 'cancel'."
+        ) { cmd ->
+            when (cmd) {
+                is VoiceCommand.SessionTimeout, is VoiceCommand.GoToSleep -> {
+                    // Preserve browser bookmark — user can resume after the next wake.
+                    voiceCommandEngine.cancelListening()
+                    voiceManager.speak(
+                        "Going to sleep. Press the power button and say 'continue' " +
+                            "to resume the article."
+                    )
+                }
+                is VoiceCommand.FreeText -> {
+                    // Unrecognized speech or empty recognizer result.  Do NOT
+                    // fall through to the inbox dispatcher — that would lose
+                    // the browser bookmark.  Re-prompt the same browser-pause
+                    // listener so the user can try again.
+                    DebugLogger.log(
+                        "InboxViewModel",
+                        "promptBrowserResumeAndListen: unrecognized FreeText='${cmd.text}' — preserving browser bookmark"
+                    )
+                    promptBrowserResumeAndListen(emails)
+                }
+                else -> {
+                    // Route to browser flow first; if it doesn't handle the
+                    // command, fall through to inbox (browser bookmark is
+                    // intentionally abandoned for explicit-intent commands
+                    // because BrowserVoiceFlow's handleWakeCommand only
+                    // returns false for commands that genuinely belong to
+                    // the inbox — e.g. inbox-only voice commands).
+                    val handled = browserVoiceFlow.handleWakeCommand(cmd, viewModelScope, browserOnExit)
+                    if (!handled) handleCommand(cmd, emails)
+                }
+            }
         }
     }
 

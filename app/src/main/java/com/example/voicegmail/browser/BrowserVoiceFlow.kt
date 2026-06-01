@@ -334,9 +334,17 @@ class BrowserVoiceFlow @Inject constructor(
         }
 
         val chunk = currentPageChunks[currentChunkIndex]
-        currentChunkIndex++
-
+        // IMPORTANT: do NOT advance currentChunkIndex until after this chunk
+        // finishes playing.  If we advance before speaking and the user then
+        // presses the power button mid-chunk, the saved index would point to
+        // the NEXT chunk and the interrupted one would be skipped on resume.
+        // Advancing inside the onDone callback (with the stale-gen guard)
+        // means a power-button wake leaves currentChunkIndex pointing at the
+        // chunk that was interrupted, so resume re-reads it from the start —
+        // the "Stop & Restart from current sentence" model.
         voiceCommandEngine.speakEmailChunk(chunk) {
+            if (gen != readingGen) return@speakEmailChunk // power-button wake invalidated us
+            currentChunkIndex++
             readNextChunk(scope, onExit, gen)
         }
     }
