@@ -17,6 +17,7 @@ import android.speech.tts.UtteranceProgressListener
 import android.speech.tts.Voice
 import android.util.Log
 import androidx.core.content.ContextCompat
+import com.example.voicegmail.BuildConfig
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -613,7 +614,22 @@ class VoiceManager @Inject constructor(
     }
 
     private companion object {
-        const val TTS_TO_MIC_GAP_MS        = 1200L
+        /**
+         * Gap between TTS finishing and the mic opening.
+         *
+         * On the **bt** flavor the headset is already on the SCO channel that
+         * mic + TTS share, so we don't need to wait for an A2DP → SCO route
+         * switch.  We just need enough time for any tiny TTS audio tail to
+         * drain plus recogniser warm-up.  300 ms is a good balance — much
+         * snappier than the legacy 1200 ms but still avoids clipping the
+         * last syllable of the prompt.
+         *
+         * On the **standard** flavor we keep a more conservative 600 ms
+         * because the speaker/mic share the device audio session and a too-
+         * short gap occasionally lets the mic pick up the tail of the TTS,
+         * triggering false speech-began events.
+         */
+        val TTS_TO_MIC_GAP_MS: Long = if (BuildConfig.BLUETOOTH_AUDIO) 300L else 600L
         const val MAX_RETRIES              = 3
         const val NO_SPEECH_MAX_RETRIES    = 4
         const val NO_SPEECH_RETRY_DELAY_MS = 250L
