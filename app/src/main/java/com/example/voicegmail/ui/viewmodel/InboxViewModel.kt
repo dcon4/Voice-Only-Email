@@ -199,7 +199,7 @@ class InboxViewModel @Inject constructor(
     // ------------------------------------------------------------------
 
     private fun handleWakeEvent() {
-        DebugLogger.log("InboxViewModel", "Wake event — state=${_uiState.value::class.simpleName}")
+        DebugLogger.log("InboxViewModel", "Wake event — state=${_uiState.value::class.simpleName} pausedPosition=${pausedPosition != null}")
         // Destroy the in-flight recognizer silently so its error/result callback
         // cannot race with this new session. TTS is handled by QUEUE_FLUSH inside
         // the following speakThenListen call.
@@ -212,25 +212,11 @@ class InboxViewModel @Inject constructor(
                     // Reading was in progress when the user pressed the power button
                     val chunkNum = pos.chunkIndex + 1
                     val total    = pos.chunks.size
-                    voiceCommandEngine.speakThenListen(
+                    promptResumeAndListen(
                         "Reading paused at part $chunkNum of $total. " +
-                            "Say 'continue' to resume, or give another command."
-                    ) { cmd ->
-                        when (cmd) {
-                            is VoiceCommand.ContinueReading -> resumeFromPause(state.emails)
-                            is VoiceCommand.SessionTimeout  ->
-                                voiceManager.speak("Going to sleep. Say 'continue' after waking to resume.")
-                            is VoiceCommand.GoToSleep -> {
-                                voiceCommandEngine.cancelListening()
-                                voiceManager.speak("Going to sleep. Press the power button to wake me and say 'continue' to resume.")
-                            }
-                            is VoiceCommand.Cancel, is VoiceCommand.Pause ->
-                                voiceCommandEngine.speakThenListen(
-                                    "Paused. Press the power button and say 'continue' to resume later."
-                                ) { c -> handleCommand(c, state.emails) }
-                            else -> { pausedPosition = null; handleCommand(cmd, state.emails) }
-                        }
-                    }
+                            "Say 'continue' to resume, or give another command.",
+                        state.emails
+                    )
                 } else {
                     voiceCommandEngine.speakThenListen("VoiceGmail ready. Say a command.") { cmd ->
                         handleCommand(cmd, state.emails)
@@ -245,6 +231,67 @@ class InboxViewModel @Inject constructor(
                 voiceCommandEngine.speakThenListen(
                     "VoiceGmail. ${state.message}. Say 'retry' to try again."
                 ) { cmd -> handleCommand(cmd, emptyList()) }
+        }
+    }
+
+    /**
+     * Listening window opened after a power-button wake while a reading
+     * bookmark is set.  Unlike the normal command dispatcher, this loop
+     * **preserves [pausedPosition]** unless the user issues an intentional
+     * navigation/action command.  Unrecognized speech (empty [FreeText]),
+     * recognizer timeouts, and explicit "go to sleep" / "pause" / "cancel"
+     * commands all keep the bookmark alive so the user can come back later
+     * (after another wake) and say "continue".
+     *
+     * This fixes the reliability bug where the bookmark was nuked by a single
+     * misheard noise or by saying "go to sleep" after the initial pause,
+     * causing the subsequent "continue" to fail with "No reading in progress".
+     */
+    private fun promptResumeAndListen(prompt: String, emails: List<EmailItem>) {
+        voiceCommandEngine.speakThenListen(prompt) { cmd ->
+            when (cmd) {
+                is VoiceCommand.ContinueReading ->
+                    resumeFromPause(emails)
+
+                is VoiceCommand.SessionTimeout, is VoiceCommand.GoToSleep -> {
+                    // Preserve bookmark — user can resume after the next wake.
+                    voiceCommandEngine.cancelListening()
+                    voiceManager.speak(
+                        "Going to sleep. Press the power button and say 'continue' to resume reading."
+                    )
+                }
+
+                is VoiceCommand.Cancel, is VoiceCommand.Pause ->
+                    // Preserve bookmark and re-prompt without timing out into a "lost".
+                    promptResumeAndListen(
+                        "Paused. Say 'continue' to resume, 'go to sleep' to keep the bookmark, " +
+                            "or another command.",
+                        emails
+                    )
+
+                is VoiceCommand.FreeText -> {
+                    // Unrecognized speech or empty result from recognizer.  Do NOT
+                    // clear the bookmark — re-prompt so the user can try again.
+                    DebugLogger.log(
+                        "InboxViewModel",
+                        "promptResumeAndListen: unrecognized FreeText='${cmd.text}' — preserving bookmark"
+                    )
+                    promptResumeAndListen(
+                        "Sorry, I didn't catch that. Say 'continue' to resume reading, " +
+                            "'go to sleep' to keep the bookmark, or another command.",
+                        emails
+                    )
+                }
+
+                else -> {
+                    // Intentional navigation/action command (next, previous, search,
+                    // refresh, delete, compose, etc.).  These handlers already clear
+                    // pausedPosition themselves when appropriate, so we only clear
+                    // it here as a defensive default.
+                    pausedPosition = null
+                    handleCommand(cmd, emails)
+                }
+            }
         }
     }
 
@@ -422,16 +469,27 @@ class InboxViewModel @Inject constructor(
                 ) { cmd -> handleCommand(cmd, emails) }
             }
 
-            is VoiceCommand.SessionTimeout ->
-                voiceManager.speak("Going to sleep. Press the power button to wake me.")
+            is VoiceCommand.SessionTimeout -> {
+                val msg = if (pausedPosition != null)
+                    "Going to sleep. Press the power button and say 'continue' to resume reading."
+                else
+                    "Going to sleep. Press the power button to wake me."
+                voiceManager.speak(msg)
+            }
 
             is VoiceCommand.GoToSleep -> {
                 // Use cancelListening (destroy) instead of stopAll (stopListening)
                 // because stopListening fires onError which races back into this
                 // callback chain with FreeText("") → "I didn't understand".
                 voiceCommandEngine.cancelListening()
-                pausedPosition = null
-                voiceManager.speak("Going to sleep. Press the power button to wake me.")
+                // NOTE: Do NOT clear pausedPosition here.  If a reading bookmark
+                // exists, the user must be able to wake the app later and say
+                // 'continue' to resume from exactly where they left off.
+                val msg = if (pausedPosition != null)
+                    "Going to sleep. Press the power button and say 'continue' to resume reading."
+                else
+                    "Going to sleep. Press the power button to wake me."
+                voiceManager.speak(msg)
             }
 
             is VoiceCommand.VoiceSettings -> handleVoiceSettings(emails)
@@ -567,6 +625,15 @@ class InboxViewModel @Inject constructor(
     /**
      * Resume reading from [pausedPosition].  If the email is no longer in the
      * list, falls back to the saved index position.
+     *
+     * "Stop & Restart from current sentence" fallback: we don't rely on the
+     * underlying TTS engine's resume() API (which is unreliable across Android
+     * engines and across web browsers).  Instead, the resume model itself is
+     * restart-from-chunk — [readNextChunk] calls [VoiceManager.speakEmailChunk]
+     * which uses [TextToSpeech.QUEUE_FLUSH] to evict any leftover utterance
+     * from the pre-pause session.  Combined with the [readingGen] bump below
+     * (which invalidates stale onDone callbacks), this guarantees a clean
+     * resume even if the engine was stuck.
      */
     private fun resumeFromPause(emails: List<EmailItem>) {
         val pos = pausedPosition
@@ -587,6 +654,17 @@ class InboxViewModel @Inject constructor(
         }
         _currentEmailIndex.value = pos.emailIndex
         readingGen++ // new session for resume — clears any stale flushed-chunk callbacks
+        DebugLogger.log(
+            "InboxViewModel",
+            "resumeFromPause: emailIndex=${pos.emailIndex} chunkIndex=${pos.chunkIndex}/${pos.chunks.size} gen=$readingGen"
+        )
+        // "Stop & restart from current sentence" fallback: the resume model itself
+        // is restart-from-chunk (we don't rely on a TTS engine's resume() — which
+        // is unreliable across Android TTS engines / browsers).  speakEmailChunk
+        // uses TextToSpeech.QUEUE_FLUSH to evict any leftover utterance from the
+        // pre-pause session before speaking the resume chunk.  Combined with the
+        // readingGen guard above, this guarantees a clean resume even if the
+        // underlying engine got stuck.
         readNextChunk(email, emails, pos.chunks, pos.chunkIndex, readingGen)
     }
 
