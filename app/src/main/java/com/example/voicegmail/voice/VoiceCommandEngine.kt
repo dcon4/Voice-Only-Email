@@ -159,7 +159,18 @@ class VoiceCommandEngine @Inject constructor(
     // Multi-hypothesis selection
     // ------------------------------------------------------------------
 
+    /**
+     * Most recent recognition candidates from the *last* completed listen
+     * session.  Exposed so contextual listeners (e.g. the Compose To-field
+     * matcher) can sift through ALL hypotheses rather than just the top one
+     * that [parseAll] picks for the dispatcher.  Cleared at the start of
+     * each new listen so stale data isn't accidentally re-used.
+     */
+    @Volatile var lastCandidates: List<String> = emptyList()
+        private set
+
     private fun parseAll(candidates: List<String>): VoiceCommand {
+        lastCandidates = candidates
         if (candidates.isEmpty()) return VoiceCommand.FreeText("")
         if (candidates.size == 1 && candidates[0] == "SESSION_TIMEOUT")
             return VoiceCommand.SessionTimeout

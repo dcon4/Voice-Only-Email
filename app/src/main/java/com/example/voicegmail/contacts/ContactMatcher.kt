@@ -98,6 +98,126 @@ object ContactMatcher {
     }
 
     /**
+     * Runs [rankContacts] over EVERY recognizer hypothesis and, in addition,
+     * tries to parse each hypothesis as an email address via
+     * [parseDictatedEmail] (with phonetic variants of the local-part).
+     *
+     * This is the parser the Compose To-field actually uses, because Android
+     * SpeechRecognizer often gets the right answer as candidate #2 or #3 —
+     * not #1.  Without this we'd be throwing away the recogniser's better
+     * guesses.
+     *
+     * Returns the deduplicated best-scoring matches across all candidates.
+     */
+    fun rankAcrossCandidates(
+        candidates: List<String>,
+        contacts: List<Contact>,
+        limit: Int = 5,
+        minScore: Int = 40
+    ): List<ScoredContact> {
+        if (candidates.isEmpty() || contacts.isEmpty()) return emptyList()
+        // Email-keyed accumulator so the same contact reached via several
+        // candidates is reported once with its highest score.
+        val byEmail = HashMap<String, ScoredContact>()
+        for (raw in candidates) {
+            if (raw.isBlank()) continue
+            // 1. Name match.
+            for (sc in rankContacts(raw, contacts, limit = limit, minScore = minScore)) {
+                val key = sc.contact.email.lowercase(Locale.US)
+                val existing = byEmail[key]
+                if (existing == null || sc.score > existing.score) byEmail[key] = sc
+            }
+            // 2. Email-shaped parse — direct contact lookup + phonetic
+            //    variants of the local part to recover from common ASR
+            //    confusions (e.g. "decon 2000" → "dcon2000").
+            val parsed = parseDictatedEmail(raw) ?: continue
+            val local  = parsed.substringBefore('@')
+            val domain = parsed.substringAfter('@')
+            val variants = phoneticVariants(local).map { "$it@$domain" } + parsed
+            for (v in variants) {
+                val match = contacts.firstOrNull { it.email.equals(v, ignoreCase = true) }
+                if (match != null) {
+                    val score = if (v == parsed) 100 else 95
+                    val key = match.email.lowercase(Locale.US)
+                    val existing = byEmail[key]
+                    if (existing == null || score > existing.score) {
+                        byEmail[key] = ScoredContact(match, score)
+                    }
+                }
+            }
+        }
+        return byEmail.values
+            .sortedWith(
+                compareByDescending<ScoredContact> { it.score }
+                    .thenBy { it.contact.source.ordinal }
+                    .thenBy { it.contact.displayName.lowercase(Locale.US) }
+            )
+            .take(limit)
+    }
+
+    /**
+     * Parses each recogniser candidate as an email address and returns the
+     * distinct successful parses.  Used as the "no contact match" fallback —
+     * the user picks from the list of literal address parses rather than
+     * being asked to spell from scratch.
+     */
+    fun parseEmailCandidates(candidates: List<String>): List<String> {
+        if (candidates.isEmpty()) return emptyList()
+        val seen = LinkedHashSet<String>()
+        for (raw in candidates) {
+            parseDictatedEmail(raw)?.let { seen.add(it) }
+        }
+        return seen.toList()
+    }
+
+    /**
+     * Generates phonetic neighbours for a local-part string to recover from
+     * common Android SpeechRecognizer confusions.  Best-effort and
+     * intentionally small — adding too many variants increases false
+     * positives.  Returns a unique list including the original.
+     */
+    fun phoneticVariants(local: String): List<String> {
+        val seeds = LinkedHashSet<String>()
+        seeds.add(local)
+        seeds.add(local.replace(" ", ""))            // strip word-boundary spaces
+        seeds.add(local.replace(Regex("[\\s_.-]+"), "")) // strip all separators
+
+        // Build all combinations of common letter-sound confusions.
+        // Each substitution rule: ASR-output → likely intent.
+        val substitutions = listOf(
+            "decon"  to "dcon",
+            "deakon" to "dcon",
+            "deekon" to "dcon",
+            "deacon" to "dcon",
+            "dakon"  to "dcon",
+            "deekan" to "dcon",
+            "ekon"   to "kon",
+            "see"    to "c",
+            "sea"    to "c",
+            "kay"    to "k",
+            "gee"    to "g",
+            "bea"    to "b",
+            "bee"    to "b",
+            "are"    to "r",
+            "you"    to "u",
+            "why"    to "y",
+            "queue"  to "q",
+            "double you" to "w",
+            "double u"   to "w",
+            "ex"     to "x",
+            "zee"    to "z",
+            "zed"    to "z"
+        )
+        val expanded = LinkedHashSet<String>(seeds)
+        for (seed in seeds) {
+            for ((from, to) in substitutions) {
+                if (seed.contains(from)) expanded.add(seed.replace(from, to))
+            }
+        }
+        return expanded.toList()
+    }
+
+    /**
      * Attempts to parse free-form dictation like "john at gmail dot com"
      * into a canonical RFC-5321-shaped email address.  Returns `null` if
      * the result still doesn't look like a valid email address.
