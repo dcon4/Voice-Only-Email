@@ -144,12 +144,25 @@ class InboxViewModel @Inject constructor(
                 oAuthRedirectBus.consume()
                 handleOAuthRedirectUri(earlyRedirect)
             } else {
-                val hasToken = authRepository.hasAccessToken().first()
-                _isSignedIn.value = hasToken
-                if (hasToken) loadInbox()
-                else {
+                // If a previous install granted an older set of scopes (e.g.
+                // pre-People-API), clear those tokens so the next sign-in
+                // collects the new scope set in one consent dialog.
+                val forcedReConsent = authRepository.clearTokensIfReConsentRequired()
+                if (forcedReConsent) {
+                    _isSignedIn.value = false
                     _uiState.value = InboxUiState.SignedOut
-                    voiceManager.speak("Please sign in to access your Gmail inbox.")
+                    voiceManager.speak(
+                        "VoiceGmail has been updated and needs additional " +
+                            "permission to access your contacts. Please sign in again to continue."
+                    )
+                } else {
+                    val hasToken = authRepository.hasAccessToken().first()
+                    _isSignedIn.value = hasToken
+                    if (hasToken) loadInbox()
+                    else {
+                        _uiState.value = InboxUiState.SignedOut
+                        voiceManager.speak("Please sign in to access your Gmail inbox.")
+                    }
                 }
             }
             oAuthRedirectBus.redirectUri.filterNotNull().collect { uri ->

@@ -45,13 +45,24 @@ class GmailRepository @Inject constructor(
 
     // ── Inbox ─────────────────────────────────────────────────────────────
 
+    /**
+     * Most-recently-fetched inbox.  Updated on every successful [listInbox]
+     * call and exposed here so [com.example.voicegmail.contacts.ContactsRepository]
+     * can derive inbox-sender contacts for the voice-driven recipient
+     * matcher without paying for another full inbox round-trip.
+     */
+    @Volatile var lastLoadedInbox: List<EmailItem> = emptyList()
+        private set
+
     suspend fun listInbox(): List<EmailItem> = withAutoRefresh { auth ->
         val refs = gmailApiService.listMessages(auth).messages ?: return@withAutoRefresh emptyList()
-        coroutineScope {
+        val emails = coroutineScope {
             refs.map { ref ->
                 async { gmailApiService.getMessage(auth, ref.id).toEmailItem() }
             }.awaitAll()
         }
+        lastLoadedInbox = emails
+        emails
     }
 
     // ── Send ──────────────────────────────────────────────────────────────

@@ -2,6 +2,10 @@ package com.example.voicegmail.ui.viewmodel
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.voicegmail.contacts.Contact
+import com.example.voicegmail.contacts.ContactMatcher
+import com.example.voicegmail.contacts.ContactsRepository
+import com.example.voicegmail.debug.DebugLogger
 import com.example.voicegmail.gmail.GmailRepository
 import com.example.voicegmail.gmail.OutgoingAttachment
 import com.example.voicegmail.voice.ForwardDraft
@@ -25,6 +29,7 @@ sealed class ComposeEvent {
 @HiltViewModel
 class ComposeViewModel @Inject constructor(
     private val gmailRepository: GmailRepository,
+    private val contactsRepository: ContactsRepository,
     private val voiceManager: VoiceManager,
     private val voiceCommandEngine: VoiceCommandEngine,
     private val forwardDraft: ForwardDraft
@@ -130,31 +135,244 @@ class ComposeViewModel @Inject constructor(
 
     private fun askForTo() {
         voiceCommandEngine.speakThenListen(
-            "Who would you like to send to? Please say the recipient's email address."
+            "Who would you like to send to? Say a name, like 'David Smith', " +
+                "or spell out an email address."
         ) { cmd -> handleToResult(cmd) }
     }
 
     private fun handleToResult(cmd: VoiceCommand) {
         when (cmd) {
             is VoiceCommand.Cancel -> cancel()
-            is VoiceCommand.FreeText -> {
-                _to.value = cmd.text
-                voiceManager.speak("Recipient set to ${cmd.text}.")
-                askForSubject()
-            }
+            is VoiceCommand.FreeText -> resolveRecipient(cmd.text)
             else -> {
                 val raw = voiceManager.recognizedText.value ?: ""
-                if (raw.isNotBlank()) {
-                    _to.value = raw
-                    voiceManager.speak("Recipient set to $raw.")
+                if (raw.isNotBlank()) resolveRecipient(raw)
+                else voiceCommandEngine.speakThenListen(
+                    "I didn't catch that. Please say the recipient's name or spell their email address, " +
+                        "or say cancel to go back."
+                ) { retry -> handleToResult(retry) }
+            }
+        }
+    }
+
+    /**
+     * Voice-driven recipient resolution.  Pulls the user's contacts from
+     * [ContactsRepository] (Google People API ∪ inbox senders), ranks them
+     * against the dictated query via [ContactMatcher.rankContacts], and:
+     *  - if exactly one strong match → speaks it back, asks yes/no, then
+     *    accepts the email and continues.
+     *  - if multiple plausible matches → enumerates them and waits for
+     *    "first", "second", "third", … "cancel".
+     *  - if nothing matches → falls back to letter-by-letter dictation
+     *    parsed by [ContactMatcher.parseDictatedEmail].
+     */
+    private fun resolveRecipient(rawSpoken: String) {
+        viewModelScope.launch {
+            val contacts = contactsRepository.combinedContacts(gmailRepository.lastLoadedInbox)
+            val matches = ContactMatcher.rankContacts(rawSpoken, contacts)
+            DebugLogger.log(
+                "ComposeVM",
+                "resolveRecipient: query='$rawSpoken' contacts=${contacts.size} matches=${matches.size} " +
+                    "topScore=${matches.firstOrNull()?.score ?: -1}"
+            )
+            when {
+                // No matches → try parsing as a dictated email address.
+                matches.isEmpty() -> {
+                    val parsed = ContactMatcher.parseDictatedEmail(rawSpoken)
+                    if (parsed != null) confirmRecipient(parsed, displayName = null)
+                    else askToSpellEmail(unresolvedQuery = rawSpoken)
+                }
+                // Single confident match — confirm before committing.
+                matches.size == 1 || matches[0].score >= STRONG_MATCH_SCORE
+                        && (matches.size == 1 || matches[0].score - matches[1].score >= STRONG_LEAD) -> {
+                    val pick = matches[0].contact
+                    confirmRecipient(pick.email, displayName = pick.displayName)
+                }
+                // Several plausible matches — enumerate and let the user pick.
+                else -> enumerateMatches(matches.map { it.contact }, rawSpoken)
+            }
+        }
+    }
+
+    /**
+     * Reads back the proposed recipient and asks for yes/no confirmation.
+     * On "no" / cancel / silence, re-prompts for the recipient.  On "yes"
+     * commits the email and proceeds to the subject step.
+     */
+    private fun confirmRecipient(email: String, displayName: String?) {
+        val readable = displayName?.takeIf { it.isNotBlank() }
+            ?.let { "$it at ${emailForSpeech(email)}" }
+            ?: emailForSpeech(email)
+        voiceCommandEngine.speakThenListen(
+            "Did you mean $readable? Say yes to confirm, or no to try again."
+        ) { reply ->
+            val text = recognizedTextOrFreeText(reply).lowercase().trim()
+            val saidYes = AFFIRMATIVE_WORDS.any { it == text || text.startsWith("$it ") || text.endsWith(" $it") }
+            val saidNo  = reply is VoiceCommand.Cancel ||
+                NEGATIVE_WORDS.any { it == text || text.startsWith("$it ") || text.endsWith(" $it") }
+            when {
+                saidYes -> {
+                    _to.value = email
+                    voiceManager.speak("Recipient set to $readable.")
                     askForSubject()
-                } else {
+                }
+                saidNo -> askForTo()
+                else -> {
+                    // Unrecognized — re-confirm once, then bail to re-ask.
                     voiceCommandEngine.speakThenListen(
-                        "I didn't catch that. Please say the recipient's email address, or say cancel to go back."
+                        "Sorry, please say yes to confirm $readable, or no to try a different recipient."
+                    ) { retry ->
+                        val rt = recognizedTextOrFreeText(retry).lowercase().trim()
+                        val yes2 = AFFIRMATIVE_WORDS.any { it == rt || rt.startsWith("$it ") }
+                        if (yes2) {
+                            _to.value = email
+                            voiceManager.speak("Recipient set to $readable.")
+                            askForSubject()
+                        } else askForTo()
+                    }
+                }
+            }
+        }
+    }
+
+    /** Pulls the recognized text out of either the recognised-text flow or a FreeText command. */
+    private fun recognizedTextOrFreeText(cmd: VoiceCommand): String {
+        val raw = voiceManager.recognizedText.value
+        if (!raw.isNullOrBlank()) return raw
+        return if (cmd is VoiceCommand.FreeText) cmd.text else ""
+    }
+
+    /**
+     * Reads up to [MAX_ENUMERATED] candidates aloud and waits for an ordinal
+     * pick ("first", "second", …).  Falls back to [askForTo] on cancel or
+     * unrecognized speech.
+     */
+    private fun enumerateMatches(candidates: List<Contact>, originalQuery: String) {
+        val shown = candidates.take(MAX_ENUMERATED)
+        val readable = shown.mapIndexed { i, c ->
+            val ord = ORDINALS.getOrElse(i) { "option ${i + 1}" }
+            "$ord, ${c.displayName} at ${emailForSpeech(c.email)}"
+        }.joinToString(". ")
+        voiceCommandEngine.speakThenListen(
+            "I found ${shown.size} matches for $originalQuery. $readable. " +
+                "Say first, second, and so on, or say cancel."
+        ) { reply ->
+            val text = (voiceManager.recognizedText.value ?: "")
+                .lowercase().trim()
+            val pickIdx = parseOrdinal(reply, text, shown.size)
+            when {
+                reply is VoiceCommand.Cancel -> askForTo()
+                pickIdx != null -> {
+                    val pick = shown[pickIdx]
+                    confirmRecipient(pick.email, displayName = pick.displayName)
+                }
+                else -> {
+                    voiceCommandEngine.speakThenListen(
+                        "Sorry, please say first, second, or another ordinal — or say cancel."
+                    ) { retry -> handleEnumerateRetry(retry, shown) }
+                }
+            }
+        }
+    }
+
+    private fun handleEnumerateRetry(reply: VoiceCommand, shown: List<Contact>) {
+        val text = (voiceManager.recognizedText.value ?: "").lowercase().trim()
+        val pickIdx = parseOrdinal(reply, text, shown.size)
+        when {
+            reply is VoiceCommand.Cancel -> askForTo()
+            pickIdx != null -> {
+                val pick = shown[pickIdx]
+                confirmRecipient(pick.email, displayName = pick.displayName)
+            }
+            else -> askForTo()
+        }
+    }
+
+    /**
+     * Letter-by-letter fallback when no contact matched.  Reads back any
+     * parse result for confirmation.
+     */
+    private fun askToSpellEmail(unresolvedQuery: String) {
+        voiceCommandEngine.speakThenListen(
+            "I couldn't find a contact for $unresolvedQuery. " +
+                "Please spell the email address letter by letter — for example " +
+                "j o h n at gmail dot com — or say cancel."
+        ) { cmd ->
+            when (cmd) {
+                is VoiceCommand.Cancel -> cancel()
+                else -> {
+                    val raw = (voiceManager.recognizedText.value ?: "").ifBlank {
+                        if (cmd is VoiceCommand.FreeText) cmd.text else ""
+                    }
+                    val parsed = ContactMatcher.parseDictatedEmail(raw)
+                    if (parsed != null) confirmRecipient(parsed, displayName = null)
+                    else voiceCommandEngine.speakThenListen(
+                        "That still didn't sound like a valid email address. " +
+                            "Try again, or say cancel."
                     ) { retry -> handleToResult(retry) }
                 }
             }
         }
+    }
+
+    /**
+     * Makes an email address pronounceable: replaces "@" → "at" and "." → "dot".
+     */
+    private fun emailForSpeech(email: String): String =
+        email.replace("@", " at ").replace(".", " dot ")
+
+    private fun parseOrdinal(cmd: VoiceCommand, raw: String, max: Int): Int? {
+        // Numeric word forms first.
+        for ((idx, words) in ORDINAL_WORDS.withIndex()) {
+            if (idx >= max) break
+            for (w in words) if (raw.contains(w)) return idx
+        }
+        // Bare digits ("1", "2", …) or "number 1".
+        Regex("\\b([1-9])\\b").find(raw)?.let {
+            val n = it.groupValues[1].toInt() - 1
+            if (n in 0 until max) return n
+        }
+        // VoiceCommand parser might already classify it.
+        if (cmd is VoiceCommand.FreeText) {
+            val t = cmd.text.lowercase()
+            for ((idx, words) in ORDINAL_WORDS.withIndex()) {
+                if (idx >= max) break
+                for (w in words) if (t.contains(w)) return idx
+            }
+        }
+        return null
+    }
+
+    private companion object {
+        /** Top-match score above which we skip enumeration and go to confirm. */
+        const val STRONG_MATCH_SCORE = 80
+
+        /** Required lead over the next match to consider top match "unambiguous". */
+        const val STRONG_LEAD = 15
+
+        /** Maximum number of options spoken aloud. */
+        const val MAX_ENUMERATED = 5
+
+        val ORDINALS = listOf("First", "Second", "Third", "Fourth", "Fifth")
+
+        val ORDINAL_WORDS = listOf(
+            listOf("first",  "one",   "number one",   "the first"),
+            listOf("second", "two",   "number two",   "the second"),
+            listOf("third",  "three", "number three", "the third"),
+            listOf("fourth", "four",  "number four",  "the fourth"),
+            listOf("fifth",  "five",  "number five",  "the fifth")
+        )
+
+        val AFFIRMATIVE_WORDS = listOf(
+            "yes", "yeah", "yep", "yup", "yah",
+            "correct", "right", "confirm", "confirmed",
+            "ok", "okay", "sure", "do it", "send it"
+        )
+
+        val NEGATIVE_WORDS = listOf(
+            "no", "nope", "nah", "wrong",
+            "different", "try again", "incorrect", "not that one", "not that"
+        )
     }
 
     private fun askForSubject() {
