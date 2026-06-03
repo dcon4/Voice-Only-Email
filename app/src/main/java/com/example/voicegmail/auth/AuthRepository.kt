@@ -7,6 +7,7 @@ import com.example.voicegmail.debug.DebugLogger
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -38,6 +39,7 @@ class AuthRepository @Inject constructor(
 ) {
     private val accessTokenKey  = stringPreferencesKey("access_token")
     private val refreshTokenKey = stringPreferencesKey("refresh_token")
+    private val grantedScopeVersionKey = intPreferencesKey("granted_scope_version")
 
     // Owned here so it lives for the whole app session and is properly disposed.
     private val authService = AuthorizationService(context)
@@ -54,6 +56,10 @@ class AuthRepository @Inject constructor(
         context.dataStore.edit { prefs ->
             prefs[accessTokenKey] = accessToken
             refreshToken?.let { prefs[refreshTokenKey] = it }
+            // We only reach saveTokens via a successful authorization flow,
+            // which by construction included every scope in AuthConfig.SCOPES
+            // — i.e. the user just consented to the current SCOPE_VERSION.
+            prefs[grantedScopeVersionKey] = AuthConfig.SCOPE_VERSION
         }
     }
 
@@ -61,7 +67,40 @@ class AuthRepository @Inject constructor(
         context.dataStore.edit { prefs ->
             prefs.remove(accessTokenKey)
             prefs.remove(refreshTokenKey)
+            // Clear scope version too so the next sign-in re-establishes it.
+            prefs.remove(grantedScopeVersionKey)
         }
+    }
+
+    /**
+     * Returns true if the currently-stored tokens were granted under an older
+     * scope set than what [AuthConfig.SCOPE_VERSION] now requires.  When this
+     * is true the UI layer should clear tokens and prompt the user to sign
+     * in again so the new scope (e.g. People API contacts read-only) is
+     * granted.  Returns false if the user has no tokens at all — they'll go
+     * through the regular sign-in flow which already requests every scope.
+     */
+    suspend fun isReConsentRequired(): Boolean {
+        val prefs = context.dataStore.data.first()
+        val hasToken = !prefs[accessTokenKey].isNullOrBlank()
+        if (!hasToken) return false
+        val granted = prefs[grantedScopeVersionKey] ?: 1 // legacy installs default to 1
+        return granted < AuthConfig.SCOPE_VERSION
+    }
+
+    /**
+     * Convenience wrapper used by the launch screen: if a re-consent is due,
+     * forget all tokens so the normal sign-in entry-point fires and the
+     * Google consent screen lists every scope (old + new) in one dialog.
+     */
+    suspend fun clearTokensIfReConsentRequired(): Boolean {
+        if (!isReConsentRequired()) return false
+        DebugLogger.log(
+            "Auth",
+            "Re-consent required — clearing tokens to force fresh authorization with SCOPE_VERSION=${AuthConfig.SCOPE_VERSION}"
+        )
+        clearTokens()
+        return true
     }
 
     // ------------------------------------------------------------------

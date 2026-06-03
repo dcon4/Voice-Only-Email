@@ -33,6 +33,10 @@ val debugOauthClientId = resolveOAuthValue(
     defaultValue = releaseOauthClientId
 )
 
+val bibleBrainApiKey: String = System.getenv("BIBLE_BRAIN_API_KEY")?.takeIf { it.isNotBlank() }
+    ?: (project.findProperty("bibleBrainApiKey") as String?)?.takeIf { it.isNotBlank() }
+    ?: ""
+
 android {
     namespace = "com.example.voicegmail"
     compileSdk = 34
@@ -51,6 +55,7 @@ android {
         manifestPlaceholders["appAuthRedirectScheme"] = releaseOauthRedirectScheme
         buildConfigField("String", "OAUTH_REDIRECT_SCHEME", "\"$releaseOauthRedirectScheme\"")
         buildConfigField("String", "OAUTH_CLIENT_ID", "\"$releaseOauthClientId\"")
+        buildConfigField("String", "BIBLE_BRAIN_API_KEY", "\"$bibleBrainApiKey\"")
     }
 
     // ── Build flavors ─────────────────────────────────────────────────
@@ -173,6 +178,10 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
 
     implementation("com.tom-roush:pdfbox-android:2.0.27.0")
+
+    implementation("org.jsoup:jsoup:1.17.2")
+
+    implementation("androidx.media:media:1.7.0")
 
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test.ext:junit:1.2.1")

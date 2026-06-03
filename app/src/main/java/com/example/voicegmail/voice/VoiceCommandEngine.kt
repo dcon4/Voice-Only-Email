@@ -43,6 +43,17 @@ sealed class VoiceCommand {
     /** User explicitly said "go to sleep" — stop all audio and listening until power button wake. */
     object GoToSleep       : VoiceCommand()
 
+    /** User wants to listen to the Bible via Bible Brain audio. */
+    object Bible           : VoiceCommand()
+
+    /** User wants to browse the web by voice. */
+    object Browser         : VoiceCommand()
+
+    /** Read all results in a browser set sequentially. */
+    object ReadAll         : VoiceCommand()
+    /** Show the next page of browser results. */
+    object MoreResults     : VoiceCommand()
+
     /** Pause mid-email reading. */
     object Pause           : VoiceCommand()
     /** Resume reading from the last paused position. */
@@ -148,7 +159,18 @@ class VoiceCommandEngine @Inject constructor(
     // Multi-hypothesis selection
     // ------------------------------------------------------------------
 
+    /**
+     * Most recent recognition candidates from the *last* completed listen
+     * session.  Exposed so contextual listeners (e.g. the Compose To-field
+     * matcher) can sift through ALL hypotheses rather than just the top one
+     * that [parseAll] picks for the dispatcher.  Cleared at the start of
+     * each new listen so stale data isn't accidentally re-used.
+     */
+    @Volatile var lastCandidates: List<String> = emptyList()
+        private set
+
     private fun parseAll(candidates: List<String>): VoiceCommand {
+        lastCandidates = candidates
         if (candidates.isEmpty()) return VoiceCommand.FreeText("")
         if (candidates.size == 1 && candidates[0] == "SESSION_TIMEOUT")
             return VoiceCommand.SessionTimeout
@@ -185,6 +207,16 @@ class VoiceCommandEngine @Inject constructor(
             "for"                            -> "four"
             "ate"                            -> "eight"
             "add more", "and more"           -> "add more"
+            // "read all" classically misrecognised by Android STT (especially
+            // on Bluetooth SCO narrowband audio) as "redial" / "re-dial" /
+            // "read it all".  Map them all back to "read all unread" so the
+            // parser routes to ReadAllUnread instead of accidentally treating
+            // them as free-form text (which a search-prompt window would then
+            // use as a query string).
+            "redial", "re-dial", "re dial",
+            "read all", "reed all", "red all", "read it all",
+            "read 'em all", "read them all", "read everything",
+            "hear all", "hear them all"      -> "read all unread"
             else                             -> s
         }
         s = s
@@ -194,6 +226,9 @@ class VoiceCommandEngine @Inject constructor(
             .replace(Regex("\\bmark it red\\b"), "mark as read")
             .replace(Regex("\\bmark read\\b"), "mark as read")
             .replace(Regex("\\bmark it read\\b"), "mark as read")
+            .replace(Regex("\\bmarked red\\b"), "marked as read")
+            .replace(Regex("\\bmark on red\\b"), "mark unread")
+            .replace(Regex("\\bmark it on red\\b"), "mark it unread")
             .replace(Regex("\\bread back\\b"), "read back")
             .replace(Regex("\\bgo next\\b"), "next")
             .replace(Regex("\\bgo back\\b"), "go back")
@@ -203,6 +238,11 @@ class VoiceCommandEngine @Inject constructor(
             .replace(Regex("\\bgo to sleep\\b"), "go to sleep")
             .replace(Regex("\\bgoto sleep\\b"), "go to sleep")
             .replace(Regex("\\bgo too sleep\\b"), "go to sleep")
+            // Also catch "redial" / "read all" appearing as part of a longer
+            // misrecognised phrase, e.g. "redial please", "please redial".
+            .replace(Regex("\\bredial\\b"), "read all unread")
+            .replace(Regex("\\bre-dial\\b"), "read all unread")
+            .replace(Regex("\\bread all\\b(?! unread)"), "read all unread")
         return s
     }
 
@@ -222,7 +262,8 @@ class VoiceCommandEngine @Inject constructor(
                 lower.contains("change tts") || lower.contains("speech setting") ||
                 lower.contains("choose voice") || lower.contains("select voice") ||
                 lower.contains("pick voice") || lower.contains("different voice") ||
-                lower.contains("tts setting") -> VoiceCommand.VoiceSettings
+                lower.contains("voice chooser") || lower.contains("tts setting") ->
+                VoiceCommand.VoiceSettings
 
             lower.contains("read slower") || lower.contains("slow down") ||
                 lower.contains("read more slowly") || lower.contains("speak slower") ||
@@ -267,6 +308,26 @@ class VoiceCommandEngine @Inject constructor(
                 lower == "i want to sleep" || lower.contains("time to sleep") ->
                 VoiceCommand.GoToSleep
 
+            // ── Bible audio ───────────────────────────────────────────────────
+
+            lower == "bible" || lower == "read the bible" || lower == "play bible" ||
+                lower.contains("bible") || lower.contains("scripture") ||
+                lower.contains("read the bible") || lower.contains("listen to the bible") ||
+                lower.contains("play bible") || lower.contains("bible audio") ->
+                VoiceCommand.Bible
+
+            // ── Browser — in-app voice web browsing ───────────────────────────
+
+            lower == "browser" || lower == "browse" || lower == "internet" ||
+                lower == "browse the web" || lower == "search the web" ||
+                lower == "web search" || lower == "web browser" ||
+                lower.contains("browse the web") || lower.contains("search the web") ||
+                lower.contains("web search") || lower.contains("open browser") ||
+                lower.contains("internet") || lower.contains("browse the internet") ||
+                lower == "google" || lower == "search online" ||
+                lower.contains("search online") || lower.contains("look up online") ->
+                VoiceCommand.Browser
+
             // ── Pause / resume reading ────────────────────────────────────────
 
             lower == "pause" || lower == "pause reading" || lower == "stop reading" ->
@@ -308,11 +369,15 @@ class VoiceCommandEngine @Inject constructor(
 
             // MarkAsUnread before MarkAsRead to avoid substring collision
             lower.contains("mark as unread") || lower.contains("mark unread") ||
-                lower.contains("mark it unread") || lower.contains("mark this unread") ->
+                lower.contains("mark it unread") || lower.contains("mark this unread") ||
+                lower.contains("marked unread") || lower.contains("marked as unread") ||
+                lower.contains("mark it as unread") || lower.contains("mark this as unread") ->
                 VoiceCommand.MarkAsUnread
 
             lower.contains("mark as read") || lower.contains("mark read") ||
-                lower.contains("mark it read") || lower.contains("mark this read") ->
+                lower.contains("mark it read") || lower.contains("mark this read") ||
+                lower.contains("marked read") || lower.contains("marked as read") ||
+                lower.contains("mark it as read") || lower.contains("mark this as read") ->
                 VoiceCommand.MarkAsRead
 
             lower.contains("read back") || lower.contains("read my message") ||
@@ -353,6 +418,18 @@ class VoiceCommandEngine @Inject constructor(
             lower.matches(Regex("(read( (it|next|this|email|message))?|hear( it)?)")) -> VoiceCommand.Read
 
             lower.contains("send") -> VoiceCommand.Send
+
+            // "more results" / "next five" / "next results" — must be before plain "next"
+            lower.contains("more result") || lower.contains("next five") ||
+                lower.contains("next result") || lower.contains("more findings") ||
+                lower.contains("next set") || lower.contains("next batch") ||
+                lower == "more" -> VoiceCommand.MoreResults
+
+            // "read all" / "all five" / "read them all" — must be before plain "read"
+            lower.contains("read all") || lower.contains("all five") ||
+                lower.contains("all of them") || lower.contains("read them all") ||
+                lower == "all" -> VoiceCommand.ReadAll
+
             lower.contains("next") -> VoiceCommand.Next
             lower.matches(Regex("(go back( one)?|previous|prior|last|back)")) -> VoiceCommand.Previous
             lower.contains("refresh") || lower.contains("reload") -> VoiceCommand.Refresh

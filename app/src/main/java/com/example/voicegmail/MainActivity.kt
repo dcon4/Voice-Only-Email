@@ -36,6 +36,7 @@ class MainActivity : ComponentActivity() {
 
     @Inject lateinit var voiceManager: VoiceManager
     @Inject lateinit var oAuthRedirectBus: OAuthRedirectBus
+    @Inject lateinit var wakePreferences: com.example.voicegmail.voice.WakePreferences
 
     /**
      * PARTIAL_WAKE_LOCK keeps the CPU awake for the entire Activity lifetime so
@@ -57,7 +58,9 @@ class MainActivity : ComponentActivity() {
                 // On Android 14+, FOREGROUND_SERVICE_TYPE_MICROPHONE requires
                 // RECORD_AUDIO to be granted before the service can start.
                 // Start here (deferred from onCreate) now that it is granted.
-                VoiceWakeService.start(this)
+                if (wakePreferences.isRunInBackground()) {
+                    VoiceWakeService.start(this)
+                }
             } else {
                 DebugLogger.log("MainActivity", "RECORD_AUDIO DENIED")
                 voiceManager.speak(
@@ -70,6 +73,15 @@ class MainActivity : ComponentActivity() {
     private val notifPermissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
             DebugLogger.log("MainActivity", "POST_NOTIFICATIONS granted=$granted")
+            if (granted) {
+                voiceManager.speak("Notification permission granted. The app will show a status indicator while running in the background.")
+            } else {
+                voiceManager.speak(
+                    "Notification permission was denied. The app still works, but Android " +
+                        "may stop it in the background without showing a notification. " +
+                        "You can grant this later in your device settings under App Notifications."
+                )
+            }
         }
 
     // ---- Lifecycle -----------------------------------------------------------
@@ -104,13 +116,21 @@ class MainActivity : ComponentActivity() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
             ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
                 != PackageManager.PERMISSION_GRANTED) {
-            notifPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+            // Speak rationale before showing the system permission dialog
+            voiceManager.speak(
+                "VoiceGmail needs notification permission to show a status indicator " +
+                    "while running in the background. Please allow notifications when prompted."
+            )
+            // Delay the request slightly so TTS can deliver the rationale
+            android.os.Handler(mainLooper).postDelayed({
+                notifPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+            }, 4500)
         }
 
         // Start the background wake service only when RECORD_AUDIO is already
         // granted (typical after the first install).  If not yet granted the
         // micPermissionLauncher callback above will start it on approval.
-        if (micGranted) {
+        if (micGranted && wakePreferences.isRunInBackground()) {
             VoiceWakeService.start(this)
         }
 

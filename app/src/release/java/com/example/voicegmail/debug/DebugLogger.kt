@@ -19,6 +19,9 @@ object DebugLogger {
 
     private var logFile: File? = null
 
+    /** Set by the app on startup from WakePreferences. */
+    @Volatile var verboseEnabled: Boolean = false
+
     fun init(context: Context) {
         if (logFile != null) return
         logFile = File(context.filesDir, LOG_FILE_NAME)
@@ -32,6 +35,14 @@ object DebugLogger {
 
     fun log(tag: String, message: String) {
         val line = "${timestamp()} [$tag] $message"
+        Log.d(TAG, line)
+        appendLine(line)
+    }
+
+    /** Only writes to the log file when verbose mode is enabled. */
+    fun verbose(tag: String, message: String) {
+        if (!verboseEnabled) return
+        val line = "${timestamp()} [$tag] [VERBOSE] $message"
         Log.d(TAG, line)
         appendLine(line)
     }

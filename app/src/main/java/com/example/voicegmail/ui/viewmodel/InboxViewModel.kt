@@ -9,10 +9,13 @@ import androidx.core.content.FileProvider
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.voicegmail.BuildConfig
+import com.example.voicegmail.VoiceWakeService
 import com.example.voicegmail.WakeEventBus
 import com.example.voicegmail.auth.AuthRepository
 import com.example.voicegmail.auth.OAuthDiagnostics
 import com.example.voicegmail.auth.OAuthRedirectBus
+import com.example.voicegmail.bible.BibleVoiceFlow
+import com.example.voicegmail.browser.BrowserVoiceFlow
 import com.example.voicegmail.debug.DebugLogger
 import com.example.voicegmail.gmail.AttachmentReader
 import com.example.voicegmail.gmail.DraftItem
@@ -49,7 +52,11 @@ class InboxViewModel @Inject constructor(
     @Suppress("unused") private val forwardDraft: ForwardDraft,
     private val attachmentReader: AttachmentReader,
     private val oAuthRedirectBus: OAuthRedirectBus,
-    private val wakeEventBus: WakeEventBus
+    private val wakeEventBus: WakeEventBus,
+    private val bibleVoiceFlow: BibleVoiceFlow,
+    private val browserVoiceFlow: BrowserVoiceFlow,
+    private val wakePreferences: com.example.voicegmail.voice.WakePreferences,
+    private val mediaSessionController: com.example.voicegmail.media.MediaSessionController
 ) : ViewModel() {
 
     private var isFirstLoad = true
@@ -83,6 +90,12 @@ class InboxViewModel @Inject constructor(
 
     private val _isSwitchingEngine = MutableStateFlow(false)
     val isSwitchingEngine: StateFlow<Boolean> = _isSwitchingEngine
+
+    private val _runInBackground = MutableStateFlow(true)
+    val runInBackground: StateFlow<Boolean> = _runInBackground
+
+    private val _verboseLogging = MutableStateFlow(false)
+    val verboseLogging: StateFlow<Boolean> = _verboseLogging
 
     // ------------------------------------------------------------------
     // Pause/resume reading state
@@ -118,18 +131,38 @@ class InboxViewModel @Inject constructor(
     // ------------------------------------------------------------------
 
     init {
+        // Initialize media session for BT/headset/notification controls
+        mediaSessionController.initialize()
+        mediaSessionController.onPlay = { handleMediaPlay() }
+        mediaSessionController.onPause = { handleMediaPause() }
+        mediaSessionController.onNext = { handleMediaNext() }
+        mediaSessionController.onPrevious = { handleMediaPrevious() }
+
         viewModelScope.launch {
             val earlyRedirect = oAuthRedirectBus.redirectUri.value
             if (earlyRedirect != null) {
                 oAuthRedirectBus.consume()
                 handleOAuthRedirectUri(earlyRedirect)
             } else {
-                val hasToken = authRepository.hasAccessToken().first()
-                _isSignedIn.value = hasToken
-                if (hasToken) loadInbox()
-                else {
+                // If a previous install granted an older set of scopes (e.g.
+                // pre-People-API), clear those tokens so the next sign-in
+                // collects the new scope set in one consent dialog.
+                val forcedReConsent = authRepository.clearTokensIfReConsentRequired()
+                if (forcedReConsent) {
+                    _isSignedIn.value = false
                     _uiState.value = InboxUiState.SignedOut
-                    voiceManager.speak("Please sign in to access your Gmail inbox.")
+                    voiceManager.speak(
+                        "VoiceGmail has been updated and needs additional " +
+                            "permission to access your contacts. Please sign in again to continue."
+                    )
+                } else {
+                    val hasToken = authRepository.hasAccessToken().first()
+                    _isSignedIn.value = hasToken
+                    if (hasToken) loadInbox()
+                    else {
+                        _uiState.value = InboxUiState.SignedOut
+                        voiceManager.speak("Please sign in to access your Gmail inbox.")
+                    }
                 }
             }
             oAuthRedirectBus.redirectUri.filterNotNull().collect { uri ->
@@ -151,10 +184,34 @@ class InboxViewModel @Inject constructor(
         _settingsVoices.value     = voiceManager.getAvailableVoices()
         _selectedEngineName.value = voiceManager.getCurrentEngineName()
         _selectedVoiceName.value  = voiceManager.getCurrentVoiceName()
+        _runInBackground.value    = wakePreferences.isRunInBackground()
+        _verboseLogging.value     = wakePreferences.isVerboseLogging()
         _settingsPanelVisible.value = true
     }
 
     fun closeSettingsPanel() { _settingsPanelVisible.value = false }
+
+    /**
+     * Toggle between background mode (wake on power button) and foreground-only mode.
+     * Starts or stops VoiceWakeService accordingly.
+     */
+    fun setRunInBackground(enabled: Boolean) {
+        wakePreferences.setRunInBackground(enabled)
+        _runInBackground.value = enabled
+        if (enabled) {
+            VoiceWakeService.start(context)
+        } else {
+            VoiceWakeService.stop(context)
+        }
+        DebugLogger.log("InboxViewModel", "Run in background = $enabled")
+    }
+
+    fun setVerboseLogging(enabled: Boolean) {
+        wakePreferences.setVerboseLogging(enabled)
+        _verboseLogging.value = enabled
+        DebugLogger.verboseEnabled = enabled
+        DebugLogger.log("InboxViewModel", "Verbose logging = $enabled")
+    }
 
     fun selectEngineFromPanel(engineName: String) {
         if (engineName == _selectedEngineName.value) {
@@ -195,11 +252,75 @@ class InboxViewModel @Inject constructor(
     }
 
     // ------------------------------------------------------------------
+    // Media session button handlers (BT headset, notification, lock screen)
+    // ------------------------------------------------------------------
+
+    private fun handleMediaPlay() {
+        DebugLogger.log("InboxViewModel", "Media: PLAY (continue reading)")
+        val emails = currentEmails()
+        // If browser was paused, resume browser
+        if (browserVoiceFlow.handleWakeInterrupt()) {
+            browserVoiceFlow.resumeReading(viewModelScope) { exitCmd ->
+                if (exitCmd is VoiceCommand.None) {
+                    mediaSessionController.setStopped()
+                    voiceCommandEngine.speakThenListen("Back to inbox. Say a command.") { cmd ->
+                        handleCommand(cmd, emails)
+                    }
+                } else handleCommand(exitCmd, emails)
+            }
+            return
+        }
+        // If email was paused, resume email
+        if (pausedPosition != null) {
+            resumeFromPause(emails)
+        } else {
+            // Nothing paused — read current email
+            handleCommand(VoiceCommand.Read, emails)
+        }
+    }
+
+    private fun handleMediaPause() {
+        DebugLogger.log("InboxViewModel", "Media: PAUSE")
+        voiceCommandEngine.cancelListening()
+        voiceManager.stopAll()
+        mediaSessionController.setPaused()
+    }
+
+    private fun handleMediaNext() {
+        DebugLogger.log("InboxViewModel", "Media: NEXT")
+        val emails = currentEmails()
+        // If in browser, advance to next article
+        if (browserVoiceFlow.handleWakeInterrupt()) {
+            browserVoiceFlow.handleWakeCommand(VoiceCommand.Next, viewModelScope) { exitCmd ->
+                if (exitCmd is VoiceCommand.None) {
+                    mediaSessionController.setStopped()
+                    voiceCommandEngine.speakThenListen("Back to inbox. Say a command.") { cmd ->
+                        handleCommand(cmd, emails)
+                    }
+                } else handleCommand(exitCmd, emails)
+            }
+            return
+        }
+        // Otherwise advance to next email
+        handleCommand(VoiceCommand.Next, emails)
+    }
+
+    private fun handleMediaPrevious() {
+        DebugLogger.log("InboxViewModel", "Media: PREVIOUS")
+        val emails = currentEmails()
+        handleCommand(VoiceCommand.Previous, emails)
+    }
+
+    // ------------------------------------------------------------------
     // Wake — power button interrupt
     // ------------------------------------------------------------------
 
     private fun handleWakeEvent() {
-        DebugLogger.log("InboxViewModel", "Wake event — state=${_uiState.value::class.simpleName}")
+        DebugLogger.log("InboxViewModel", "Wake event — state=${_uiState.value::class.simpleName} pausedPosition=${pausedPosition != null}")
+        // Stop any Bible audio that may be playing
+        bibleVoiceFlow.stop()
+        // Check if browser was reading an article
+        val browserWasReading = browserVoiceFlow.handleWakeInterrupt()
         // Destroy the in-flight recognizer silently so its error/result callback
         // cannot race with this new session. TTS is handled by QUEUE_FLUSH inside
         // the following speakThenListen call.
@@ -207,30 +328,25 @@ class InboxViewModel @Inject constructor(
         readingGen++ // invalidate any in-flight speakEmailChunk onDone callbacks
         when (val state = _uiState.value) {
             is InboxUiState.Success -> {
+                if (browserWasReading) {
+                    // Browser article reading was interrupted — open a pause
+                    // listener that PRESERVES the browser's chunk bookmark on
+                    // unrecognized speech, sleep, and timeout.
+                    mediaSessionController.setPaused()
+                    promptBrowserResumeAndListen(state.emails)
+                    return
+                }
                 val pos = pausedPosition
                 if (pos != null) {
                     // Reading was in progress when the user pressed the power button
+                    mediaSessionController.setPaused()
                     val chunkNum = pos.chunkIndex + 1
                     val total    = pos.chunks.size
-                    voiceCommandEngine.speakThenListen(
+                    promptResumeAndListen(
                         "Reading paused at part $chunkNum of $total. " +
-                            "Say 'continue' to resume, or give another command."
-                    ) { cmd ->
-                        when (cmd) {
-                            is VoiceCommand.ContinueReading -> resumeFromPause(state.emails)
-                            is VoiceCommand.SessionTimeout  ->
-                                voiceManager.speak("Going to sleep. Say 'continue' after waking to resume.")
-                            is VoiceCommand.GoToSleep -> {
-                                voiceCommandEngine.cancelListening()
-                                voiceManager.speak("Going to sleep. Press the power button to wake me and say 'continue' to resume.")
-                            }
-                            is VoiceCommand.Cancel, is VoiceCommand.Pause ->
-                                voiceCommandEngine.speakThenListen(
-                                    "Paused. Press the power button and say 'continue' to resume later."
-                                ) { c -> handleCommand(c, state.emails) }
-                            else -> { pausedPosition = null; handleCommand(cmd, state.emails) }
-                        }
-                    }
+                            "Say 'continue' to resume, or give another command.",
+                        state.emails
+                    )
                 } else {
                     voiceCommandEngine.speakThenListen("VoiceGmail ready. Say a command.") { cmd ->
                         handleCommand(cmd, state.emails)
@@ -245,6 +361,126 @@ class InboxViewModel @Inject constructor(
                 voiceCommandEngine.speakThenListen(
                     "VoiceGmail. ${state.message}. Say 'retry' to try again."
                 ) { cmd -> handleCommand(cmd, emptyList()) }
+        }
+    }
+
+    /**
+     * Browser-flow equivalent of [promptResumeAndListen].  Opens a listening
+     * window after the user pressed the power button while reading a search
+     * result article.  Preserves [BrowserVoiceFlow]'s internal chunk bookmark
+     * for SessionTimeout, GoToSleep, Cancel-during-listening, and unrecognized
+     * speech — so the user can later wake the app and say "continue" to
+     * resume the article from the chunk that was interrupted.
+     *
+     * This fixes the bug where, after browser-reading was paused by the power
+     * button, saying "go to sleep" or letting the prompt time out (or being
+     * misheard a single time) caused the next "continue" to fall through to
+     * the INBOX dispatcher — which has no browser bookmark of its own and
+     * therefore answered "No reading in progress."
+     */
+    private fun promptBrowserResumeAndListen(emails: List<EmailItem>) {
+        val browserOnExit: (VoiceCommand) -> Unit = { exitCmd ->
+            if (exitCmd is VoiceCommand.None) {
+                voiceCommandEngine.speakThenListen("Back to inbox. Say a command.") { c ->
+                    handleCommand(c, emails)
+                }
+            } else handleCommand(exitCmd, emails)
+        }
+        voiceCommandEngine.speakThenListen(
+            "Browser reading paused. Say 'continue' to resume, 'next' for the next article, or 'cancel'."
+        ) { cmd ->
+            when (cmd) {
+                is VoiceCommand.SessionTimeout, is VoiceCommand.GoToSleep -> {
+                    // Preserve browser bookmark — user can resume after the next wake.
+                    voiceCommandEngine.cancelListening()
+                    voiceManager.speak(
+                        "Going to sleep. Press the power button and say 'continue' " +
+                            "to resume the article."
+                    )
+                }
+                is VoiceCommand.FreeText -> {
+                    // Unrecognized speech or empty recognizer result.  Do NOT
+                    // fall through to the inbox dispatcher — that would lose
+                    // the browser bookmark.  Re-prompt the same browser-pause
+                    // listener so the user can try again.
+                    DebugLogger.log(
+                        "InboxViewModel",
+                        "promptBrowserResumeAndListen: unrecognized FreeText='${cmd.text}' — preserving browser bookmark"
+                    )
+                    promptBrowserResumeAndListen(emails)
+                }
+                else -> {
+                    // Route to browser flow first; if it doesn't handle the
+                    // command, fall through to inbox (browser bookmark is
+                    // intentionally abandoned for explicit-intent commands
+                    // because BrowserVoiceFlow's handleWakeCommand only
+                    // returns false for commands that genuinely belong to
+                    // the inbox — e.g. inbox-only voice commands).
+                    val handled = browserVoiceFlow.handleWakeCommand(cmd, viewModelScope, browserOnExit)
+                    if (!handled) handleCommand(cmd, emails)
+                }
+            }
+        }
+    }
+
+    /**
+     * Listening window opened after a power-button wake while a reading
+     * bookmark is set.  Unlike the normal command dispatcher, this loop
+     * **preserves [pausedPosition]** unless the user issues an intentional
+     * navigation/action command.  Unrecognized speech (empty [FreeText]),
+     * recognizer timeouts, and explicit "go to sleep" / "pause" / "cancel"
+     * commands all keep the bookmark alive so the user can come back later
+     * (after another wake) and say "continue".
+     *
+     * This fixes the reliability bug where the bookmark was nuked by a single
+     * misheard noise or by saying "go to sleep" after the initial pause,
+     * causing the subsequent "continue" to fail with "No reading in progress".
+     */
+    private fun promptResumeAndListen(prompt: String, emails: List<EmailItem>) {
+        voiceCommandEngine.speakThenListen(prompt) { cmd ->
+            when (cmd) {
+                is VoiceCommand.ContinueReading ->
+                    resumeFromPause(emails)
+
+                is VoiceCommand.SessionTimeout, is VoiceCommand.GoToSleep -> {
+                    // Preserve bookmark — user can resume after the next wake.
+                    voiceCommandEngine.cancelListening()
+                    voiceManager.speak(
+                        "Going to sleep. Press the power button and say 'continue' to resume reading."
+                    )
+                }
+
+                is VoiceCommand.Cancel, is VoiceCommand.Pause ->
+                    // Preserve bookmark and re-prompt without timing out into a "lost".
+                    promptResumeAndListen(
+                        "Paused. Say 'continue' to resume, 'go to sleep' to keep the bookmark, " +
+                            "or another command.",
+                        emails
+                    )
+
+                is VoiceCommand.FreeText -> {
+                    // Unrecognized speech or empty result from recognizer.  Do NOT
+                    // clear the bookmark — re-prompt so the user can try again.
+                    DebugLogger.log(
+                        "InboxViewModel",
+                        "promptResumeAndListen: unrecognized FreeText='${cmd.text}' — preserving bookmark"
+                    )
+                    promptResumeAndListen(
+                        "Sorry, I didn't catch that. Say 'continue' to resume reading, " +
+                            "'go to sleep' to keep the bookmark, or another command.",
+                        emails
+                    )
+                }
+
+                else -> {
+                    // Intentional navigation/action command (next, previous, search,
+                    // refresh, delete, compose, etc.).  These handlers already clear
+                    // pausedPosition themselves when appropriate, so we only clear
+                    // it here as a defensive default.
+                    pausedPosition = null
+                    handleCommand(cmd, emails)
+                }
+            }
         }
     }
 
@@ -401,7 +637,7 @@ class InboxViewModel @Inject constructor(
                 voiceCommandEngine.speakThenListen(
                     "Commands: reed, next, previous, repeat, reply, forward, delete, compose, " +
                         "search, refresh, reed unread, mark as read, mark as unread, " +
-                        "pause, continue, go to sleep, list attachments, " +
+                        "pause, continue, go to sleep, bible, browser, list attachments, " +
                         "list drafts, read slower, read faster, voice settings, instructions. " +
                         "While composing: add more, delete last word or sentence, start over, " +
                         "save draft, read back, send, cancel."
@@ -422,16 +658,55 @@ class InboxViewModel @Inject constructor(
                 ) { cmd -> handleCommand(cmd, emails) }
             }
 
-            is VoiceCommand.SessionTimeout ->
-                voiceManager.speak("Going to sleep. Press the power button to wake me.")
+            is VoiceCommand.SessionTimeout -> {
+                val msg = if (pausedPosition != null)
+                    "Going to sleep. Press the power button and say 'continue' to resume reading."
+                else
+                    "Going to sleep. Press the power button to wake me."
+                voiceManager.speak(msg)
+            }
 
             is VoiceCommand.GoToSleep -> {
                 // Use cancelListening (destroy) instead of stopAll (stopListening)
                 // because stopListening fires onError which races back into this
                 // callback chain with FreeText("") → "I didn't understand".
                 voiceCommandEngine.cancelListening()
-                pausedPosition = null
-                voiceManager.speak("Going to sleep. Press the power button to wake me.")
+                // NOTE: Do NOT clear pausedPosition here.  If a reading bookmark
+                // exists, the user must be able to wake the app later and say
+                // 'continue' to resume from exactly where they left off.
+                mediaSessionController.setStopped()
+                val msg = if (pausedPosition != null)
+                    "Going to sleep. Press the power button and say 'continue' to resume reading."
+                else
+                    "Going to sleep. Press the power button to wake me."
+                voiceManager.speak(msg)
+            }
+
+            is VoiceCommand.Bible -> {
+                bibleVoiceFlow.start(viewModelScope) { exitCmd ->
+                    // Bible flow exited — handle the exit command (or resume inbox)
+                    if (exitCmd is VoiceCommand.None) {
+                        voiceCommandEngine.speakThenListen("Back to inbox. Say a command.") { cmd ->
+                            handleCommand(cmd, emails)
+                        }
+                    } else {
+                        handleCommand(exitCmd, emails)
+                    }
+                }
+            }
+
+            is VoiceCommand.Browser -> {
+                mediaSessionController.setPlaying("Browser", "Searching...")
+                browserVoiceFlow.start(viewModelScope) { exitCmd ->
+                    mediaSessionController.setStopped()
+                    if (exitCmd is VoiceCommand.None) {
+                        voiceCommandEngine.speakThenListen("Back to inbox. Say a command.") { cmd ->
+                            handleCommand(cmd, emails)
+                        }
+                    } else {
+                        handleCommand(exitCmd, emails)
+                    }
+                }
             }
 
             is VoiceCommand.VoiceSettings -> handleVoiceSettings(emails)
@@ -462,6 +737,7 @@ class InboxViewModel @Inject constructor(
             }; return
         }
         pausedPosition = null // clear any stale bookmark before starting fresh
+        mediaSessionController.setPlaying("Email: ${email.subject}", "From ${email.from}")
         val unreadPrefix = if (email.isUnread) "Unread. " else ""
         val bodyForSpeech = email.body.forSpeech()
         val fullText = "${unreadPrefix}Email ${_currentEmailIndex.value + 1} of ${emails.size}. " +
@@ -538,6 +814,7 @@ class InboxViewModel @Inject constructor(
         if (index >= chunks.size) {
             // Reached the end — clear the bookmark
             pausedPosition = null
+            mediaSessionController.setStopped()
             val attachHint = when (email.attachments.size) {
                 0    -> ""
                 1    -> " This email has 1 attachment: ${email.attachments[0].filename}."
@@ -567,6 +844,15 @@ class InboxViewModel @Inject constructor(
     /**
      * Resume reading from [pausedPosition].  If the email is no longer in the
      * list, falls back to the saved index position.
+     *
+     * "Stop & Restart from current sentence" fallback: we don't rely on the
+     * underlying TTS engine's resume() API (which is unreliable across Android
+     * engines and across web browsers).  Instead, the resume model itself is
+     * restart-from-chunk — [readNextChunk] calls [VoiceManager.speakEmailChunk]
+     * which uses [TextToSpeech.QUEUE_FLUSH] to evict any leftover utterance
+     * from the pre-pause session.  Combined with the [readingGen] bump below
+     * (which invalidates stale onDone callbacks), this guarantees a clean
+     * resume even if the engine was stuck.
      */
     private fun resumeFromPause(emails: List<EmailItem>) {
         val pos = pausedPosition
@@ -587,6 +873,17 @@ class InboxViewModel @Inject constructor(
         }
         _currentEmailIndex.value = pos.emailIndex
         readingGen++ // new session for resume — clears any stale flushed-chunk callbacks
+        DebugLogger.log(
+            "InboxViewModel",
+            "resumeFromPause: emailIndex=${pos.emailIndex} chunkIndex=${pos.chunkIndex}/${pos.chunks.size} gen=$readingGen"
+        )
+        // "Stop & restart from current sentence" fallback: the resume model itself
+        // is restart-from-chunk (we don't rely on a TTS engine's resume() — which
+        // is unreliable across Android TTS engines / browsers).  speakEmailChunk
+        // uses TextToSpeech.QUEUE_FLUSH to evict any leftover utterance from the
+        // pre-pause session before speaking the resume chunk.  Combined with the
+        // readingGen guard above, this guarantees a clean resume even if the
+        // underlying engine got stuck.
         readNextChunk(email, emails, pos.chunks, pos.chunkIndex, readingGen)
     }
 
@@ -1208,8 +1505,26 @@ class InboxViewModel @Inject constructor(
             "Search. What would you like to find? Say something like 'emails from David' or 'subject meeting'."
         ) { cmd ->
             val raw = rawText(cmd)
-            if (raw.isBlank() || cmd is VoiceCommand.Cancel) {
+            // Hard cancel
+            if (cmd is VoiceCommand.Cancel || cmd is VoiceCommand.GoBack) {
                 voiceCommandEngine.speakThenListen("Search cancelled.") { c -> handleCommand(c, emails) }
+                return@speakThenListen
+            }
+            // Empty / silence → cancel
+            if (raw.isBlank()) {
+                voiceCommandEngine.speakThenListen("Search cancelled.") { c -> handleCommand(c, emails) }
+                return@speakThenListen
+            }
+            // The recogniser sometimes turns short app commands (e.g. "read all"
+            // → "redial", "next", "cancel", "pause") into single-word phrases
+            // that are nonsensical as Gmail queries.  If the user clearly meant
+            // a control command, route to that instead of running a junk search.
+            if (cmd !is VoiceCommand.FreeText) {
+                DebugLogger.log(
+                    "InboxViewModel",
+                    "startSearch: heard control command ${cmd::class.simpleName} instead of a query — dispatching it"
+                )
+                handleCommand(cmd, emails)
                 return@speakThenListen
             }
             val query = queryParser.parse(raw)
@@ -1228,7 +1543,9 @@ class InboxViewModel @Inject constructor(
                         voiceCommandEngine.speakThenListen(
                             "${results.size} result${if (results.size == 1) "" else "s"} for $raw. " +
                                 "First: From ${first.from}. ${first.subject}. " +
-                                "Say 'reed' to hear it, 'next' for more, or 'refresh' to go back to your inbox."
+                                "Say 'reed' to hear it, 'next' for more, " +
+                                "'read all' to hear every result, " +
+                                "or 'refresh' to go back to your inbox."
                         ) { c -> handleCommand(c, results) }
                     }
                 } catch (e: Exception) {

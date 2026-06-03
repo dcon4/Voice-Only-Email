@@ -17,6 +17,8 @@ import android.speech.tts.UtteranceProgressListener
 import android.speech.tts.Voice
 import android.util.Log
 import androidx.core.content.ContextCompat
+import com.example.voicegmail.BuildConfig
+import com.example.voicegmail.debug.DebugLogger
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -68,13 +70,39 @@ class VoiceManager @Inject constructor(
 
     private fun initTts() {
         val savedEngine = ttsSettings.getEnginePackage()
+        DebugLogger.log(tag, "initTts — savedEngine=$savedEngine")
         val listener = TextToSpeech.OnInitListener { status ->
             if (status == TextToSpeech.SUCCESS) {
-                tts?.language = Locale.US
                 ttsReady = true
                 applyVoicePreference()
-                Log.d(tag, "TTS ready — engine=$savedEngine")
+
+                // Only set language explicitly if the engine exposes voices.
+                // Engines like IVONA manage their own voice/language internally
+                // and setting language can interfere with their default behavior.
+                val availableVoices = tts?.voices
+                if (!availableVoices.isNullOrEmpty()) {
+                    tts?.language = Locale.US
+                    // If no voice was applied (no saved preference) and TTS has no
+                    // default voice selected, pick the first available English voice.
+                    if (tts?.voice == null) {
+                        val fallbackVoice = availableVoices
+                            .filter { it.locale.language == "en" && !it.isNetworkConnectionRequired }
+                            .minByOrNull { it.name }
+                        if (fallbackVoice != null) {
+                            tts?.voice = fallbackVoice
+                            DebugLogger.log(tag, "No voice set — auto-selected: ${fallbackVoice.name}")
+                        }
+                    }
+                } else {
+                    DebugLogger.log(tag, "Engine reports 0 voices — using engine's internal default")
+                }
+
+                val engineName = tts?.defaultEngine
+                val voiceCount = availableVoices?.size ?: 0
+                val allEngines = tts?.engines?.map { "${it.label} (${it.name})" } ?: emptyList()
+                DebugLogger.log(tag, "TTS ready — defaultEngine=$engineName, activeVoice=${tts?.voice?.name}, voices=$voiceCount, allEngines=$allEngines")
             } else {
+                DebugLogger.log(tag, "TTS initialization FAILED: status=$status")
                 Log.e(tag, "TTS initialization failed: $status")
             }
         }
@@ -98,13 +126,20 @@ class VoiceManager @Inject constructor(
     // Engine & voice introspection
     // ------------------------------------------------------------------
 
-    fun getAvailableEngines(): List<TextToSpeech.EngineInfo> =
-        tts?.engines?.sortedBy { it.label } ?: emptyList()
+    fun getAvailableEngines(): List<TextToSpeech.EngineInfo> {
+        val engines = tts?.engines?.sortedBy { it.label } ?: emptyList()
+        DebugLogger.log(tag, "getAvailableEngines: ${engines.map { "${it.label}(${it.name})" }}")
+        return engines
+    }
 
-    fun getAvailableVoices(): List<Voice> =
-        tts?.voices?.toList()?.sortedWith(
+    fun getAvailableVoices(): List<Voice> {
+        val voices = tts?.voices?.toList()?.sortedWith(
             compareBy({ it.isNetworkConnectionRequired }, { it.locale.displayLanguage }, { it.name })
         ) ?: emptyList()
+        DebugLogger.log(tag, "getAvailableVoices: ${voices.size} voices" +
+            if (voices.isNotEmpty()) " (first: ${voices[0].name})" else "")
+        return voices
+    }
 
     fun getCurrentEngineName(): String? = ttsSettings.getEnginePackage()
     fun getCurrentVoiceName(): String? = tts?.voice?.name ?: ttsSettings.getVoiceName()
@@ -204,6 +239,7 @@ class VoiceManager @Inject constructor(
     fun speak(text: String) {
         mainHandler.post {
             if (ttsReady) {
+                DebugLogger.verbose(tag, "speak: ${text.take(80)}")
                 tts?.setSpeechRate(1.0f)
                 tts?.setOnUtteranceProgressListener(null)
                 tts?.speak(phoneticize(text), TextToSpeech.QUEUE_FLUSH, null, utteranceId)
@@ -353,6 +389,7 @@ class VoiceManager @Inject constructor(
         }
 
         bluetoothRouter.ensureScoActive {
+            DebugLogger.verbose(tag, "Mic starting (retry=$retryCount noSpeech=$noSpeechRetries max=$noSpeechMaxRetries)")
             doStartRecognizer(onResults, retryCount, noSpeechRetries, noSpeechMaxRetries)
         }
     }
@@ -406,7 +443,9 @@ class VoiceManager @Inject constructor(
                     when {
                         candidates.isNotEmpty() -> {
                             _recognizedText.value = candidates[0]
+                            DebugLogger.verbose(tag, "Recognition results (${candidates.size}): ${candidates.take(3)}")
                             Log.d(tag, "Results (${candidates.size}): ${candidates.take(3)}")
+                            bluetoothRouter.stopSco() // Release SCO so TTS uses A2DP
                             onResults(candidates)
                         }
                         !speechBegan && noSpeechRetries < noSpeechMaxRetries -> {
@@ -418,6 +457,7 @@ class VoiceManager @Inject constructor(
                         !speechBegan -> {
                             if (noSpeechMaxRetries == 0) {
                                 Log.d(tag, "Brief listen: no speech — returning empty (continue reading)")
+                                bluetoothRouter.stopSco()
                                 onResults(emptyList())
                             } else {
                                 Log.d(tag, "Session timeout after $noSpeechMaxRetries no-speech retries")
@@ -444,6 +484,7 @@ class VoiceManager @Inject constructor(
                         !speechBegan -> {
                             if (noSpeechMaxRetries == 0) {
                                 Log.d(tag, "Brief listen error: no speech — returning empty (continue reading)")
+                                bluetoothRouter.stopSco()
                                 onResults(emptyList())
                             } else {
                                 Log.d(tag, "Session timeout (error path) after $noSpeechMaxRetries no-speech retries")
@@ -493,6 +534,7 @@ class VoiceManager @Inject constructor(
             }, delay)
         } else {
             Log.e(tag, "Recognition giving up (error=$error retries=$retryCount)")
+            bluetoothRouter.stopSco()
             onResults(emptyList())
         }
     }
@@ -613,7 +655,22 @@ class VoiceManager @Inject constructor(
     }
 
     private companion object {
-        const val TTS_TO_MIC_GAP_MS        = 1200L
+        /**
+         * Gap between TTS finishing and the mic opening.
+         *
+         * On the **bt** flavor the headset is already on the SCO channel that
+         * mic + TTS share, so we don't need to wait for an A2DP → SCO route
+         * switch.  We just need enough time for any tiny TTS audio tail to
+         * drain plus recogniser warm-up.  300 ms is a good balance — much
+         * snappier than the legacy 1200 ms but still avoids clipping the
+         * last syllable of the prompt.
+         *
+         * On the **standard** flavor we keep a more conservative 600 ms
+         * because the speaker/mic share the device audio session and a too-
+         * short gap occasionally lets the mic pick up the tail of the TTS,
+         * triggering false speech-began events.
+         */
+        val TTS_TO_MIC_GAP_MS: Long = if (BuildConfig.BLUETOOTH_AUDIO) 300L else 600L
         const val MAX_RETRIES              = 3
         const val NO_SPEECH_MAX_RETRIES    = 4
         const val NO_SPEECH_RETRY_DELAY_MS = 250L

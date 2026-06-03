@@ -43,6 +43,89 @@ fun VoiceSettingsPanel(viewModel: InboxViewModel) {
                 modifier = Modifier.padding(bottom = 8.dp)
             )
 
+            // ---- Run Mode (at top for easy access) ---------------------------
+            val runInBackground by viewModel.runInBackground.collectAsState()
+
+            Text(
+                text = "Run Mode",
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.padding(top = 4.dp, bottom = 4.dp)
+            )
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 8.dp)
+                    .semantics(mergeDescendants = true) {
+                        contentDescription = if (runInBackground)
+                            "Run in background is on. App wakes when power button is pressed."
+                        else
+                            "Run in background is off. App only works when in the foreground."
+                    },
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Run in background",
+                        style = MaterialTheme.typography.bodyLarge
+                    )
+                    Text(
+                        text = if (runInBackground)
+                            "Wakes on power button press (accessibility mode)"
+                        else
+                            "Only active when app is open (foreground only)",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Switch(
+                    checked = runInBackground,
+                    onCheckedChange = { viewModel.setRunInBackground(it) }
+                )
+            }
+
+            HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
+
+            // ---- Verbose Logging ---------------------------------------------
+            val verboseLogging by viewModel.verboseLogging.collectAsState()
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 8.dp)
+                    .semantics(mergeDescendants = true) {
+                        contentDescription = if (verboseLogging)
+                            "Verbose logging is on. Detailed events are written to the log file."
+                        else
+                            "Verbose logging is off. Only important events are logged."
+                    },
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Verbose logging",
+                        style = MaterialTheme.typography.bodyLarge
+                    )
+                    Text(
+                        text = if (verboseLogging)
+                            "Logs TTS, mic, Bluetooth, and all events (for debugging)"
+                        else
+                            "Logs only commands and errors",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Switch(
+                    checked = verboseLogging,
+                    onCheckedChange = { viewModel.setVerboseLogging(it) }
+                )
+            }
+
+            HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
+
             // ---- TTS Engine ------------------------------------------------
             Text(
                 text = "Text-to-Speech Engine",
