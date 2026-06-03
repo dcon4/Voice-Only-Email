@@ -136,6 +136,16 @@ android {
             excludes += "/META-INF/*.kotlin_module"
         }
     }
+
+    // ── Ensure contacts module is included in all builds ─────────────────
+    sourceSets {
+        getByName("main") {
+            java.srcDirs(
+                "src/main/java",
+                "src/main/java/com/example/voicegmail/contacts"
+            )
+        }
+    }
 }
 
 dependencies {
