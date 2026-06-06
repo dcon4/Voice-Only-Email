@@ -11,19 +11,28 @@ import com.example.voicegmail.contacts.ContactManager
 
 class MainActivity : AppCompatActivity() {
 
-    private val PERMISSION_CODE = 123
+    private val PERMISSIONS_REQUEST_READ_CONTACTS = 100
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        // This ensures the app loads the visual screen
         setContentView(R.layout.activity_main)
 
-        // Check for permission to read contacts
+        // Initial check for permissions when the app opens
+        checkPermissionsAndLoadContacts()
+    }
+
+    private fun checkPermissionsAndLoadContacts() {
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_CONTACTS)
             != PackageManager.PERMISSION_GRANTED) {
-            ActivityCompat.requestPermissions(this,
-                arrayOf(Manifest.permission.READ_CONTACTS), PERMISSION_CODE)
+            
+            // Requesting the permission at runtime
+            ActivityCompat.requestPermissions(
+                this,
+                arrayOf(Manifest.permission.READ_CONTACTS),
+                PERMISSIONS_REQUEST_READ_CONTACTS
+            )
         } else {
+            // Permission is already granted
             loadContacts()
         }
     }
@@ -31,10 +40,12 @@ class MainActivity : AppCompatActivity() {
     private fun loadContacts() {
         try {
             val contactManager = ContactManager(this)
-            val contacts = contactManager.getContactList()
-            Toast.makeText(this, "Build Success! Found ${contacts.size} contacts", Toast.LENGTH_LONG).show()
+            val contactList = contactManager.getContactList()
+
+            // Toast feedback to confirm the contact code is running correctly
+            Toast.makeText(this, "Successfully loaded ${contactList.size} contacts", Toast.LENGTH_LONG).show()
         } catch (e: Exception) {
-            Toast.makeText(this, "Error: ${e.message}", Toast.LENGTH_LONG).show()
+            Toast.makeText(this, "Error accessing contacts: ${e.message}", Toast.LENGTH_LONG).show()
         }
     }
 
@@ -44,9 +55,12 @@ class MainActivity : AppCompatActivity() {
         grantResults: IntArray
     ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (requestCode == PERMISSION_CODE && grantResults.isNotEmpty()
-            && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-            loadContacts()
+        if (requestCode == PERMISSIONS_REQUEST_READ_CONTACTS) {
+            if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                loadContacts()
+            } else {
+                Toast.makeText(this, "Contacts permission is required for this app to function.", Toast.LENGTH_SHORT).show()
+            }
         }
     }
 }
