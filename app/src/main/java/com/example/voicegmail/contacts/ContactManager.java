@@ -18,20 +18,25 @@ public class ContactManager {
         List<Contact> contactList = new ArrayList<>();
         ContentResolver cr = context.getContentResolver();
         
-        // Querying for names and email addresses
+        // We query the system for names and email addresses
         Cursor cur = cr.query(ContactsContract.CommonDataKinds.Email.CONTENT_URI,
                 null, null, null, null);
 
         if (cur != null) {
-            while (cur.moveToNext()) {
+            try {
                 int nameIdx = cur.getColumnIndex(ContactsContract.CommonDataKinds.Email.DISPLAY_NAME);
                 int emailIdx = cur.getColumnIndex(ContactsContract.CommonDataKinds.Email.ADDRESS);
                 
-                if (nameIdx >= 0 && emailIdx >= 0) {
-                    contactList.add(new Contact(cur.getString(nameIdx), cur.getString(emailIdx)));
+                while (cur.moveToNext()) {
+                    if (nameIdx >= 0 && emailIdx >= 0) {
+                        String name = cur.getString(nameIdx);
+                        String email = cur.getString(emailIdx);
+                        contactList.add(new Contact(name, email));
+                    }
                 }
+            } finally {
+                cur.close();
             }
-            cur.close();
         }
         return contactList;
     }
