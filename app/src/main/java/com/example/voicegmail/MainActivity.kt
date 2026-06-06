@@ -1,53 +1,52 @@
-package com.example.voicegmail;
+package com.example.voicegmail
 
-import android.Manifest;
-import android.content.pm.PackageManager;
-import android.os.Bundle;
-import android.widget.Toast;
-import androidx.annotation.NonNull;
-import androidx.appcompat.app.AppCompatActivity;
-import androidx.core.app.ActivityCompat;
-import androidx.core.content.ContextCompat;
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Bundle
+import android.widget.Toast
+import androidx.appcompat.app.AppCompatActivity
+import androidx.core.app.ActivityCompat
+import androidx.core.content.ContextCompat
+import com.example.voicegmail.contacts.ContactManager
 
-import com.example.voicegmail.contacts.Contact;
-import com.example.voicegmail.contacts.ContactManager;
-import java.util.List;
+class MainActivity : AppCompatActivity() {
 
-public class MainActivity extends AppCompatActivity {
+    private val PERMISSION_CODE = 123
 
-    private static final int PERMISSION_CODE = 123;
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        // This ensures the app loads the visual screen
+        setContentView(R.layout.activity_main)
 
-    @Override
-    protected void onCreate(Bundle savedInstanceState) {
-        super.onCreate(savedInstanceState);
-        setContentView(R.layout.activity_main);
-
-        // Check if we have permission to read contacts
+        // Check for permission to read contacts
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_CONTACTS)
-                != PackageManager.PERMISSION_GRANTED) {
+            != PackageManager.PERMISSION_GRANTED) {
             ActivityCompat.requestPermissions(this,
-                    new String[]{Manifest.permission.READ_CONTACTS}, PERMISSION_CODE);
+                arrayOf(Manifest.permission.READ_CONTACTS), PERMISSION_CODE)
         } else {
-            loadContacts();
+            loadContacts()
         }
     }
 
-    private void loadContacts() {
+    private fun loadContacts() {
         try {
-            ContactManager contactManager = new ContactManager(this);
-            List<Contact> contacts = contactManager.getContactList();
-            Toast.makeText(this, "Loaded " + contacts.size() + " contacts", Toast.LENGTH_LONG).show();
-        } catch (Exception e) {
-            Toast.makeText(this, "Error: " + e.getMessage(), Toast.LENGTH_LONG).show();
+            val contactManager = ContactManager(this)
+            val contacts = contactManager.getContactList()
+            Toast.makeText(this, "Build Success! Found ${contacts.size} contacts", Toast.LENGTH_LONG).show()
+        } catch (e: Exception) {
+            Toast.makeText(this, "Error: ${e.message}", Toast.LENGTH_LONG).show()
         }
     }
 
-    @Override
-    public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions, @NonNull int[] grantResults) {
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
-        if (requestCode == PERMISSION_CODE && grantResults.length > 0 
-                && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-            loadContacts();
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == PERMISSION_CODE && grantResults.isNotEmpty()
+            && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+            loadContacts()
         }
     }
 }
