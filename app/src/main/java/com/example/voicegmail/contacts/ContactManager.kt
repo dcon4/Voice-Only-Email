@@ -1,15 +1,20 @@
-            try {
-                int nameIdx = cur.getColumnIndex(ContactsContract.CommonDataKinds.Email.DISPLAY_NAME);
-                int emailIdx = cur.getColumnIndex(ContactsContract.CommonDataKinds.Email.ADDRESS);
+package com.example.voicegmail.contacts
 
-                if (nameIdx >= 0 && emailIdx >= 0) {
-                    while (cur.moveToNext()) {
-                        String name = cur.getString(nameIdx);
-                        String email = cur.getString(emailIdx);
-                        
-                        if (email != null && !email.isEmpty()) {
-                            contactList.add(new Contact(name, email, Contact.Source.Device));
-                        }
-                    }
-                }
-            } finally {
+import javax.inject.Inject
+import javax.inject.Singleton
+
+/**
+ * Manages the retrieval of contacts from the Google People API.
+ */
+@Singleton
+class ContactManager @Inject constructor(
+    private val peopleApiService: PeopleApiService
+) {
+    /**
+     * Fetches contacts for the user. Currently returns an empty list 
+     * as a placeholder for the voice-driven flow.
+     */
+    suspend fun getContacts(): List<Contact> {
+        return emptyList()
+    }
+}
