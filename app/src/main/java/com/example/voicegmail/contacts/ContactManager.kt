@@ -1,20 +1,20 @@
 package com.example.voicegmail.contacts
 
+import android.content.Context
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlinx.coroutines.runBlocking
 
-/**
- * Manages the retrieval of contacts from the Google People API.
- */
 @Singleton
 class ContactManager @Inject constructor(
-    private val peopleApiService: PeopleApiService
+    private val context: Context // accept Context so `ContactManager(this)` compiles
 ) {
-    /**
-     * Fetches contacts for the user. Currently returns an empty list 
-     * as a placeholder for the voice-driven flow.
-     */
+    // keep the suspend API for future async network; implement a simple placeholder
     suspend fun getContacts(): List<Contact> {
         return emptyList()
     }
+
+    // Non-suspending wrapper used from MainActivity
+    fun getContactList(): List<Contact> = runBlocking { getContacts() }
 }
+
