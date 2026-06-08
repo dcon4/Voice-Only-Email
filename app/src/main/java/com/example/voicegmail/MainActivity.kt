@@ -14,12 +14,17 @@ class MainActivity : AppCompatActivity() {
     private val PERMISSIONS_REQUEST_READ_CONTACTS = 100
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
-        setContentView(R.layout.activity_main)
-
-        // Initial check for permissions when the app opens
+    super.onCreate(savedInstanceState)
+    try {
+        setContent { /* your Compose UI */ }
         checkPermissionsAndLoadContacts()
+    } catch (e: Exception) {
+        Toast.makeText(this, "Startup error: ${e::class.simpleName}: ${e.message}", Toast.LENGTH_LONG).show()
+        e.printStackTrace()
     }
+}
+
+
 
     private fun checkPermissionsAndLoadContacts() {
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_CONTACTS)
