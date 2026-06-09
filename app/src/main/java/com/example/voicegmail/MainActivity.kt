@@ -15,7 +15,9 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import com.example.voicegmail.contacts.ContactManager
+import dagger.hilt.android.AndroidEntryPoint
 
+@AndroidEntryPoint
 class MainActivity : AppCompatActivity() {
 
     private val PERMISSIONS_REQUEST_READ_CONTACTS = 100
