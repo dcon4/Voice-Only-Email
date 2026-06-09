@@ -8,7 +8,7 @@ import dagger.hilt.android.HiltAndroidApp
 class VoiceGmailApp : Application() {
     override fun onCreate() {
         super.onCreate()
-        
+
         // Crash handler from MyApp
         Thread.setDefaultUncaughtExceptionHandler { _, e ->
             try {
