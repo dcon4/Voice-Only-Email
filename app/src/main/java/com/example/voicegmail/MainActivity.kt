@@ -8,6 +8,7 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.activity.compose.setContent
 import androidx.compose.material3.Text
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Box
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.foundation.layout.fillMaxSize
@@ -27,11 +28,15 @@ class MainActivity : AppCompatActivity() {
                     modifier = Modifier.fillMaxSize(),
                     color = androidx.compose.material3.MaterialTheme.colorScheme.background
                 ) {
-                    Text(
-                        text = "VoiceGmail",
-                        style = androidx.compose.material3.MaterialTheme.typography.headlineMedium,
-                        modifier = Modifier.align(Alignment.CenterHorizontally)
-                    )
+                    Box(
+                        modifier = Modifier.fillMaxSize(),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = "VoiceGmail",
+                            style = androidx.compose.material3.MaterialTheme.typography.headlineMedium
+                        )
+                    }
                 }
             }
             checkPermissionsAndLoadContacts()
