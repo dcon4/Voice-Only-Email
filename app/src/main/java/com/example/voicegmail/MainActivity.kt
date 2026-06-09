@@ -10,6 +10,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.Surface
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import com.example.voicegmail.contacts.ContactManager
@@ -29,7 +30,7 @@ class MainActivity : AppCompatActivity() {
                     Text(
                         text = "VoiceGmail",
                         style = androidx.compose.material3.MaterialTheme.typography.headlineMedium,
-                        modifier = Alignment.CenterHorizontally
+                        modifier = Modifier.align(Alignment.CenterHorizontally)
                     )
                 }
             }
