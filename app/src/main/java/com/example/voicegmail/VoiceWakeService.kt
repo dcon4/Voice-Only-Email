@@ -1,5 +1,6 @@
 package com.example.voicegmail
 
+import android.Manifest
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -9,10 +10,12 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
+import androidx.core.content.ContextCompat
 import com.example.voicegmail.debug.DebugLogger
 import dagger.hilt.android.AndroidEntryPoint
 import javax.inject.Inject
@@ -55,6 +58,30 @@ class VoiceWakeService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+
+        // Guard: on Android 14+ calling startForeground with
+        // FOREGROUND_SERVICE_TYPE_MICROPHONE without RECORD_AUDIO granted
+        // throws SecurityException and crashes the whole process. On Android
+        // 13+ the foreground notification is silently dropped without
+        // POST_NOTIFICATIONS. Refuse to start in either case.
+        val micGranted = ContextCompat.checkSelfPermission(
+            this, Manifest.permission.RECORD_AUDIO
+        ) == PackageManager.PERMISSION_GRANTED
+
+        val notifGranted = Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+            ContextCompat.checkSelfPermission(
+                this, Manifest.permission.POST_NOTIFICATIONS
+            ) == PackageManager.PERMISSION_GRANTED
+
+        if (!micGranted || !notifGranted) {
+            DebugLogger.log(
+                "WakeService",
+                "Refusing to start: micGranted=$micGranted notifGranted=$notifGranted"
+            )
+            stopSelf()
+            return
+        }
+
         createNotificationChannel()
 
         // Acquire PARTIAL_WAKE_LOCK — keeps the CPU alive when the screen turns
@@ -143,5 +170,26 @@ class VoiceWakeService : Service() {
 
         fun stop(context: Context) =
             context.stopService(Intent(context, VoiceWakeService::class.java))
+
+        /**
+         * Returns the list of dangerous permissions that [VoiceWakeService] needs
+         * in order to run safely. On API < 33 POST_NOTIFICATIONS is not required
+         * and is therefore never reported as missing.
+         */
+        fun missingPermissions(context: Context): List<String> {
+            val pm = context.packageManager
+            val mic = pm.checkPermission(Manifest.permission.RECORD_AUDIO, context.packageName)
+            val missing = mutableListOf<String>()
+            if (mic != PackageManager.PERMISSION_GRANTED) missing += Manifest.permission.RECORD_AUDIO
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                val notif = pm.checkPermission(
+                    Manifest.permission.POST_NOTIFICATIONS, context.packageName
+                )
+                if (notif != PackageManager.PERMISSION_GRANTED) {
+                    missing += Manifest.permission.POST_NOTIFICATIONS
+                }
+            }
+            return missing
+        }
     }
 }
