@@ -96,6 +96,33 @@ No unit/UI tests currently configured. `testImplementation` and `androidTestImpl
 4. **Bluetooth flavor** — Install both `standard` and `bt` APKs; they have different application IDs
 5. **ProGuard** — Currently disabled (`isMinifyEnabled = false`); rules file is empty
 
+## Required features (per the global file)
+
+- [x] **In-app debug log share.** A bug-report icon in the inbox
+      `TopAppBar` opens `InboxViewModel.getShareLogIntent()`, which
+      returns a `FileProvider`-backed `ACTION_SEND` chooser. Log file
+      is written by `DebugLogger` in
+      `app/src/{debug,release}/java/com/example/voicegmail/debug/`.
+- [x] **Verbose logging toggle.** Exposed in
+      `VoiceSettingsPanel` (gear icon → "Verbose logging"). Persisted
+      in `SharedPreferences` key `verbose_logging` under
+      `wake_prefs`. Read back in `VoiceGmailApp.onCreate` and applied
+      via `DebugLogger.verboseEnabled` before the first log call.
+
+## Required CI (per the global file)
+
+- [x] `.github/workflows/android.yml` runs on push to `main` and on
+      PRs against `main`, plus `workflow_dispatch`. It builds
+      `:app:assembleDebug` for both `standard` and `bt` flavors and
+      uploads them as `debug-apk-standard` and `debug-apk-bt`
+      artifacts. Release builds only when `ANDROID_KEYSTORE_BASE64`
+      secret is set.
+
+If either of these gets removed or broken in a future change, the
+project is no longer usable for the user. Treat the "share log"
+button and the artifact upload as critical infrastructure, not
+nice-to-haves.
+
 ## Project-specific rules (override the global file)
 
 - **GitHub is the only source of truth for this project.** Local
