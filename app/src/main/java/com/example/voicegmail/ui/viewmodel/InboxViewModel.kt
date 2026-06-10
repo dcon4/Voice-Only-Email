@@ -139,35 +139,44 @@ class InboxViewModel @Inject constructor(
         mediaSessionController.onPrevious = { handleMediaPrevious() }
 
         viewModelScope.launch {
-            val earlyRedirect = oAuthRedirectBus.redirectUri.value
-            if (earlyRedirect != null) {
-                oAuthRedirectBus.consume()
-                handleOAuthRedirectUri(earlyRedirect)
-            } else {
-                // If a previous install granted an older set of scopes (e.g.
-                // pre-People-API), clear those tokens so the next sign-in
-                // collects the new scope set in one consent dialog.
-                val forcedReConsent = authRepository.clearTokensIfReConsentRequired()
-                if (forcedReConsent) {
-                    _isSignedIn.value = false
-                    _uiState.value = InboxUiState.SignedOut
-                    voiceManager.speak(
-                        "VoiceGmail has been updated and needs additional " +
-                            "permission to access your contacts. Please sign in again to continue."
-                    )
+            try {
+                val earlyRedirect = oAuthRedirectBus.redirectUri.value
+                if (earlyRedirect != null) {
+                    oAuthRedirectBus.consume()
+                    handleOAuthRedirectUri(earlyRedirect)
                 } else {
-                    val hasToken = authRepository.hasAccessToken().first()
-                    _isSignedIn.value = hasToken
-                    if (hasToken) loadInbox()
-                    else {
+                    // If a previous install granted an older set of scopes (e.g.
+                    // pre-People-API), clear those tokens so the next sign-in
+                    // collects the new scope set in one consent dialog.
+                    val forcedReConsent = authRepository.clearTokensIfReConsentRequired()
+                    if (forcedReConsent) {
+                        _isSignedIn.value = false
                         _uiState.value = InboxUiState.SignedOut
-                        voiceManager.speak("Please sign in to access your Gmail inbox.")
+                        voiceManager.speak(
+                            "VoiceGmail has been updated and needs additional " +
+                                "permission to access your contacts. Please sign in again to continue."
+                        )
+                    } else {
+                        val hasToken = authRepository.hasAccessToken().first()
+                        _isSignedIn.value = hasToken
+                        if (hasToken) loadInbox()
+                        else {
+                            _uiState.value = InboxUiState.SignedOut
+                            voiceManager.speak("Please sign in to access your Gmail inbox.")
+                        }
                     }
                 }
-            }
-            oAuthRedirectBus.redirectUri.filterNotNull().collect { uri ->
-                oAuthRedirectBus.consume()
-                handleOAuthRedirectUri(uri)
+                oAuthRedirectBus.redirectUri.filterNotNull().collect { uri ->
+                    oAuthRedirectBus.consume()
+                    handleOAuthRedirectUri(uri)
+                }
+            } catch (e: Exception) {
+                DebugLogger.log("InboxViewModel", "Init failed: ${e.message}")
+                _uiState.value = InboxUiState.Error(
+                    "Failed to initialize: ${e.message ?: "unknown error"}",
+                    isAuthError = false
+                )
+                voiceManager.speak("VoiceGmail failed to start. Please try restarting the app.")
             }
         }
         viewModelScope.launch {
