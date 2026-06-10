@@ -193,13 +193,28 @@ class InboxViewModel @Inject constructor(
 
     /**
      * Toggle between background mode (wake on power button) and foreground-only mode.
-     * Starts or stops VoiceWakeService accordingly.
+     * Starts or stops VoiceWakeService accordingly. If the user enables background
+     * mode without granting RECORD_AUDIO (and POST_NOTIFICATIONS on API 33+),
+     * the service would crash on Android 14+ — refuse to start it and announce
+     * the missing permission via TTS instead.
      */
     fun setRunInBackground(enabled: Boolean) {
         wakePreferences.setRunInBackground(enabled)
         _runInBackground.value = enabled
         if (enabled) {
-            VoiceWakeService.start(context)
+            val missing = VoiceWakeService.missingPermissions(context)
+            if (missing.isEmpty()) {
+                VoiceWakeService.start(context)
+            } else {
+                DebugLogger.log(
+                    "InboxViewModel",
+                    "Refusing to start wake service: missing $missing"
+                )
+                voiceManager.speak(
+                    "Background listening needs the microphone and notification permissions. " +
+                        "Please grant them in Settings, then turn this back on."
+                )
+            }
         } else {
             VoiceWakeService.stop(context)
         }
