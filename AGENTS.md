@@ -1,20 +1,16 @@
-# VoiceGmail — Agent Instructions
+# VoiceGmail — project-level agent addendum
 
-## About the User
-The user is **not a programmer**. They are blind and rely on this app to read and send Gmail hands-free. Assume no coding knowledge.
+This file is project-specific. The **global** rules for how any AI
+agent should work with this user live at
+`~/.config/opencode/AGENTS.md`. Read that first; the rules below only
+add to or override it for this project.
 
-**How to help:**
-- Explain in plain language — avoid jargon, or define it immediately when used
-- Give step-by-step instructions for anything they have to do on their computer, phone, or in a web browser
-- When showing a command, explain what it does in everyday terms
-- For build/install issues, guide them to what to download, click, or paste — not just the error
-- Confirm before running any command that changes files, especially git commits or pushes
-- When something requires a developer account, API key, or console setup, link to the exact page and tell them what to click
-- Prefer short, concrete answers over technical depth unless they ask
-- Never assume they know what terms like "keystore", "SHA-1", "PKCE", "scope", or "APK" mean
+## About this project
 
-## Project Overview
-Android voice-first Gmail client (Kotlin, Jetpack Compose, Hilt, AppAuth, Gmail REST API). Built for totally blind users — fully hands-free.
+Android voice-first Gmail client (Kotlin, Jetpack Compose, Hilt,
+AppAuth, Gmail REST API). Built for a totally blind user — fully
+hands-free. The user does not see the screen. Every screen and
+interaction must work with TalkBack and the TTS voice loop.
 
 ## Build System
 - Gradle Kotlin DSL (`build.gradle.kts`, `app/build.gradle.kts`)
@@ -99,3 +95,25 @@ No unit/UI tests currently configured. `testImplementation` and `androidTestImpl
 3. **Scope version bump** — Increment `AuthConfig.SCOPE_VERSION` when adding/removing scopes
 4. **Bluetooth flavor** — Install both `standard` and `bt` APKs; they have different application IDs
 5. **ProGuard** — Currently disabled (`isMinifyEnabled = false`); rules file is empty
+
+## Project-specific rules (override the global file)
+
+- **GitHub is the only source of truth for this project.** Local
+  clones are disposable. Never commit to a local-only state and
+  treat it as "done".
+- **The non-programmer user cannot build, install, or test APKs on
+  their own.** When work needs a real Android environment, stop and
+  tell them what to run on their machine, and what to expect. Do not
+  fake a build success — say plainly that you couldn't build.
+- **Any new dangerous permission** (RECORD_AUDIO, POST_NOTIFICATIONS,
+  READ_CONTACTS, READ_MEDIA_*, etc.) needs both a `<uses-permission>`
+  declaration in the manifest **and** a runtime request in
+  `MainActivity` via `ActivityResultContracts.RequestPermission`.
+  Manifest-only is a known footgun (see commit `f124d18` / PR #21).
+- **`VoiceWakeService` and any service with
+  `FOREGROUND_SERVICE_TYPE_MICROPHONE` MUST guard `onCreate`** with
+  a `RECORD_AUDIO` check and `stopSelf()` on denial. On Android 14+
+  this throws `SecurityException` and crashes the process.
+- **Author identity for AI-generated commits is `dcon4 <dcon4@gmail.com>`**
+  unless the user says otherwise. Never leave the opencode default
+  `dcon4@users.noreply.github.com` on a merged commit.
