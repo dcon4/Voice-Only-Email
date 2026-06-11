@@ -58,9 +58,7 @@ class MainActivity : ComponentActivity() {
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
             if (granted) {
                 DebugLogger.log("MainActivity", "RECORD_AUDIO granted")
-                if (wakePreferences.isRunInBackground()) {
-                    VoiceWakeService.start(this)
-                }
+                maybeStartWakeService()
             } else {
                 DebugLogger.log("MainActivity", "RECORD_AUDIO DENIED")
                 voiceManager.speak(
@@ -221,16 +219,26 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun startWakeServiceIfAllowed() {
+    private fun canStartWakeService(): Boolean {
         val micGranted = ContextCompat.checkSelfPermission(
             this, Manifest.permission.RECORD_AUDIO
         ) == PackageManager.PERMISSION_GRANTED
 
-        if (micGranted && wakePreferences.isRunInBackground()) {
-            // VoiceWakeService.onCreate will double-check permissions and
-            // stopSelf() cleanly if anything has been revoked in Settings
-            // since last time.
+        val notifGranted = Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+            ContextCompat.checkSelfPermission(
+                this, Manifest.permission.POST_NOTIFICATIONS
+            ) == PackageManager.PERMISSION_GRANTED
+
+        return micGranted && notifGranted && wakePreferences.isRunInBackground()
+    }
+
+    private fun maybeStartWakeService() {
+        if (canStartWakeService()) {
             VoiceWakeService.start(this)
         }
+    }
+
+    private fun startWakeServiceIfAllowed() {
+        maybeStartWakeService()
     }
 }

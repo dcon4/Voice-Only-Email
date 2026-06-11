@@ -59,11 +59,6 @@ class VoiceWakeService : Service() {
     override fun onCreate() {
         super.onCreate()
 
-        // Guard: on Android 14+ calling startForeground with
-        // FOREGROUND_SERVICE_TYPE_MICROPHONE without RECORD_AUDIO granted
-        // throws SecurityException and crashes the whole process. On Android
-        // 13+ the foreground notification is silently dropped without
-        // POST_NOTIFICATIONS. Refuse to start in either case.
         val micGranted = ContextCompat.checkSelfPermission(
             this, Manifest.permission.RECORD_AUDIO
         ) == PackageManager.PERMISSION_GRANTED
@@ -78,6 +73,16 @@ class VoiceWakeService : Service() {
                 "WakeService",
                 "Refusing to start: micGranted=$micGranted notifGranted=$notifGranted"
             )
+            // On API 31+ the system throws ForegroundServiceDidNotStartInTimeException
+            // if startForeground() is never called. Call it now (if we can) so
+            // stopSelf() below is safe. Without POST_NOTIFICATIONS on API 33+
+            // this will throw, in which case just stopSelf() and let it fall.
+            if (notifGranted) {
+                try {
+                    createNotificationChannel()
+                    startForeground(NOTIFICATION_ID, buildNotification())
+                } catch (_: Exception) {}
+            }
             stopSelf()
             return
         }
@@ -165,8 +170,21 @@ class VoiceWakeService : Service() {
         const val WAKE_LOCK_TAG    = "VoiceGmail:WakeServiceLock"
         const val ACTION_SCREEN_WAKE = "com.example.voicegmail.SCREEN_WAKE"
 
-        fun start(context: Context) =
+        fun start(context: Context) {
+            // Safety check: never start the service unless both RECORD_AUDIO
+            // and POST_NOTIFICATIONS are granted. The caller should already
+            // have checked this, but a second line of defence avoids the
+            // ForegroundServiceDidNotStartInTimeException crash on API 34+.
+            val missing = missingPermissions(context)
+            if (missing.isNotEmpty()) {
+                DebugLogger.log(
+                    "WakeService",
+                    "start() refused — missing: $missing"
+                )
+                return
+            }
             context.startForegroundService(Intent(context, VoiceWakeService::class.java))
+        }
 
         fun stop(context: Context) =
             context.stopService(Intent(context, VoiceWakeService::class.java))
