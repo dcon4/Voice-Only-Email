@@ -52,7 +52,7 @@ android {
             useSupportLibrary = true
         }
 
-        manifestPlaceholders["appAuthRedirectScheme"] = "disabled"
+        manifestPlaceholders["appAuthRedirectScheme"] = releaseOauthRedirectScheme
         buildConfigField("String", "OAUTH_REDIRECT_SCHEME", "\"$releaseOauthRedirectScheme\"")
         buildConfigField("String", "OAUTH_CLIENT_ID", "\"$releaseOauthClientId\"")
         buildConfigField("String", "BIBLE_BRAIN_API_KEY", "\"$bibleBrainApiKey\"")
@@ -92,7 +92,7 @@ android {
 
     buildTypes {
         debug {
-            manifestPlaceholders["appAuthRedirectScheme"] = "disabled"
+            manifestPlaceholders["appAuthRedirectScheme"] = debugOauthRedirectScheme
             buildConfigField("String", "OAUTH_REDIRECT_SCHEME", "\"$debugOauthRedirectScheme\"")
             buildConfigField("String", "OAUTH_CLIENT_ID", "\"$debugOauthClientId\"")
         }
