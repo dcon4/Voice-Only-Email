@@ -76,12 +76,26 @@ class MainActivity : ComponentActivity() {
                     "Notification permission granted. The app will show a status indicator " +
                         "while running in the background."
                 )
+                maybeStartWakeService()
             } else {
-                voiceManager.speak(
-                    "Notification permission was denied. The app still works, but Android " +
-                        "may stop it in the background without showing a notification. " +
-                        "You can grant this later in your device settings under App Notifications."
+                // If "Don't ask again" is checked, shouldShowRequestPermissionRationale
+                // returns false. The only way in is via App Settings.
+                val canAskAgain = shouldShowRequestPermissionRationale(
+                    Manifest.permission.POST_NOTIFICATIONS
                 )
+                if (!canAskAgain) {
+                    voiceManager.speak(
+                        "Notification permission was denied and will not be asked again. " +
+                            "To wake on power button, go to Android App Settings for VoiceGmail " +
+                            "and enable Notifications."
+                    )
+                } else {
+                    voiceManager.speak(
+                        "Notification permission was denied. The app still works, but Android " +
+                            "may stop it in the background without showing a notification. " +
+                            "You can grant this later in your device settings under App Notifications."
+                    )
+                }
             }
         }
 
@@ -192,11 +206,11 @@ class MainActivity : ComponentActivity() {
     }
 
     /**
-     * Requests all dangerous permissions the app needs at startup, in a
-     * sensible order. The mic permission is requested first because
-     * VoiceWakeService requires it (and crashes on Android 14+ if granted
-     * later). The notification permission is requested last with a short
-     * TTS-delivered rationale so the dialog doesn't appear out of nowhere.
+     * Requests all dangerous permissions the app needs at startup. The mic
+     * permission is requested first because VoiceWakeService requires it.
+     * The notification permission is requested immediately after (queued by
+     * the system behind the mic dialog) with a short TTS rationale so the
+     * user knows why it's needed.
      */
     private fun requestPermissionsAtStartup() {
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
@@ -209,13 +223,14 @@ class MainActivity : ComponentActivity() {
             ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
                 != PackageManager.PERMISSION_GRANTED
         ) {
+            // Speak rationale first, then show the dialog so TTS can deliver it
             voiceManager.speak(
                 "VoiceGmail needs notification permission to show a status indicator " +
                     "while running in the background. Please allow notifications when prompted."
             )
             Handler(Looper.getMainLooper()).postDelayed({
                 notifPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-            }, 4500)
+            }, 1000)
         }
     }
 

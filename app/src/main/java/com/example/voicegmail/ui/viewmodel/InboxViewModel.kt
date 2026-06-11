@@ -416,7 +416,7 @@ class InboxViewModel @Inject constructor(
             when (cmd) {
                 is VoiceCommand.SessionTimeout, is VoiceCommand.GoToSleep -> {
                     // Preserve browser bookmark — user can resume after the next wake.
-                    voiceCommandEngine.cancelListening()
+                    voiceManager.stopAll()
                     voiceManager.speak(
                         "Going to sleep. Press the power button and say 'continue' " +
                             "to resume the article."
@@ -468,7 +468,7 @@ class InboxViewModel @Inject constructor(
 
                 is VoiceCommand.SessionTimeout, is VoiceCommand.GoToSleep -> {
                     // Preserve bookmark — user can resume after the next wake.
-                    voiceCommandEngine.cancelListening()
+                    voiceManager.stopAll()
                     voiceManager.speak(
                         "Going to sleep. Press the power button and say 'continue' to resume reading."
                     )
@@ -691,14 +691,13 @@ class InboxViewModel @Inject constructor(
             }
 
             is VoiceCommand.GoToSleep -> {
-                // Use cancelListening (destroy) instead of stopAll (stopListening)
-                // because stopListening fires onError which races back into this
-                // callback chain with FreeText("") → "I didn't understand".
-                voiceCommandEngine.cancelListening()
+                // Stop all audio (TTS + mic) before speaking the sleep message,
+                // so any email or article being read aloud is interrupted immediately.
+                voiceManager.stopAll()
+                mediaSessionController.setStopped()
                 // NOTE: Do NOT clear pausedPosition here.  If a reading bookmark
                 // exists, the user must be able to wake the app later and say
                 // 'continue' to resume from exactly where they left off.
-                mediaSessionController.setStopped()
                 val msg = if (pausedPosition != null)
                     "Going to sleep. Press the power button and say 'continue' to resume reading."
                 else
