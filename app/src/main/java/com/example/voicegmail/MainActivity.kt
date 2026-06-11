@@ -76,10 +76,7 @@ class MainActivity : ComponentActivity() {
                     "Notification permission granted. The app will show a status indicator " +
                         "while running in the background."
                 )
-                maybeStartWakeService()
             } else {
-                // If "Don't ask again" is checked, shouldShowRequestPermissionRationale
-                // returns false. The only way in is via App Settings.
                 val canAskAgain = shouldShowRequestPermissionRationale(
                     Manifest.permission.POST_NOTIFICATIONS
                 )
@@ -96,6 +93,13 @@ class MainActivity : ComponentActivity() {
                             "You can grant this later in your device settings under App Notifications."
                     )
                 }
+            }
+            // Request mic permission next (sequentially, after notif dialog)
+            if (ContextCompat.checkSelfPermission(
+                    this, Manifest.permission.RECORD_AUDIO
+                ) != PackageManager.PERMISSION_GRANTED
+            ) {
+                micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
             }
         }
 
@@ -206,24 +210,22 @@ class MainActivity : ComponentActivity() {
     }
 
     /**
-     * Requests all dangerous permissions the app needs at startup. The mic
-     * permission is requested first because VoiceWakeService requires it.
-     * The notification permission is requested immediately after (queued by
-     * the system behind the mic dialog) with a short TTS rationale so the
-     * user knows why it's needed.
+     * Requests dangerous permissions sequentially so each dialog is visible:
+     * notification first (with a TTS rationale), then mic. This avoids the
+     * notification dialog being auto-denied when the mic dialog overlaps it.
      */
     private fun requestPermissionsAtStartup() {
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
-            != PackageManager.PERMISSION_GRANTED
-        ) {
-            micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
-        }
+        val micNeeded = ContextCompat.checkSelfPermission(
+            this, Manifest.permission.RECORD_AUDIO
+        ) != PackageManager.PERMISSION_GRANTED
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
-            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
-                != PackageManager.PERMISSION_GRANTED
-        ) {
-            // Speak rationale first, then show the dialog so TTS can deliver it
+        val notifNeeded = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(
+                this, Manifest.permission.POST_NOTIFICATIONS
+            ) != PackageManager.PERMISSION_GRANTED
+
+        // Request notification first, mic second — sequential, no overlap
+        if (notifNeeded) {
             voiceManager.speak(
                 "VoiceGmail needs notification permission to show a status indicator " +
                     "while running in the background. Please allow notifications when prompted."
@@ -231,6 +233,11 @@ class MainActivity : ComponentActivity() {
             Handler(Looper.getMainLooper()).postDelayed({
                 notifPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
             }, 1000)
+        }
+
+        // Request mic separately (or immediately if notification was not needed)
+        if (micNeeded && !notifNeeded) {
+            micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
         }
     }
 
