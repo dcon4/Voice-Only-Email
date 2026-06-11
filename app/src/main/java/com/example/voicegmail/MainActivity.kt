@@ -41,6 +41,7 @@ class MainActivity : ComponentActivity() {
 
     @Inject lateinit var voiceManager: VoiceManager
     @Inject lateinit var oAuthRedirectBus: OAuthRedirectBus
+    @Inject lateinit var wakeEventBus: WakeEventBus
     @Inject lateinit var wakePreferences: WakePreferences
 
     /**
@@ -129,6 +130,7 @@ class MainActivity : ComponentActivity() {
 
         requestPermissionsAtStartup()
         maybeStartWakeService()
+        registerScreenReceiver()
 
         setContent {
             VoiceGmailTheme {
@@ -182,16 +184,6 @@ class MainActivity : ComponentActivity() {
     }
 
     private var screenReceiver: BroadcastReceiver? = null
-
-    override fun onResume() {
-        super.onResume()
-        registerScreenReceiver()
-    }
-
-    override fun onPause() {
-        super.onPause()
-        unregisterScreenReceiver()
-    }
 
     override fun onDestroy() {
         super.onDestroy()
@@ -276,12 +268,14 @@ class MainActivity : ComponentActivity() {
     }
 
     /**
-     * Registers a receiver for [ACTION_SCREEN_OFF] so speech is paused
-     * immediately when the display turns off. The receiver is active only
-     * while the activity is in the foreground ([onResume]..[onPause]).
+     * Registers a receiver for [ACTION_SCREEN_OFF] (pause speech) and
+     * [ACTION_SCREEN_ON] (post wake event). Registered in [onCreate] and
+     * unregistered in [onDestroy] so it stays active even when the activity
+     * is paused with the screen off.
      *
-     * [ACTION_SCREEN_ON] is handled by [VoiceWakeService] when it is running;
-     * this receiver only handles the off event.
+     * When [VoiceWakeService] is also running (notification permission
+     * granted), it independently receives [ACTION_SCREEN_ON] and posts a
+     * duplicate wake event, which is harmless.
      */
     private fun registerScreenReceiver() {
         if (screenReceiver != null) return
@@ -292,10 +286,18 @@ class MainActivity : ComponentActivity() {
                         DebugLogger.log("MainActivity", "Screen OFF")
                         voiceManager.stopAll()
                     }
+                    Intent.ACTION_SCREEN_ON -> {
+                        DebugLogger.log("MainActivity", "Screen ON")
+                        wakeEventBus.postWake()
+                    }
                 }
             }
         }
-        registerReceiver(screenReceiver, IntentFilter(Intent.ACTION_SCREEN_OFF))
+        val filter = IntentFilter().apply {
+            addAction(Intent.ACTION_SCREEN_ON)
+            addAction(Intent.ACTION_SCREEN_OFF)
+        }
+        registerReceiver(screenReceiver, filter)
     }
 
     private fun unregisterScreenReceiver() {
