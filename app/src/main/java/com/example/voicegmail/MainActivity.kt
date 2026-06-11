@@ -1,8 +1,10 @@
 package com.example.voicegmail
 
 import android.Manifest
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
@@ -126,7 +128,7 @@ class MainActivity : ComponentActivity() {
         ).also { it.acquire() } // indefinite; released in onDestroy
 
         requestPermissionsAtStartup()
-        startWakeServiceIfAllowed()
+        maybeStartWakeService()
 
         setContent {
             VoiceGmailTheme {
@@ -179,8 +181,21 @@ class MainActivity : ComponentActivity() {
         handleOAuthRedirectIntent(intent)
     }
 
+    private var screenReceiver: BroadcastReceiver? = null
+
+    override fun onResume() {
+        super.onResume()
+        registerScreenReceiver()
+    }
+
+    override fun onPause() {
+        super.onPause()
+        unregisterScreenReceiver()
+    }
+
     override fun onDestroy() {
         super.onDestroy()
+        unregisterScreenReceiver()
         wakeLock?.let { if (it.isHeld) it.release() }
         wakeLock = null
         voiceManager.shutdown()
@@ -260,7 +275,33 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun startWakeServiceIfAllowed() {
-        maybeStartWakeService()
+    /**
+     * Registers a receiver for [ACTION_SCREEN_OFF] so speech is paused
+     * immediately when the display turns off. The receiver is active only
+     * while the activity is in the foreground ([onResume]..[onPause]).
+     *
+     * [ACTION_SCREEN_ON] is handled by [VoiceWakeService] when it is running;
+     * this receiver only handles the off event.
+     */
+    private fun registerScreenReceiver() {
+        if (screenReceiver != null) return
+        screenReceiver = object : BroadcastReceiver() {
+            override fun onReceive(context: Context?, intent: Intent?) {
+                when (intent?.action) {
+                    Intent.ACTION_SCREEN_OFF -> {
+                        DebugLogger.log("MainActivity", "Screen OFF")
+                        voiceManager.stopAll()
+                    }
+                }
+            }
+        }
+        registerReceiver(screenReceiver, IntentFilter(Intent.ACTION_SCREEN_OFF))
     }
+
+    private fun unregisterScreenReceiver() {
+        val r = screenReceiver ?: return
+        screenReceiver = null
+        runCatching { unregisterReceiver(r) }
+    }
+
 }
