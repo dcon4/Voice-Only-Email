@@ -273,7 +273,7 @@ class InboxViewModel @Inject constructor(
     }
 
     fun clearBibleVoiceFromPanel() {
-        voiceManager.bibleVoiceName = ""
+        voiceManager.setBibleVoiceName("")
         _selectedBibleVoiceName.value = null
     }
 
