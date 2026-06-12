@@ -217,6 +217,44 @@ object ContactMatcher {
         return expanded.toList()
     }
 
+    // NATO phonetic alphabet + common letter-like words → single letter.
+    // Used so "alpha bravo charlie at gmail dot com" → "abc@gmail.com".
+    private val phoneticLetterMap: Map<String, String> by lazy {
+        mapOf(
+            "alpha" to "a", "bravo" to "b", "charlie" to "c", "delta" to "d",
+            "echo" to "e", "foxtrot" to "f", "golf" to "g", "hotel" to "h",
+            "india" to "i", "juliett" to "j", "juliet" to "j", "kilo" to "k",
+            "lima" to "l", "mike" to "m", "november" to "n", "oscar" to "o",
+            "papa" to "p", "quebec" to "q", "romeo" to "r", "sierra" to "s",
+            "tango" to "t", "uniform" to "u", "victor" to "v", "whiskey" to "w",
+            "whisky" to "w", "xray" to "x", "x-ray" to "x", "yankee" to "y",
+            "zulu" to "z"
+        )
+    }
+
+    // Filler phrases that users often prefix the address with.
+    private val fillerPattern: Regex by lazy {
+        Regex(
+            "\\b(my email is|email is|my email address is|email address is|" +
+                "it's|it is|that is|that's|the email is|i need|i want|" +
+                "send to|send it to|please send to|please send it to)\\b",
+            RegexOption.IGNORE_CASE
+        )
+    }
+
+    // Common domain auto-corrections for when the ASR omits the TLD.
+    private val domainMap: Map<String, String> by lazy = mapOf(
+        "gmail" to "gmail.com", "googlemail" to "gmail.com",
+        "yahoo" to "yahoo.com", "ymail" to "yahoo.com",
+        "outlook" to "outlook.com", "hotmail" to "outlook.com",
+        "live" to "live.com", "icloud" to "icloud.com",
+        "me" to "me.com", "mac" to "me.com",
+        "protonmail" to "protonmail.com", "proton" to "protonmail.com",
+        "aol" to "aol.com", "att" to "att.net",
+        "verizon" to "verizon.net", "comcast" to "comcast.net",
+        "cox" to "cox.net"
+    )
+
     /**
      * Attempts to parse free-form dictation like "john at gmail dot com"
      * into a canonical RFC-5321-shaped email address.  Returns `null` if
@@ -229,10 +267,21 @@ object ContactMatcher {
      *   "dash"           → "-"
      *   single-letter spellings: "j-o-h-n" or "j o h n" → "john" when the
      *   sequence consists only of single letters separated by spaces/dashes.
+     *   NATO phonetic alphabet: "alpha bravo charlie" → "abc"
+     *   filler phrases stripped: "my email is", "send to", etc.
+     *   common domain names expanded: just "gmail" → "gmail.com"
      */
     fun parseDictatedEmail(raw: String): String? {
         if (raw.isBlank()) return null
         var s = raw.lowercase(Locale.US).trim()
+
+        // Strip filler phrases ("my email is", "send to", etc.)
+        s = s.replace(fillerPattern, "").trim()
+
+        // Map NATO phonetic words to single letters *before* the punctuation
+        // replacements so "alpha bravo charlie at gmail dot com" is processed
+        // token-by-token.
+        s = mapPhoneticLetters(s)
 
         // Verbal punctuation → ASCII.
         s = s
@@ -251,6 +300,13 @@ object ContactMatcher {
         s = s.replace(Regex("\\bdotcom\\b"), ".com")
              .replace(Regex("\\bdotorg\\b"), ".org")
              .replace(Regex("\\bdotnet\\b"), ".net")
+
+        // Auto-correct bare domain names to full domains where the user
+        // omitted the TLD (e.g. "just gmail" → "gmail.com").  Only replace
+        // when the token stands alone so "gmail.com" is not doubled.
+        for ((short, full) in domainMap) {
+            s = s.replace(Regex("\\b${Regex.escape(short)}\\b(?!\\.)"), full)
+        }
 
         // Collapse "j-o-h-n" or "j o h n" sequences into "john" — but ONLY
         // when EVERY token is a single letter, so we don't mangle real words.
@@ -272,6 +328,66 @@ object ContactMatcher {
         }
 
         return if (looksLikeEmail(s)) s else null
+    }
+
+    /**
+     * Aggressively attempts to extract an email-shaped string from arbitrary
+     * recognizer output using the full phonetic letter map, token→symbol,
+     * and single-letter concatenation.  Unlike [parseDictatedEmail] this
+     * does NOT require "at" or "dot" to be present — it treats every token
+     * as a potential address component.
+     *
+     * Used as the fallback inside the compose spell flow when the standard
+     * parser returns null.
+     */
+    fun tryParseSpelledOut(input: String): String? {
+        if (input.isBlank()) return null
+        var s = input.lowercase(Locale.US).trim()
+        s = s.replace(fillerPattern, "").trim()
+        s = mapPhoneticLetters(s)
+
+        val tokens = s.split(Regex("[\\s,;:!?]+"))
+        val out = StringBuilder()
+        var hadAt = false
+        var hadDot = false
+        for (t in tokens) {
+            when {
+                // Already a punctuation symbol or short token.
+                t == "@" || t == "at" -> { out.append('@'); hadAt = true }
+                t == "." || t == "dot" || t == "period" || t == "point" -> { out.append('.'); hadDot = true }
+                t == "_" || t == "underscore" -> out.append('_')
+                t == "-" || t == "dash" || t == "hyphen" -> out.append('-')
+                // Single letter or digit — append directly.
+                t.length == 1 && (t[0].isLetterOrDigit()) -> out.append(t)
+                // Known domain — append with .TLD if no dot yet.
+                !hadAt && domainMap.containsKey(t) -> out.append(domainMap[t])
+                // Token contains @ or . — keep it raw.
+                t.contains("@") || t.contains(".") -> out.append(t)
+                // Token looks like a known TLD.
+                t in listOf("com", "org", "net", "edu", "gov", "io", "co", "uk") ->
+                    if (!hadDot) { out.append(".$t"); hadDot = true } else out.append(t)
+            }
+        }
+        val result = out.toString()
+            .replace(Regex("\\.{2,}"), ".")
+            .replace(Regex("@+"), "@")
+            .trim('.', '@', '-', '_')
+        return if (looksLikeEmail(result)) result else null
+    }
+
+    /**
+     * Walks the string token-by-token and replaces NATO phonetic-alphabet
+     * words with their single-letter equivalents.  Operates token-wise so
+     * "alpha bravo charlie" becomes "a b c", which [collapseSingleLetterRuns]
+     * can then fold into "abc".
+     */
+    private fun mapPhoneticLetters(input: String): String {
+        val tokens = input.split(Regex("(?<=\\s)|(?=\\s)"))
+        return tokens.joinToString("") { t ->
+            val stripped = t.trim()
+            val mapped = phoneticLetterMap[stripped]
+            if (mapped != null) t.replace(stripped, mapped) else t
+        }
     }
 
     /**

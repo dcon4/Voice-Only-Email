@@ -396,7 +396,9 @@ class ComposeViewModel @Inject constructor(
             }
             if (text == "done" || text == "send" || text == "finish" || text == "finished") {
                 val candidate = buf.toString()
-                val parsed = ContactMatcher.parseDictatedEmail(candidate) ?: candidate
+                val parsed = ContactMatcher.parseDictatedEmail(candidate)
+                    ?: ContactMatcher.tryParseSpelledOut(candidate)
+                    ?: candidate
                 if (parsed.contains("@") && parsed.contains(".")) {
                     confirmRecipient(parsed, displayName = null)
                 } else {

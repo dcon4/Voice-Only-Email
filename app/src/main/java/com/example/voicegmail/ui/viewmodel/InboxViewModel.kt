@@ -1257,7 +1257,9 @@ class InboxViewModel @Inject constructor(
                 composerSpellEmail(raw, cmd, emails)
                 return@speakThenListen
             }
-            val parsed = ContactMatcher.parseDictatedEmail(text) ?: text
+            val parsed = ContactMatcher.parseDictatedEmail(text)
+                ?: ContactMatcher.tryParseSpelledOut(text)
+                ?: text
             composeGoToSubject(parsed, cmd, emails)
         }
     }
