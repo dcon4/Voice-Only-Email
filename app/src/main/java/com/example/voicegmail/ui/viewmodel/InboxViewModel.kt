@@ -1196,7 +1196,7 @@ class InboxViewModel @Inject constructor(
                     when {
                         parsed.size == 1 -> composeGoToSubject(parsed[0], cmd, emails)
                         parsed.size > 1 -> composeEnumerateParsed(parsed, rawSpoken, cmd, emails)
-                        else -> composerSpellEmail(rawSpoken, cmd, emails)
+                        else -> composerSpellEmail(rawSpoken, cmd, emails, notFound = true)
                     }
                 }
             }
@@ -1258,10 +1258,12 @@ class InboxViewModel @Inject constructor(
         }
     }
 
-    private fun composerSpellEmail(raw: String, cmd: VoiceCommand, emails: List<EmailItem>) {
-        voiceCommandEngine.speakThenListen(
+    private fun composerSpellEmail(raw: String, cmd: VoiceCommand, emails: List<EmailItem>, notFound: Boolean = false) {
+        val prompt = if (notFound)
+            "I couldn't find a contact named ${raw.forSpeech()}. Please spell the email address letter by letter, for example 'D C O N N 4 at Gmail dot com'."
+        else
             "Please spell the email address letter by letter, for example 'D C O N N 4 at Gmail dot com'."
-        ) { c ->
+        voiceCommandEngine.speakThenListen(prompt) { c ->
             val text = rawText(c)
             if (text.isBlank()) {
                 composerSpellEmail(raw, cmd, emails)
