@@ -232,6 +232,59 @@ object ContactMatcher {
         )
     }
 
+    // Common English short words we should NOT split into individual letters.
+    private val COMMON_SHORT_WORDS: Set<String> = setOf(
+        "the", "and", "for", "are", "but", "not", "you", "all", "any", "can",
+        "had", "her", "was", "one", "our", "out", "has", "had", "been",
+        "they", "this", "that", "with", "from", "your", "which", "their",
+        "will", "would", "could", "should", "what", "when", "where",
+        "there", "each", "she", "his", "him", "who", "how", "its", "may",
+        "say", "get", "way", "like", "know", "than", "then", "them",
+        "some", "more", "just", "come", "over", "such", "these", "those",
+        "into", "upon", "here", "very", "much", "many", "most",
+        "never", "ever", "even", "still", "well", "down", "back", "only",
+        "often", "once", "also", "though",
+        "in", "at", "to", "on", "by", "of", "it", "is", "be", "he", "she",
+        "my", "me", "we", "or", "an", "as", "up", "us", "go", "no", "if",
+        "do", "so", "am", "ok"
+    )
+
+    /**
+     * Splits short all-alpha tokens that look like ASR-merged individual
+     * letters (e.g. "dco" → "d c o") and, in a spelling context, maps the
+     * common ASR misrecognition "in" → "n".
+     *
+     * Run this BEFORE [collapseSingleLetterRuns] so the expanded single
+     * letters can be properly collapsed.
+     */
+    private fun expandLetterRuns(input: String): String {
+        val tokens = input.split(Regex("(?<=\\s)|(?=\\s)"))
+        // First pass: split 2-5 letter words that aren't common English
+        val expanded = tokens.map { token ->
+            val trimmed = token.trim()
+            if (trimmed.length in 2..5 && trimmed.all { it.isLetter() }
+                && trimmed !in COMMON_SHORT_WORDS) {
+                token.replace(trimmed, trimmed.toCharArray().joinToString(" "))
+            } else token
+        }.toMutableList()
+
+        // Second pass: "in" → "n" when the context suggests spelling
+        for (i in expanded.indices) {
+            val trimmed = expanded[i].trim()
+            if (trimmed == "in") {
+                val prev = expanded.getOrNull(i - 1)?.trim() ?: ""
+                val next = expanded.getOrNull(i + 1)?.trim() ?: ""
+                val prevIsLetter = prev.length == 1 && prev[0].isLetter()
+                val nextIsLetterOrDigit = next.length == 1 && next[0].isLetterOrDigit()
+                val nextIsEmail = next.contains("@")
+                if (prevIsLetter || nextIsLetterOrDigit || nextIsEmail) {
+                    expanded[i] = expanded[i].replace("in", "n")
+                }
+            }
+        }
+        return expanded.joinToString("")
+    }
+
     // Filler phrases that users often prefix the address with.
     private val fillerPattern: Regex by lazy {
         Regex(
@@ -308,6 +361,10 @@ object ContactMatcher {
             s = s.replace(Regex("\\b${Regex.escape(short)}\\b(?!\\.)"), full)
         }
 
+        // Expand ASR-merged letter runs ("dco" → "d c o") and map "in" → "n"
+        // in spelling context, BEFORE single-letter collapse.
+        s = expandLetterRuns(s)
+
         // Collapse "j-o-h-n" or "j o h n" sequences into "john" — but ONLY
         // when EVERY token is a single letter, so we don't mangle real words.
         s = collapseSingleLetterRuns(s)
@@ -345,6 +402,7 @@ object ContactMatcher {
         var s = input.lowercase(Locale.US).trim()
         s = s.replace(fillerPattern, "").trim()
         s = mapPhoneticLetters(s)
+        s = expandLetterRuns(s)
 
         val tokens = s.split(Regex("[\\s,;:!?]+"))
         val out = StringBuilder()
