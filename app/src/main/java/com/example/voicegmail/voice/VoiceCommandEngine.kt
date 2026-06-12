@@ -243,6 +243,7 @@ class VoiceCommandEngine @Inject constructor(
             .replace(Regex("\\bredial\\b"), "read all unread")
             .replace(Regex("\\bre-dial\\b"), "read all unread")
             .replace(Regex("\\bread all\\b(?! unread)"), "read all unread")
+            .replace(Regex("\\bdecon\\b"), "dcon")
         return s
     }
 
@@ -290,7 +291,8 @@ class VoiceCommandEngine @Inject constructor(
                 lower.contains("draft it") || lower.contains("save it as draft") ->
                 VoiceCommand.SaveDraft
 
-            lower.contains("list drafts") || lower.contains("my drafts") ||
+            lower == "drafts" || lower == "draft" ||
+                lower.contains("list drafts") || lower.contains("my drafts") ||
                 lower.contains("show drafts") || lower.contains("check drafts") ||
                 lower.contains("open drafts") || lower.contains("view drafts") ||
                 lower.contains("all drafts") || lower.contains("see my drafts") ->

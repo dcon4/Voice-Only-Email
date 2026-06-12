@@ -748,9 +748,15 @@ class InboxViewModel @Inject constructor(
                     else -> command::class.simpleName ?: "unknown"
                 }
                 DebugLogger.log("InboxViewModel", "UNHANDLED command: $detail")
-                voiceCommandEngine.speakThenListen(
-                    "Sorry, I didn't understand: $detail. Say 'help' to hear available commands."
-                ) { cmd -> handleCommand(cmd, emails) }
+                // Empty FreeText means the user said nothing — go to sleep
+                // instead of looping on "Sorry, I didn't understand".
+                if (command is VoiceCommand.FreeText && command.text.isBlank()) {
+                    voiceManager.speak("Going to sleep. Press the power button to wake me.")
+                } else {
+                    voiceCommandEngine.speakThenListen(
+                        "Sorry, I didn't understand: $detail. Say 'help' to hear available commands."
+                    ) { cmd -> handleCommand(cmd, emails) }
+                }
             }
         }
     }
@@ -1385,6 +1391,7 @@ class InboxViewModel @Inject constructor(
         viewModelScope.launch {
             voiceManager.speak("Sending.")
             try {
+                DebugLogger.log("InboxViewModel", "Sending email — to=$to subject=$subject body=${body.take(80)}")
                 gmailRepository.sendEmail(to, subject, body)
                 if (gen != flowGen) return@launch
                 voiceManager.speak("Sent successfully.")
