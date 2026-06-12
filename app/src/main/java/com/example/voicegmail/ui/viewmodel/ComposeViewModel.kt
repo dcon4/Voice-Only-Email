@@ -82,6 +82,7 @@ class ComposeViewModel @Inject constructor(
     }
 
     fun startGuidedVoiceFlow() {
+        voiceCommandEngine.cancelListening()
         if (isForwardMode) {
             askForForwardExtra()
             return
