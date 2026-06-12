@@ -26,6 +26,7 @@ private const val TAG = "BibleVoiceFlow"
 @Singleton
 class BibleVoiceFlow @Inject constructor(
     private val bibleRepository: BibleRepository,
+    private val bibleTextRepository: BibleTextRepository,
     private val voiceCommandEngine: VoiceCommandEngine,
     private val voiceManager: VoiceManager
 ) {
@@ -43,10 +44,72 @@ class BibleVoiceFlow @Inject constructor(
         DebugLogger.log(TAG, "Bible flow started")
 
         if (!bibleRepository.isConfigured()) {
+            // Bible audio unavailable — offer text-reading fallback using bible-api.com
             voiceCommandEngine.speakThenListen(
-                "Bible audio is not configured yet. Please set your Bible Brain API key. " +
-                    "Say a command to continue."
-            ) { cmd -> onExit(cmd) }
+                "Bible audio is not configured. I can still read Bible passages using text. " +
+                    "Say a book and chapter like 'John chapter 3' or say 'cancel' to go back."
+            ) { cmd ->
+                when (cmd) {
+                    is VoiceCommand.Cancel, is VoiceCommand.GoBack -> onExit(VoiceCommand.None)
+                    is VoiceCommand.FreeText -> {
+                        val spoken = cmd.text.trim()
+                        if (spoken.isBlank()) {
+                            // re-prompt
+                            voiceCommandEngine.speakThenListen(
+                                "I didn't hear that. Say a book and chapter like 'John 3', or say 'cancel'."
+                            ) { retry -> start(scope, onExit) }
+                            return@speakThenListen
+                        }
+
+                        // Try parse as book+chapter (reuse parseBookAndChapter helper)
+                        val parsed = parseBookAndChapter(spoken)
+                        val bookId = parsed.first
+                        val chapFromSpeech = parsed.second
+
+                        // Build a reference string. If parsing found a book id and chapter,
+                        // prefer the raw spoken text as it's likely to contain the chapter.
+                        val reference = if (bookId != null && chapFromSpeech != null) {
+                            spoken // let the text-based API parse it (e.g. "John 3:16" or "John chapter 3")
+                        } else {
+                            // Use the spoken phrase directly — bible-api can accept various forms
+                            spoken
+                        }
+
+                        // Launch coroutine to fetch text and speak it
+                        scope.launch {
+                            try {
+                                val passage = bibleTextRepository.getPassageText(reference)
+                                if (passage == null || passage.isBlank()) {
+                                    voiceCommandEngine.speakThenListen(
+                                        "I couldn't fetch that passage. Try 'John 3:16' or 'Psalm 23', or say 'cancel'."
+                                    ) { retry -> start(scope, onExit) }
+                                    return@launch
+                                }
+
+                                // Chunk the returned text and read aloud using existing TTS helpers
+                                val chunks = chunkTextForTts(passage)
+                                readChunksSequentially(chunks, scope) {
+                                    // after reading, offer to read another or exit
+                                    voiceCommandEngine.speakThenListen(
+                                        "Read another passage or say 'cancel' to go back."
+                                    ) { nextCmd ->
+                                        when (nextCmd) {
+                                            is VoiceCommand.FreeText -> start(scope, onExit)
+                                            is VoiceCommand.Cancel, is VoiceCommand.GoBack -> onExit(VoiceCommand.None)
+                                            else -> start(scope, onExit)
+                                        }
+                                    }
+                                }
+                            } catch (e: Exception) {
+                                voiceCommandEngine.speakThenListen(
+                                    "Error fetching passage: ${e.message ?: "unknown"}. Say a command."
+                                ) { cmd2 -> onExit(cmd2) }
+                            }
+                        }
+                    }
+                    else -> onExit(cmd)
+                }
+            }
             return
         }
 
@@ -179,7 +242,7 @@ class BibleVoiceFlow @Inject constructor(
         }
     }
 
-    // ── Playback ──────────────────────────────────────────────────────────
+    // ── Playback ─────────────────────────────────────────────────────────�[...]
 
     private fun playCurrentChapter(scope: CoroutineScope, onExit: (VoiceCommand) -> Unit) {
         val bookId = currentBookId ?: return
@@ -316,6 +379,46 @@ class BibleVoiceFlow @Inject constructor(
     }
 
     // ── Parsing helpers ───────────────────────────────────────────────────
+
+    /**
+     * Chunk text into TTS-friendly pieces. Similar logic used elsewhere in the app.
+     */
+    private fun chunkTextForTts(text: String, maxChars: Int = 240): List<String> {
+        val sentences = Regex("(?<=[.!?])\\s+")
+            .split(text.trim())
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+        val chunks = mutableListOf<String>()
+        var current = StringBuilder()
+        for (s in sentences) {
+            if (current.isEmpty()) {
+                current.append(s)
+            } else if (current.length + 1 + s.length > maxChars) {
+                chunks.add(current.toString())
+                current = StringBuilder(s)
+            } else {
+                current.append(" ").append(s)
+            }
+        }
+        if (current.isNotEmpty()) chunks.add(current.toString())
+        return chunks
+    }
+
+    /**
+     * Read a list of chunks sequentially using the engine's no-listen chunk reader.
+     */
+    private fun readChunksSequentially(chunks: List<String>, scope: CoroutineScope, onDone: () -> Unit) {
+        if (chunks.isEmpty()) { onDone(); return }
+        var idx = 0
+        fun speakNext() {
+            if (idx >= chunks.size) { onDone(); return }
+            voiceCommandEngine.speakEmailChunk(chunks[idx]) {
+                idx++
+                speakNext()
+            }
+        }
+        speakNext()
+    }
 
     /**
      * Parse a spoken phrase like "Genesis 3", "John chapter 5", "first corinthians 13".
