@@ -29,6 +29,16 @@ class TtsSettingsRepository @Inject constructor(
         prefs.edit().remove("voice_name").apply()
     }
 
+    fun getBibleVoiceName(): String = prefs.getString("bible_voice_name", "") ?: ""
+
+    fun saveBibleVoiceName(name: String) {
+        prefs.edit().putString("bible_voice_name", name).apply()
+    }
+
+    fun clearBibleVoiceName() {
+        prefs.edit().remove("bible_voice_name").apply()
+    }
+
     fun saveEmailReadRate(rate: Float) {
         prefs.edit().putFloat("email_read_rate", rate).apply()
     }

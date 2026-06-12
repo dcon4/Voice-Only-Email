@@ -75,6 +75,7 @@ class VoiceManager @Inject constructor(
             if (status == TextToSpeech.SUCCESS) {
                 ttsReady = true
                 applyVoicePreference()
+                loadBibleVoiceFromSettings()
 
                 // Only set language explicitly if the engine exposes voices.
                 // Engines like IVONA manage their own voice/language internally
@@ -628,6 +629,90 @@ class VoiceManager @Inject constructor(
 
     fun stopListening() {
         mainHandler.post { speechRecognizer?.stopListening(); _isListening.value = false }
+    }
+
+    // ── Bible voice support ─────────────────────────────────────────────
+    private var savedTtsVoice: android.speech.tts.Voice? = null
+
+    /** Name of the TTS voice used for Bible reading (empty = use default). */
+    var bibleVoiceName: String = ""
+        private set
+
+    fun setBibleVoiceName(name: String) {
+        bibleVoiceName = name
+        ttsSettings.saveBibleVoiceName(name)
+    }
+
+    fun loadBibleVoiceFromSettings() {
+        bibleVoiceName = ttsSettings.getBibleVoiceName()
+    }
+
+    fun isTtsReady(): Boolean = ttsReady
+
+    /**
+     * Speak [text] via TTS and invoke [onDone] when utterance completes.
+     */
+    fun speak(text: String, onDone: () -> Unit) {
+        mainHandler.post {
+            if (!ttsReady) { onDone(); return@post }
+            DebugLogger.verbose(tag, "speak: ${text.take(80)}")
+            tts?.setSpeechRate(1.0f)
+            tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
+                override fun onStart(uid: String?) {}
+                override fun onDone(uid: String?) {
+                    tts?.setOnUtteranceProgressListener(null)
+                    mainHandler.post(onDone)
+                }
+                @Deprecated("Deprecated in API 21")
+                override fun onError(uid: String?) {
+                    tts?.setOnUtteranceProgressListener(null)
+                    mainHandler.post(onDone)
+                }
+            })
+            tts?.speak(phoneticize(text), TextToSpeech.QUEUE_FLUSH, null, utteranceId)
+        }
+    }
+
+    /**
+     * Speak [text] using the TTS voice named [voiceName], then invoke [onDone].
+     * The previous voice is restored after speaking.
+     */
+    fun speakWithVoice(text: String, voiceName: String, onDone: () -> Unit) {
+        mainHandler.post {
+            if (!ttsReady) { onDone(); return@post }
+            savedTtsVoice = tts?.voice
+            val bibleVoice = tts?.voices?.find { it.name == voiceName }
+            if (bibleVoice != null) tts?.voice = bibleVoice
+            DebugLogger.verbose(tag, "speakWithVoice(voice=$voiceName): ${text.take(80)}")
+            tts?.setSpeechRate(1.0f)
+            tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
+                override fun onStart(uid: String?) {}
+                override fun onDone(uid: String?) {
+                    tts?.setOnUtteranceProgressListener(null)
+                    // Restore previous voice
+                    savedTtsVoice?.let { tts?.voice = it }
+                    savedTtsVoice = null
+                    mainHandler.post(onDone)
+                }
+                @Deprecated("Deprecated in API 21")
+                override fun onError(uid: String?) {
+                    tts?.setOnUtteranceProgressListener(null)
+                    savedTtsVoice?.let { tts?.voice = it }
+                    savedTtsVoice = null
+                    mainHandler.post(onDone)
+                }
+            })
+            tts?.speak(phoneticize(text), TextToSpeech.QUEUE_FLUSH, null, utteranceId)
+        }
+    }
+
+    /** Stop TTS without affecting the mic. */
+    fun stopTts() {
+        mainHandler.post {
+            tts?.setOnUtteranceProgressListener(null)
+            tts?.stop()
+            tts?.setSpeechRate(1.0f)
+        }
     }
 
     /**

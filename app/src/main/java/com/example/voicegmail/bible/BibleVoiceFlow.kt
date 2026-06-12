@@ -12,16 +12,16 @@ import javax.inject.Singleton
 private const val TAG = "BibleVoiceFlow"
 
 /**
- * Voice-driven Bible audio flow.
+ * Voice-driven Bible reading flow using bible-api.com text + TTS.
  *
- * When the user says "Bible", this flow takes over the voice loop:
- * 1. Asks which book to play (or allows "Genesis chapter 3" in one shot)
- * 2. Asks which chapter
- * 3. Streams the audio via MediaPlayer
- * 4. On completion, offers next chapter or return to inbox
+ * No API key required. Reads each chapter as TTS-synthesized speech.
+ * Supports separate Bible voice via [VoiceManager.bibleVoiceName].
  *
- * The flow calls [onExit] when the user says "cancel" / "go back" so the
- * caller (InboxViewModel) can resume its normal command loop.
+ * Flow:
+ * 1. Ask which book
+ * 2. Ask which chapter
+ * 3. Fetch chapter text from bible-api.com and read via TTS
+ * 4. On completion, offer next chapter / repeat / cancel
  */
 @Singleton
 class BibleVoiceFlow @Inject constructor(
@@ -42,14 +42,6 @@ class BibleVoiceFlow @Inject constructor(
     fun start(scope: CoroutineScope, onExit: (VoiceCommand) -> Unit) {
         DebugLogger.log(TAG, "Bible flow started")
 
-        if (!bibleRepository.isConfigured()) {
-            voiceCommandEngine.speakThenListen(
-                "Bible audio is not configured yet. Please set your Bible Brain API key. " +
-                    "Say a command to continue."
-            ) { cmd -> onExit(cmd) }
-            return
-        }
-
         voiceCommandEngine.speakThenListen(
             "Bible. Which book would you like to hear? " +
                 "Say a book name like 'Genesis' or 'John', " +
@@ -62,15 +54,15 @@ class BibleVoiceFlow @Inject constructor(
     private fun handleBookSelection(cmd: VoiceCommand, scope: CoroutineScope, onExit: (VoiceCommand) -> Unit) {
         when (cmd) {
             is VoiceCommand.Cancel, is VoiceCommand.GoBack -> {
-                bibleRepository.stopAudio()
+                bibleRepository.stopReading()
                 onExit(VoiceCommand.None)
             }
             is VoiceCommand.GoToSleep -> {
-                bibleRepository.stopAudio()
+                bibleRepository.stopReading()
                 onExit(cmd)
             }
             is VoiceCommand.SessionTimeout -> {
-                bibleRepository.stopAudio()
+                bibleRepository.stopReading()
                 onExit(cmd)
             }
             is VoiceCommand.FreeText -> {
@@ -83,7 +75,6 @@ class BibleVoiceFlow @Inject constructor(
                     return
                 }
 
-                // Try to parse "book chapter" in one shot (e.g. "Genesis 3" or "John chapter 5")
                 val parsed = parseBookAndChapter(spoken)
                 val bookId = parsed.first
                 val chapterFromSpeech = parsed.second
@@ -101,27 +92,24 @@ class BibleVoiceFlow @Inject constructor(
                 currentBookName = spoken.replaceFirstChar { it.uppercase() }
                 DebugLogger.log(TAG, "Book selected: $currentBookName ($bookId)")
 
-                // Find chapter count for this book
                 scope.launch {
                     try {
+                        maxChapter = bibleRepository.getMaxChapter(bookId)
                         val books = bibleRepository.getBooks()
-                        val bookInfo = books.find { it.book_id == bookId }
-                        maxChapter = bookInfo?.chapters?.maxOrNull() ?: 1
+                        val bookInfo = books.find { it.id == bookId }
                         currentBookName = bookInfo?.name ?: currentBookName
 
                         if (chapterFromSpeech != null && chapterFromSpeech in 1..maxChapter) {
-                            // User said book + chapter together
                             currentChapter = chapterFromSpeech
-                            playCurrentChapter(scope, onExit)
+                            readCurrentChapter(scope, onExit)
                         } else if (maxChapter == 1) {
-                            // Only one chapter (e.g. Obadiah, Philemon, Jude)
                             currentChapter = 1
-                            playCurrentChapter(scope, onExit)
+                            readCurrentChapter(scope, onExit)
                         } else {
                             askForChapter(scope, onExit)
                         }
                     } catch (e: Exception) {
-                        DebugLogger.log(TAG, "Error loading books: ${e.message}")
+                        DebugLogger.log(TAG, "Error loading chapters: ${e.message}")
                         voiceCommandEngine.speakThenListen(
                             "I had trouble loading Bible data. ${e.message ?: "Please try again."}. " +
                                 "Say a book name or 'cancel'."
@@ -130,8 +118,7 @@ class BibleVoiceFlow @Inject constructor(
                 }
             }
             else -> {
-                // Any other command — exit Bible flow and let inbox handle it
-                bibleRepository.stopAudio()
+                bibleRepository.stopReading()
                 onExit(cmd)
             }
         }
@@ -148,17 +135,16 @@ class BibleVoiceFlow @Inject constructor(
     private fun handleChapterSelection(cmd: VoiceCommand, scope: CoroutineScope, onExit: (VoiceCommand) -> Unit) {
         when (cmd) {
             is VoiceCommand.Cancel, is VoiceCommand.GoBack -> {
-                // Go back to book selection
                 voiceCommandEngine.speakThenListen(
                     "OK. Which book would you like to hear? Or say 'cancel' to leave Bible mode."
                 ) { retry -> handleBookSelection(retry, scope, onExit) }
             }
             is VoiceCommand.GoToSleep -> {
-                bibleRepository.stopAudio()
+                bibleRepository.stopReading()
                 onExit(cmd)
             }
             is VoiceCommand.SessionTimeout -> {
-                bibleRepository.stopAudio()
+                bibleRepository.stopReading()
                 onExit(cmd)
             }
             is VoiceCommand.FreeText -> {
@@ -169,54 +155,41 @@ class BibleVoiceFlow @Inject constructor(
                     ) { retry -> handleChapterSelection(retry, scope, onExit) }
                 } else {
                     currentChapter = chapter
-                    playCurrentChapter(scope, onExit)
+                    readCurrentChapter(scope, onExit)
                 }
             }
             else -> {
-                bibleRepository.stopAudio()
+                bibleRepository.stopReading()
                 onExit(cmd)
             }
         }
     }
 
-    // ── Playback ──────────────────────────────────────────────────────────
+    // ── TTS Reading ────────────────────────────────────────────────────────
 
-    private fun playCurrentChapter(scope: CoroutineScope, onExit: (VoiceCommand) -> Unit) {
+    private fun readCurrentChapter(scope: CoroutineScope, onExit: (VoiceCommand) -> Unit) {
         val bookId = currentBookId ?: return
-        voiceManager.speak("Playing $currentBookName chapter $currentChapter.")
+        val bookName = currentBookName ?: return
+
+        voiceManager.speak("Reading $bookName, chapter $currentChapter.")
 
         scope.launch {
             try {
-                val url = bibleRepository.getChapterAudioUrl(bookId, currentChapter)
-                if (url == null) {
-                    voiceCommandEngine.speakThenListen(
-                        "Sorry, audio for $currentBookName chapter $currentChapter is not available. " +
-                            "Say another chapter number, 'cancel', or a different book."
-                    ) { cmd -> handleChapterSelection(cmd, scope, onExit) }
-                    return@launch
+                val chapterText = bibleRepository.getChapterText(bookId, currentChapter, bookName)
+                bibleRepository.speakChapter(chapterText) {
+                    handleReadingComplete(scope, onExit)
                 }
-
-                bibleRepository.playAudio(
-                    url = url,
-                    onComplete = { handlePlaybackComplete(scope, onExit) },
-                    onError = { msg ->
-                        voiceCommandEngine.speakThenListen(
-                            "Audio playback failed. $msg. " +
-                                "Say 'try again', another chapter, or 'cancel'."
-                        ) { cmd -> handlePostPlaybackCommand(cmd, scope, onExit) }
-                    }
-                )
             } catch (e: Exception) {
-                DebugLogger.log(TAG, "Error getting chapter audio: ${e.message}")
+                DebugLogger.log(TAG, "Error fetching chapter text: ${e.message}")
                 voiceCommandEngine.speakThenListen(
-                    "Error loading audio. ${e.message ?: "Unknown error."}. " +
+                    "Error loading chapter. ${e.message ?: "Unknown error."}. " +
                         "Say 'try again', another chapter, or 'cancel'."
-                ) { cmd -> handlePostPlaybackCommand(cmd, scope, onExit) }
+                ) { cmd -> handlePostReadingCommand(cmd, scope, onExit) }
             }
         }
     }
 
-    private fun handlePlaybackComplete(scope: CoroutineScope, onExit: (VoiceCommand) -> Unit) {
+    private fun handleReadingComplete(scope: CoroutineScope, onExit: (VoiceCommand) -> Unit) {
         val hasNext = currentChapter < maxChapter
         val prompt = if (hasNext) {
             "End of $currentBookName chapter $currentChapter. " +
@@ -227,16 +200,16 @@ class BibleVoiceFlow @Inject constructor(
                 "Say 'repeat', choose another book, or 'cancel' to leave Bible mode."
         }
         voiceCommandEngine.speakThenListen(prompt) { cmd ->
-            handlePostPlaybackCommand(cmd, scope, onExit)
+            handlePostReadingCommand(cmd, scope, onExit)
         }
     }
 
-    private fun handlePostPlaybackCommand(cmd: VoiceCommand, scope: CoroutineScope, onExit: (VoiceCommand) -> Unit) {
+    private fun handlePostReadingCommand(cmd: VoiceCommand, scope: CoroutineScope, onExit: (VoiceCommand) -> Unit) {
         when (cmd) {
             is VoiceCommand.Next -> {
                 if (currentChapter < maxChapter) {
                     currentChapter++
-                    playCurrentChapter(scope, onExit)
+                    readCurrentChapter(scope, onExit)
                 } else {
                     voiceCommandEngine.speakThenListen(
                         "That was the last chapter of $currentBookName. " +
@@ -247,37 +220,35 @@ class BibleVoiceFlow @Inject constructor(
             is VoiceCommand.Previous -> {
                 if (currentChapter > 1) {
                     currentChapter--
-                    playCurrentChapter(scope, onExit)
+                    readCurrentChapter(scope, onExit)
                 } else {
                     voiceCommandEngine.speakThenListen(
                         "You're at chapter 1 of $currentBookName. Say 'next', a chapter number, or 'cancel'."
-                    ) { retry -> handlePostPlaybackCommand(retry, scope, onExit) }
+                    ) { retry -> handlePostReadingCommand(retry, scope, onExit) }
                 }
             }
-            is VoiceCommand.Repeat -> playCurrentChapter(scope, onExit)
-            is VoiceCommand.TryAgain -> playCurrentChapter(scope, onExit)
+            is VoiceCommand.Repeat -> readCurrentChapter(scope, onExit)
+            is VoiceCommand.TryAgain -> readCurrentChapter(scope, onExit)
             is VoiceCommand.Cancel, is VoiceCommand.GoBack -> {
-                bibleRepository.stopAudio()
+                bibleRepository.stopReading()
                 voiceCommandEngine.speakThenListen(
                     "Leaving Bible mode. Say a command."
                 ) { exitCmd -> onExit(exitCmd) }
             }
             is VoiceCommand.GoToSleep -> {
-                bibleRepository.stopAudio()
+                bibleRepository.stopReading()
                 onExit(cmd)
             }
             is VoiceCommand.SessionTimeout -> {
-                bibleRepository.stopAudio()
+                bibleRepository.stopReading()
                 onExit(cmd)
             }
             is VoiceCommand.FreeText -> {
-                // Could be a chapter number or a new book name
                 val chapter = extractChapterNumber(cmd.text)
                 if (chapter != null && chapter in 1..maxChapter) {
                     currentChapter = chapter
-                    playCurrentChapter(scope, onExit)
+                    readCurrentChapter(scope, onExit)
                 } else {
-                    // Maybe they said a new book name
                     val bookId = bibleRepository.resolveBookId(cmd.text)
                     if (bookId != null) {
                         currentBookId = bookId
@@ -285,46 +256,41 @@ class BibleVoiceFlow @Inject constructor(
                         scope.launch {
                             try {
                                 val books = bibleRepository.getBooks()
-                                val bookInfo = books.find { it.book_id == bookId }
-                                maxChapter = bookInfo?.chapters?.maxOrNull() ?: 1
-                                currentBookName = bookInfo?.name ?: currentBookName
+                                val bookInfo = books.find { it.id == bookId }
+                                maxChapter = bookInfo?.let { bibleRepository.getMaxChapter(it.id) } ?: 1
+                                currentBookName = books.find { it.id == bookId }?.name ?: currentBookName
                                 askForChapter(scope, onExit)
                             } catch (e: Exception) {
                                 voiceCommandEngine.speakThenListen(
                                     "Error loading book info. Say a command or 'cancel'."
-                                ) { retry -> handlePostPlaybackCommand(retry, scope, onExit) }
+                                ) { retry -> handlePostReadingCommand(retry, scope, onExit) }
                             }
                         }
                     } else {
                         voiceCommandEngine.speakThenListen(
                             "I didn't understand '${cmd.text}'. " +
                                 "Say 'next', 'repeat', a chapter number, a book name, or 'cancel'."
-                        ) { retry -> handlePostPlaybackCommand(retry, scope, onExit) }
+                        ) { retry -> handlePostReadingCommand(retry, scope, onExit) }
                     }
                 }
             }
             else -> {
-                bibleRepository.stopAudio()
+                bibleRepository.stopReading()
                 onExit(cmd)
             }
         }
     }
 
-    /** Stop playback if active (e.g. on wake event or when leaving the app). */
+    /** Stop reading if active (e.g. on wake event or when leaving the app). */
     fun stop() {
-        bibleRepository.stopAudio()
+        bibleRepository.stopReading()
     }
 
     // ── Parsing helpers ───────────────────────────────────────────────────
 
-    /**
-     * Parse a spoken phrase like "Genesis 3", "John chapter 5", "first corinthians 13".
-     * Returns (bookId, chapter?) — chapter is null if only a book was spoken.
-     */
     private fun parseBookAndChapter(spoken: String): Pair<String?, Int?> {
         val lower = spoken.trim().lowercase()
 
-        // Try to extract trailing number: "genesis 3", "psalm 23"
         val numberAtEnd = Regex("(\\d+)\\s*$").find(lower)
         val chapterStr = lower.replace(Regex("\\bchapter\\b"), "").trim()
 
@@ -336,23 +302,15 @@ class BibleVoiceFlow @Inject constructor(
             if (bookId != null) return Pair(bookId, chapter)
         }
 
-        // No number — just a book name
         val bookId = bibleRepository.resolveBookId(lower)
         return Pair(bookId, null)
     }
 
-    /**
-     * Extract a chapter number from speech like "3", "chapter 5", "12".
-     */
     private fun extractChapterNumber(text: String): Int? {
         val lower = text.trim().lowercase()
-        // Direct number
         lower.toIntOrNull()?.let { return it }
-        // "chapter 5"
         Regex("chapter\\s+(\\d+)").find(lower)?.groupValues?.get(1)?.toIntOrNull()?.let { return it }
-        // Any number in the string
         Regex("(\\d+)").find(lower)?.groupValues?.get(1)?.toIntOrNull()?.let { return it }
-        // Word numbers
         val wordNumbers = mapOf(
             "one" to 1, "two" to 2, "three" to 3, "four" to 4, "five" to 5,
             "six" to 6, "seven" to 7, "eight" to 8, "nine" to 9, "ten" to 10,

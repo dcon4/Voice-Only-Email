@@ -1,190 +1,94 @@
 package com.example.voicegmail.bible
 
-import android.content.Context
-import android.media.AudioAttributes
-import android.media.MediaPlayer
-import android.os.Handler
-import android.os.Looper
-import android.util.Log
 import com.example.voicegmail.debug.DebugLogger
-import dagger.hilt.android.qualifiers.ApplicationContext
+import com.example.voicegmail.voice.VoiceManager
 import javax.inject.Inject
 import javax.inject.Singleton
 
 private const val TAG = "BibleRepository"
+private const val DEFAULT_TRANSLATION = "web"
 
 /**
- * Manages Bible Brain API calls and MediaPlayer-based audio streaming.
- * Provides a voice-driven flow: select book → chapter → play audio.
+ * Fetches Bible text from bible-api.com and reads it aloud via TTS.
+ * No API key required — rate limited to 15 requests per 30 seconds.
  */
 @Singleton
 class BibleRepository @Inject constructor(
-    @ApplicationContext private val context: Context,
-    private val api: BibleBrainApiService
+    private val api: BibleApiService,
+    private val voiceManager: VoiceManager
 ) {
-    private val mainHandler = Handler(Looper.getMainLooper())
-    private var mediaPlayer: MediaPlayer? = null
-    private var isPlaying = false
-
-    // Cached state
-    private var cachedBooks: List<BookInfo>? = null
-    private var otFilesetId: String? = null
-    private var ntFilesetId: String? = null
-
-    /** True if a Bible Brain API key is configured. */
-    fun isConfigured(): Boolean = BibleBrainConfig.API_KEY.isNotBlank()
+    var translation: String = DEFAULT_TRANSLATION
 
     // ── Book list ─────────────────────────────────────────────────────────
 
-    /**
-     * Fetches available books. Resolves the fileset IDs on first call.
-     * Returns the combined OT + NT book list.
-     */
-    suspend fun getBooks(): List<BookInfo> {
+    private var cachedBooks: List<BibleBookInfo>? = null
+
+    suspend fun getBooks(): List<BibleBookInfo> {
         cachedBooks?.let { return it }
+        val resp = api.getBooks(translation)
+        cachedBooks = resp.books
+        DebugLogger.log(TAG, "Loaded ${resp.books.size} books")
+        return resp.books
+    }
 
-        // First resolve the audio fileset IDs from the Bible metadata
-        if (otFilesetId == null && ntFilesetId == null) {
-            resolveFilesetIds()
-        }
+    // ── Chapter list ──────────────────────────────────────────────────────
 
-        val books = mutableListOf<BookInfo>()
-        otFilesetId?.let { id ->
-            val resp = api.getBooks(id, BibleBrainConfig.API_KEY)
-            resp.data?.let { books.addAll(it) }
-        }
-        ntFilesetId?.let { id ->
-            val resp = api.getBooks(id, BibleBrainConfig.API_KEY)
-            resp.data?.let { books.addAll(it) }
-        }
+    private var cachedChapters: MutableMap<String, List<Int>> = mutableMapOf()
 
-        cachedBooks = books
-        DebugLogger.log(TAG, "Loaded ${books.size} books")
-        return books
+    suspend fun getChapters(bookId: String): List<Int> {
+        cachedChapters[bookId]?.let { return it }
+        val resp = api.getChapters(translation, bookId)
+        val chapters = resp.chapters.map { it.chapter }
+        cachedChapters[bookId] = chapters
+        return chapters
+    }
+
+    suspend fun getMaxChapter(bookId: String): Int {
+        val chapters = getChapters(bookId)
+        return chapters.maxOrNull() ?: 1
+    }
+
+    // ── Chapter text + TTS reading ────────────────────────────────────────
+
+    /**
+     * Fetches all verses for [bookId] chapter [chapter] and returns them as
+     * a single formatted string suitable for TTS.
+     */
+    suspend fun getChapterText(bookId: String, chapter: Int, bookName: String): String {
+        val resp = api.getChapter(translation, bookId, chapter)
+        val sb = StringBuilder()
+        sb.append("$bookName chapter $chapter. ")
+        for (v in resp.verses) {
+            sb.append("Verse ${v.verse}: ${v.text.trim()} ")
+        }
+        return sb.toString().replace(Regex("\\s+"), " ")
     }
 
     /**
-     * Find the best audio fileset IDs (OT and NT) for the default Bible.
+     * Speaks [text] via TTS and invokes [onDone] when complete.
+     * Uses the Bible voice if one has been configured.
      */
-    private suspend fun resolveFilesetIds() {
-        val bibleResp = api.getBible(BibleBrainConfig.DEFAULT_BIBLE_ID, BibleBrainConfig.API_KEY)
-        val filesets = bibleResp.data?.filesets?.values?.flatten() ?: emptyList()
-
-        DebugLogger.log(TAG, "Available filesets: ${filesets.map { "${it.id}(${it.type},${it.size})" }}")
-
-        // Prefer drama audio, fall back to plain audio
-        fun findFileset(size: String): String? {
-            return filesets.firstOrNull {
-                it.type == BibleBrainConfig.PREFERRED_AUDIO_TYPE && (it.size == size || it.size == "C")
-            }?.id ?: filesets.firstOrNull {
-                it.type == BibleBrainConfig.FALLBACK_AUDIO_TYPE && (it.size == size || it.size == "C")
-            }?.id
+    fun speakChapter(text: String, onDone: () -> Unit) {
+        if (!voiceManager.isTtsReady()) {
+            DebugLogger.log(TAG, "TTS not ready")
+            onDone()
+            return
         }
-
-        otFilesetId = findFileset("OT") ?: findFileset("C")
-        ntFilesetId = findFileset("NT") ?: findFileset("C")
-
-        DebugLogger.log(TAG, "Resolved filesets — OT=$otFilesetId NT=$ntFilesetId")
-    }
-
-    // ── Chapter audio ─────────────────────────────────────────────────────
-
-    /**
-     * Get the audio URL for a given book and chapter.
-     * Returns null if the chapter/book is not available.
-     */
-    suspend fun getChapterAudioUrl(bookId: String, chapter: Int): String? {
-        val filesetId = getFilesetForBook(bookId) ?: return null
-        val resp = api.getChapterAudio(filesetId, bookId, chapter, BibleBrainConfig.API_KEY)
-        val audioFile = resp.data?.firstOrNull { it.path != null }
-        return audioFile?.path
-    }
-
-    /**
-     * Determine which fileset (OT or NT) contains this book.
-     */
-    private suspend fun getFilesetForBook(bookId: String): String? {
-        val books = getBooks()
-        // Check OT first
-        if (otFilesetId != null) {
-            val otBooks = api.getBooks(otFilesetId!!, BibleBrainConfig.API_KEY)
-            if (otBooks.data?.any { it.book_id == bookId } == true) return otFilesetId
-        }
-        if (ntFilesetId != null) {
-            val ntBooks = api.getBooks(ntFilesetId!!, BibleBrainConfig.API_KEY)
-            if (ntBooks.data?.any { it.book_id == bookId } == true) return ntFilesetId
-        }
-        // Fallback: try either one
-        return otFilesetId ?: ntFilesetId
-    }
-
-    // ── Audio playback ────────────────────────────────────────────────────
-
-    /**
-     * Stream and play the audio from the given URL.
-     * Calls [onComplete] when playback finishes or [onError] on failure.
-     */
-    fun playAudio(url: String, onComplete: () -> Unit, onError: (String) -> Unit) {
-        stopAudio()
-        DebugLogger.log(TAG, "Playing audio: ${url.take(80)}...")
-
-        try {
-            mediaPlayer = MediaPlayer().apply {
-                setAudioAttributes(
-                    AudioAttributes.Builder()
-                        .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
-                        .setUsage(AudioAttributes.USAGE_MEDIA)
-                        .build()
-                )
-                setDataSource(url)
-                setOnPreparedListener { mp ->
-                    mp.start()
-                    this@BibleRepository.isPlaying = true
-                    DebugLogger.log(TAG, "Playback started")
-                }
-                setOnCompletionListener {
-                    this@BibleRepository.isPlaying = false
-                    DebugLogger.log(TAG, "Playback complete")
-                    mainHandler.post(onComplete)
-                }
-                setOnErrorListener { _, what, extra ->
-                    this@BibleRepository.isPlaying = false
-                    val msg = "MediaPlayer error: what=$what extra=$extra"
-                    Log.e(TAG, msg)
-                    DebugLogger.log(TAG, msg)
-                    mainHandler.post { onError(msg) }
-                    true
-                }
-                prepareAsync()
-            }
-        } catch (e: Exception) {
-            val msg = "Failed to start audio: ${e.message}"
-            Log.e(TAG, msg, e)
-            DebugLogger.log(TAG, msg)
-            onError(msg)
+        val bibleVoice = voiceManager.bibleVoiceName
+        if (bibleVoice.isNotBlank()) {
+            voiceManager.speakWithVoice(text, bibleVoice, onDone)
+        } else {
+            voiceManager.speak(text, onDone)
         }
     }
 
-    /** Stop any currently playing audio. */
-    fun stopAudio() {
-        mediaPlayer?.let {
-            if (it.isPlaying) it.stop()
-            it.reset()
-            it.release()
-        }
-        mediaPlayer = null
-        isPlaying = false
+    /** Cancel any ongoing TTS Bible reading. */
+    fun stopReading() {
+        voiceManager.stopTts()
     }
 
-    /** Whether audio is currently playing. */
-    fun isAudioPlaying(): Boolean = isPlaying
+    // ── Book name resolution ──────────────────────────────────────────────
 
-    // ── Helpers ───────────────────────────────────────────────────────────
-
-    /**
-     * Map of common spoken book names to their Bible Brain book IDs.
-     * Covers all 66 books of the Protestant Bible.
-     */
     fun resolveBookId(spokenName: String): String? {
         val lower = spokenName.trim().lowercase()
         return BOOK_NAME_MAP.entries.firstOrNull { (key, _) ->
@@ -193,11 +97,7 @@ class BibleRepository @Inject constructor(
     }
 
     companion object {
-        /**
-         * Mapping of spoken/common book names → Bible Brain book_id codes.
-         */
         val BOOK_NAME_MAP: Map<String, String> = linkedMapOf(
-            // Old Testament
             "genesis" to "GEN", "gen" to "GEN",
             "exodus" to "EXO", "exo" to "EXO",
             "leviticus" to "LEV", "lev" to "LEV",
@@ -237,7 +137,6 @@ class BibleRepository @Inject constructor(
             "haggai" to "HAG",
             "zechariah" to "ZEC",
             "malachi" to "MAL",
-            // New Testament
             "matthew" to "MAT", "matt" to "MAT",
             "mark" to "MRK",
             "luke" to "LUK",

@@ -1,8 +1,7 @@
 package com.example.voicegmail.di
 
 import com.example.voicegmail.BuildConfig
-import com.example.voicegmail.bible.BibleBrainApiService
-import com.example.voicegmail.bible.BibleBrainConfig
+import com.example.voicegmail.bible.BibleApiService
 import com.example.voicegmail.contacts.PeopleApiService
 import com.example.voicegmail.gmail.GmailApiService
 import dagger.Module
@@ -72,14 +71,14 @@ object AppModule {
         return retrofit.create(PeopleApiService::class.java)
     }
 
-    // ── Bible Brain ───────────────────────────────────────────────────────
+    // ── bible-api.com (no API key) ────────────────────────────────────────
 
     @Provides
     @Singleton
-    @Named("bibleBrain")
-    fun provideBibleBrainRetrofit(okHttpClient: OkHttpClient): Retrofit {
+    @Named("bibleApi")
+    fun provideBibleApiRetrofit(okHttpClient: OkHttpClient): Retrofit {
         return Retrofit.Builder()
-            .baseUrl(BibleBrainConfig.BASE_URL)
+            .baseUrl("https://bible-api.com/")
             .client(okHttpClient)
             .addConverterFactory(GsonConverterFactory.create())
             .build()
@@ -87,7 +86,7 @@ object AppModule {
 
     @Provides
     @Singleton
-    fun provideBibleBrainApiService(@Named("bibleBrain") retrofit: Retrofit): BibleBrainApiService {
-        return retrofit.create(BibleBrainApiService::class.java)
+    fun provideBibleApiService(@Named("bibleApi") retrofit: Retrofit): BibleApiService {
+        return retrofit.create(BibleApiService::class.java)
     }
 }
