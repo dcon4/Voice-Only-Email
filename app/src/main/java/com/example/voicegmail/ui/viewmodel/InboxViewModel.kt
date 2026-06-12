@@ -90,6 +90,9 @@ class InboxViewModel @Inject constructor(
     private val _selectedVoiceName = MutableStateFlow<String?>(null)
     val selectedVoiceName: StateFlow<String?> = _selectedVoiceName
 
+    private val _selectedBibleVoiceName = MutableStateFlow<String?>(null)
+    val selectedBibleVoiceName: StateFlow<String?> = _selectedBibleVoiceName
+
     private val _isSwitchingEngine = MutableStateFlow(false)
     val isSwitchingEngine: StateFlow<Boolean> = _isSwitchingEngine
 
@@ -196,6 +199,7 @@ class InboxViewModel @Inject constructor(
         _settingsVoices.value     = voiceManager.getAvailableVoices()
         _selectedEngineName.value = voiceManager.getCurrentEngineName()
         _selectedVoiceName.value  = voiceManager.getCurrentVoiceName()
+        _selectedBibleVoiceName.value = voiceManager.bibleVoiceName.ifBlank { null }
         _runInBackground.value    = wakePreferences.isRunInBackground()
         _verboseLogging.value     = wakePreferences.isVerboseLogging()
         _settingsPanelVisible.value = true
@@ -261,6 +265,16 @@ class InboxViewModel @Inject constructor(
     fun clearVoicePreferenceFromPanel() {
         voiceManager.clearVoicePreference()
         _selectedVoiceName.value = null
+    }
+
+    fun selectBibleVoiceFromPanel(voiceName: String) {
+        voiceManager.setBibleVoiceName(voiceName)
+        _selectedBibleVoiceName.value = voiceName
+    }
+
+    fun clearBibleVoiceFromPanel() {
+        voiceManager.bibleVoiceName = ""
+        _selectedBibleVoiceName.value = null
     }
 
     fun testVoice() {

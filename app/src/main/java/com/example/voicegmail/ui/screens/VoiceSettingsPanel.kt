@@ -23,6 +23,7 @@ fun VoiceSettingsPanel(viewModel: InboxViewModel) {
     val voices           by viewModel.settingsVoices.collectAsState()
     val selectedEngine   by viewModel.selectedEngineName.collectAsState()
     val selectedVoice    by viewModel.selectedVoiceName.collectAsState()
+    val selectedBibleVoice by viewModel.selectedBibleVoiceName.collectAsState()
     val switching        by viewModel.isSwitchingEngine.collectAsState()
 
     ModalBottomSheet(
@@ -195,6 +196,50 @@ fun VoiceSettingsPanel(viewModel: InboxViewModel) {
                         label      = viewModel.friendlyVoiceName(voice),
                         selected   = voice.name == selectedVoice,
                         onSelect   = { viewModel.selectVoiceFromPanel(voice.name) }
+                    )
+                }
+            }
+
+            HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
+
+            // ---- Bible Voice --------------------------------------------------
+            Text(
+                text = "Bible Reading Voice",
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.padding(bottom = 4.dp)
+            )
+
+            if (switching) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(80.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    CircularProgressIndicator(modifier = Modifier.semantics {
+                        contentDescription = "Loading voices"
+                    })
+                }
+            } else if (voices.isEmpty()) {
+                Text(
+                    "No voices available.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            } else {
+                VoiceRow(
+                    voice    = null,
+                    label    = "Use default voice",
+                    selected = selectedBibleVoice == null,
+                    onSelect = { viewModel.clearBibleVoiceFromPanel() }
+                )
+                voices.forEach { voice ->
+                    VoiceRow(
+                        voice      = voice,
+                        label      = viewModel.friendlyVoiceName(voice),
+                        selected   = voice.name == selectedBibleVoice,
+                        onSelect   = { viewModel.selectBibleVoiceFromPanel(voice.name) }
                     )
                 }
             }
