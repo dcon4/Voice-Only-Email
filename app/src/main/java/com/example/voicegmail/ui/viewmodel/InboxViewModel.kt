@@ -127,6 +127,7 @@ class InboxViewModel @Inject constructor(
      * the new session.
      */
     private var readingGen = 0
+    @Volatile private var flowGen = 0L
 
     // ------------------------------------------------------------------
     // Init
@@ -343,6 +344,7 @@ class InboxViewModel @Inject constructor(
 
     private fun handleWakeEvent() {
         DebugLogger.log("InboxViewModel", "Wake event — state=${_uiState.value::class.simpleName} pausedPosition=${pausedPosition != null}")
+        flowGen++ // invalidate stale compose/browser/other callbacks
         // Stop any Bible audio that may be playing
         bibleVoiceFlow.stop()
         // Check if browser was reading an article
@@ -1379,20 +1381,40 @@ class InboxViewModel @Inject constructor(
     }
 
     private fun voiceComposeSend(to: String, subject: String, body: String, emails: List<EmailItem>) {
+        val gen = flowGen
         viewModelScope.launch {
             voiceManager.speak("Sending.")
             try {
                 gmailRepository.sendEmail(to, subject, body)
-                voiceCommandEngine.speakThenListen("Sent successfully.") { c -> handleCommand(c, emails) }
+                if (gen != flowGen) return@launch
+                voiceManager.speak("Sent successfully.")
+                val prompt = composePrompt(emails)
+                voiceCommandEngine.speakThenListen(prompt) { c -> handleCommand(c, emails) }
             } catch (e: Exception) {
-                voiceCommandEngine.speakThenListen(
-                    "Send failed. ${e.message ?: "Unknown error."}. Say 'try again' or 'cancel'."
-                ) { c ->
+                if (gen != flowGen) return@launch
+                voiceManager.speak("Send failed. ${e.message ?: "Unknown error."}")
+                voiceCommandEngine.speakThenListen("Say 'try again' or 'cancel'.") { c ->
                     when (c) {
                         is VoiceCommand.TryAgain -> voiceComposeSend(to, subject, body, emails)
                         else -> handleCommand(c, emails)
                     }
                 }
+            }
+        }
+    }
+
+    private fun composePrompt(emails: List<EmailItem>): String {
+        val unread = emails.count { it.isUnread }
+        return when {
+            emails.isEmpty() -> "Your inbox is empty. Say 'compose' or 'refresh'."
+            unread > 0 -> {
+                val u = if (unread == 1) "1 unread email" else "$unread unread emails"
+                val t = if (emails.size == 1) "1 email" else "${emails.size} emails"
+                "Back to inbox. You have $u out of $t. Say a command."
+            }
+            else -> {
+                val t = if (emails.size == 1) "1 email" else "${emails.size} emails"
+                "Back to inbox. You have $t. Say a command."
             }
         }
     }

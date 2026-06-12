@@ -637,6 +637,7 @@ class VoiceManager @Inject constructor(
     fun stopAll() {
         mainHandler.post {
             tts?.stop()
+            tts?.setOnUtteranceProgressListener(null)
             tts?.setSpeechRate(1.0f)
             speechRecognizer?.stopListening()
             _isListening.value = false
