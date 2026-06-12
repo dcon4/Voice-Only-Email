@@ -23,6 +23,7 @@ import com.example.voicegmail.gmail.EmailItem
 import com.example.voicegmail.gmail.GmailRepository
 import com.example.voicegmail.voice.ForwardDraft
 import com.example.voicegmail.voice.NaturalLanguageQueryParser
+import com.example.voicegmail.contacts.ContactMatcher
 import com.example.voicegmail.voice.VoiceCommand
 import com.example.voicegmail.voice.VoiceCommandEngine
 import com.example.voicegmail.voice.VoiceManager
@@ -48,6 +49,7 @@ class InboxViewModel @Inject constructor(
     private val gmailRepository: GmailRepository,
     private val voiceManager: VoiceManager,
     private val voiceCommandEngine: VoiceCommandEngine,
+    private val contactsRepository: com.example.voicegmail.contacts.ContactsRepository,
     private val queryParser: NaturalLanguageQueryParser,
     @Suppress("unused") private val forwardDraft: ForwardDraft,
     private val attachmentReader: AttachmentReader,
@@ -602,10 +604,7 @@ class InboxViewModel @Inject constructor(
             is VoiceCommand.Previous     -> advanceEmail(-1, emails)
             is VoiceCommand.Repeat       -> repeatCurrentEmail(emails)
             is VoiceCommand.Refresh      -> loadInbox()
-            is VoiceCommand.Compose -> {
-                voiceCommandEngine.cancelListening()
-                viewModelScope.launch { _navigationEvent.emit(InboxNavEvent.NavigateToCompose()) }
-            }
+            is VoiceCommand.Compose -> startVoiceCompose(emails)
             is VoiceCommand.Reply -> {
                 val email = emails.getOrNull(_currentEmailIndex.value)
                 if (email != null)
@@ -1151,18 +1150,107 @@ class InboxViewModel @Inject constructor(
     }
 
     private fun handleComposeTo(cmd: VoiceCommand, emails: List<EmailItem>) {
-        val raw = rawText(cmd)
+        val rawSpoken = rawText(cmd)
         when {
             cmd is VoiceCommand.Cancel ->
                 voiceCommandEngine.speakThenListen("Compose cancelled.") { c -> handleCommand(c, emails) }
-            raw.isNotBlank() ->
-                voiceCommandEngine.speakThenListen("Sending to $raw. What is the subject?") { c ->
-                    handleComposeSubject(raw, c, emails)
-                }
+            rawSpoken.isNotBlank() -> composeResolveRecipient(rawSpoken, cmd, emails)
             else ->
                 voiceCommandEngine.speakThenListen(
                     "I didn't catch the email address. Please try again, or say 'cancel'."
                 ) { c -> handleComposeTo(c, emails) }
+        }
+    }
+
+    private fun composeResolveRecipient(rawSpoken: String, cmd: VoiceCommand, emails: List<EmailItem>) {
+        viewModelScope.launch {
+            val contacts = contactsRepository.combinedContacts(emails)
+            val candidates = voiceCommandEngine.lastCandidates.ifEmpty { listOf(rawSpoken) }
+            val matches = ContactMatcher.rankAcrossCandidates(candidates, contacts)
+            when {
+                matches.size == 1 && matches[0].score >= 70 -> {
+                    val pick = matches[0]
+                    composeConfirmRecipient(pick.contact.email, pick.contact.displayName, cmd, emails)
+                }
+                matches.size > 1 -> composeEnumerateMatches(matches, rawSpoken, cmd, emails)
+                else -> {
+                    val parsed = ContactMatcher.parseEmailCandidates(candidates)
+                    when {
+                        parsed.size == 1 -> composeGoToSubject(parsed[0], cmd, emails)
+                        parsed.size > 1 -> composeEnumerateParsed(parsed, rawSpoken, cmd, emails)
+                        else -> composerSpellEmail(rawSpoken, cmd, emails)
+                    }
+                }
+            }
+        }
+    }
+
+    private fun composeConfirmRecipient(email: String, displayName: String?, cmd: VoiceCommand, emails: List<EmailItem>) {
+        val name = displayName ?: email.substringBefore('@')
+        voiceCommandEngine.speakThenListen(
+            "Send to $name? Say 'yes' to confirm, or say 'spell' to type an email address."
+        ) { c ->
+            val text = rawText(c)
+            when {
+                c is VoiceCommand.Confirm || text.contains("yes") -> composeGoToSubject(email, cmd, emails)
+                text.contains("spell") -> composerSpellEmail("", cmd, emails)
+                else -> handleComposeTo(c, emails)
+            }
+        }
+    }
+
+    private fun composeEnumerateMatches(matches: List<ContactMatcher.ScoredContact>, raw: String, cmd: VoiceCommand, emails: List<EmailItem>) {
+        val choices = matches.take(5)
+        val listing = choices.mapIndexed { i, sc -> "${i + 1}: ${sc.contact.displayName}" }.joinToString(". ")
+        voiceCommandEngine.speakThenListen(
+            "Multiple contacts found. $listing. Say the number, or say 'spell' to type an email address."
+        ) { c ->
+            val text = rawText(c).lowercase()
+            val pickIdx = text.split(" ").firstOrNull()?.toIntOrNull()?.let { it - 1 }?.takeIf { it in choices.indices }
+            when {
+                text.contains("spell") -> composerSpellEmail(raw, cmd, emails)
+                pickIdx != null -> {
+                    val pick = choices[pickIdx]
+                    composeConfirmRecipient(pick.contact.email, pick.contact.displayName, cmd, emails)
+                }
+                else -> composeEnumerateMatches(matches, raw, cmd, emails)
+            }
+        }
+    }
+
+    private fun composeEnumerateParsed(parsed: List<String>, raw: String, cmd: VoiceCommand, emails: List<EmailItem>) {
+        val choices = parsed.take(5)
+        val listing = choices.mapIndexed { i, e -> "${i + 1}: ${e.substringBefore('@')}" }.joinToString(". ")
+        voiceCommandEngine.speakThenListen(
+            "I found $listing. Say the number, or say 'spell' to type it letter by letter."
+        ) { c ->
+            val text = rawText(c).lowercase()
+            val pickIdx = text.split(" ").firstOrNull()?.toIntOrNull()?.let { it - 1 }?.takeIf { it in choices.indices }
+            when {
+                text.contains("spell") -> composerSpellEmail(raw, cmd, emails)
+                pickIdx != null -> composeGoToSubject(choices[pickIdx], cmd, emails)
+                else -> composeEnumerateParsed(parsed, raw, cmd, emails)
+            }
+        }
+    }
+
+    private fun composeGoToSubject(email: String, cmd: VoiceCommand, emails: List<EmailItem>) {
+        voiceCommandEngine.speakThenListen("Sending to $email. What is the subject?") { c ->
+            handleComposeSubject(email, c, emails)
+        }
+    }
+
+    private fun composerSpellEmail(raw: String, cmd: VoiceCommand, emails: List<EmailItem>) {
+        voiceCommandEngine.speakThenListen(
+            "Please spell the email address letter by letter, for example 'D C O N N 4 at Gmail dot com'."
+        ) { c ->
+            val text = rawText(c)
+            if (text.isBlank()) {
+                composerSpellEmail(raw, cmd, emails)
+                return@speakThenListen
+            }
+            val parsed = ContactMatcher.parseDictatedEmail(text) ?: text
+            composeGoToSubject(parsed, cmd, emails)
         }
     }
 
