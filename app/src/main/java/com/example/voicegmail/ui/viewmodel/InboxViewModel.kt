@@ -441,7 +441,10 @@ class InboxViewModel @Inject constructor(
                     // returns false for commands that genuinely belong to
                     // the inbox — e.g. inbox-only voice commands).
                     val handled = browserVoiceFlow.handleWakeCommand(cmd, viewModelScope, browserOnExit)
-                    if (!handled) handleCommand(cmd, emails)
+                    if (!handled) {
+                        browserVoiceFlow.clearState()
+                        handleCommand(cmd, emails)
+                    }
                 }
             }
         }

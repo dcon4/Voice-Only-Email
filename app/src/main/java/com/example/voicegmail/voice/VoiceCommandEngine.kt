@@ -333,7 +333,8 @@ class VoiceCommandEngine @Inject constructor(
             lower == "pause" || lower == "pause reading" || lower == "stop reading" ->
                 VoiceCommand.Pause
 
-            lower == "continue" || lower == "continue reading" ||
+            lower in setOf("continue", "continue reading",
+                    "continue continue", "continue continue reading") ||
                 lower.contains("resume reading") || lower == "play" ||
                 lower.contains("pick up where") || lower.contains("keep reading") ->
                 VoiceCommand.ContinueReading
