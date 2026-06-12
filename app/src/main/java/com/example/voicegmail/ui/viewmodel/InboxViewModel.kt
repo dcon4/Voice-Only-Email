@@ -1152,13 +1152,14 @@ class InboxViewModel @Inject constructor(
             ) { cmd -> handleComposeBody(replyTo, replySubject ?: "", cmd, emails) }
         } else {
             voiceCommandEngine.speakThenListen(
-                "Compose. Who would you like to send to? Say the email address."
+                "Compose. Who would you like to send to? Say the name or email address."
             ) { cmd -> handleComposeTo(cmd, emails) }
         }
     }
 
     private fun handleComposeTo(cmd: VoiceCommand, emails: List<EmailItem>) {
         val rawSpoken = rawText(cmd)
+        DebugLogger.log("InboxViewModel", "handleComposeTo: cmd=${cmd::class.simpleName} rawSpoken='$rawSpoken'")
         when {
             cmd is VoiceCommand.Cancel ->
                 voiceCommandEngine.speakThenListen("Compose cancelled.") { c -> handleCommand(c, emails) }
@@ -1174,7 +1175,15 @@ class InboxViewModel @Inject constructor(
         viewModelScope.launch {
             val contacts = contactsRepository.combinedContacts(emails)
             val candidates = voiceCommandEngine.lastCandidates.ifEmpty { listOf(rawSpoken) }
+            DebugLogger.log("InboxViewModel", "composeResolveRecipient: rawSpoken='$rawSpoken' candidates=$candidates contactsCount=${contacts.size}")
+            contacts.take(10).forEach { c ->
+                DebugLogger.verbose("InboxViewModel", "  contact: name='${c.displayName}' email=${c.email}")
+            }
             val matches = ContactMatcher.rankAcrossCandidates(candidates, contacts)
+            DebugLogger.log("InboxViewModel", "rankAcrossCandidates: matches=${matches.size}")
+            matches.forEach { m ->
+                DebugLogger.log("InboxViewModel", "  match: name='${m.contact.displayName}' email=${m.contact.email} score=${m.score}")
+            }
             when {
                 matches.size == 1 && matches[0].score >= 70 -> {
                     val pick = matches[0]
@@ -1183,6 +1192,7 @@ class InboxViewModel @Inject constructor(
                 matches.size > 1 -> composeEnumerateMatches(matches, rawSpoken, cmd, emails)
                 else -> {
                     val parsed = ContactMatcher.parseEmailCandidates(candidates)
+                    DebugLogger.log("InboxViewModel", "parseEmailCandidates: parsed=${parsed.size} -> $parsed")
                     when {
                         parsed.size == 1 -> composeGoToSubject(parsed[0], cmd, emails)
                         parsed.size > 1 -> composeEnumerateParsed(parsed, rawSpoken, cmd, emails)
