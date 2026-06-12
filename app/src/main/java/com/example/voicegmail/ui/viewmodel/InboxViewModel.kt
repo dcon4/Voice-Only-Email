@@ -602,7 +602,8 @@ class InboxViewModel @Inject constructor(
             is VoiceCommand.Previous     -> advanceEmail(-1, emails)
             is VoiceCommand.Repeat       -> repeatCurrentEmail(emails)
             is VoiceCommand.Refresh      -> loadInbox()
-            is VoiceCommand.Compose      -> startVoiceCompose(emails)
+            is VoiceCommand.Compose ->
+                viewModelScope.launch { _navigationEvent.emit(InboxNavEvent.NavigateToCompose()) }
             is VoiceCommand.Reply -> {
                 val email = emails.getOrNull(_currentEmailIndex.value)
                 if (email != null)
