@@ -268,36 +268,28 @@ class MainActivity : ComponentActivity() {
     }
 
     /**
-     * Registers a receiver for [ACTION_SCREEN_OFF] (pause speech) and
-     * [ACTION_SCREEN_ON] (post wake event). Registered in [onCreate] and
-     * unregistered in [onDestroy] so it stays active even when the activity
-     * is paused with the screen off.
+     * Registers a receiver for [ACTION_SCREEN_ON] (power button press when
+     * screen was off). It pauses TTS and posts a wake event so the UI asks
+     * "Continue reading?".
      *
-     * When [VoiceWakeService] is also running (notification permission
-     * granted), it independently receives [ACTION_SCREEN_ON] and posts a
-     * duplicate wake event, which is harmless.
+     * Screen timing out ([ACTION_SCREEN_OFF]) intentionally does nothing --
+     * the user is still listening and TTS keeps running.
+     *
+     * Registered in [onCreate] and unregistered in [onDestroy] so it stays
+     * active even when the activity is paused with the screen off.
      */
     private fun registerScreenReceiver() {
         if (screenReceiver != null) return
         screenReceiver = object : BroadcastReceiver() {
             override fun onReceive(context: Context?, intent: Intent?) {
-                when (intent?.action) {
-                    Intent.ACTION_SCREEN_OFF -> {
-                        DebugLogger.log("MainActivity", "Screen OFF")
-                        voiceManager.stopAll()
-                    }
-                    Intent.ACTION_SCREEN_ON -> {
-                        DebugLogger.log("MainActivity", "Screen ON")
-                        wakeEventBus.postWake()
-                    }
+                if (intent?.action == Intent.ACTION_SCREEN_ON) {
+                    DebugLogger.log("MainActivity", "Screen ON — pause TTS, post wake event")
+                    voiceManager.stopAll()
+                    wakeEventBus.postWake()
                 }
             }
         }
-        val filter = IntentFilter().apply {
-            addAction(Intent.ACTION_SCREEN_ON)
-            addAction(Intent.ACTION_SCREEN_OFF)
-        }
-        registerReceiver(screenReceiver, filter)
+        registerReceiver(screenReceiver, IntentFilter(Intent.ACTION_SCREEN_ON))
     }
 
     private fun unregisterScreenReceiver() {
