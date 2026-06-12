@@ -243,7 +243,7 @@ object ContactMatcher {
     }
 
     // Common domain auto-corrections for when the ASR omits the TLD.
-    private val domainMap: Map<String, String> by lazy = mapOf(
+    private val domainMap: Map<String, String> by lazy { mapOf(
         "gmail" to "gmail.com", "googlemail" to "gmail.com",
         "yahoo" to "yahoo.com", "ymail" to "yahoo.com",
         "outlook" to "outlook.com", "hotmail" to "outlook.com",
@@ -253,7 +253,7 @@ object ContactMatcher {
         "aol" to "aol.com", "att" to "att.net",
         "verizon" to "verizon.net", "comcast" to "comcast.net",
         "cox" to "cox.net"
-    )
+    )}
 
     /**
      * Attempts to parse free-form dictation like "john at gmail dot com"
