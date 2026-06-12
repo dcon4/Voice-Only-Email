@@ -489,11 +489,21 @@ class BrowserVoiceFlow @Inject constructor(
 
     // ── Helpers ───────────────────────────────────────────────────────────
 
-    private fun exitFlow(onExit: (VoiceCommand) -> Unit) {
+    /**
+     * Clear browser reading state without calling any exit callback.
+     * Used when the user issues an inbox command during a wake-pause,
+     * abandoning the browser bookmark.
+     */
+    fun clearState() {
         readingGen++
         currentPageChunks = emptyList()
+        currentChunkIndex = 0
         readingAllSequentially = false
         browserRepository.clear()
+    }
+
+    private fun exitFlow(onExit: (VoiceCommand) -> Unit) {
+        clearState()
         onExit(VoiceCommand.None)
     }
 
