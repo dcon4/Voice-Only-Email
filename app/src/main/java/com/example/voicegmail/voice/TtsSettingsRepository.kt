@@ -105,3 +105,4 @@ class TtsSettingsRepository @Inject constructor(
     fun saveBibleContinuousReading(enabled: Boolean) {
         prefs.edit().putBoolean("bible_continuous", enabled).apply()
     }
+}
