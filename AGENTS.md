@@ -144,3 +144,20 @@ nice-to-haves.
 - **Author identity for AI-generated commits is `dcon4 <dcon4@gmail.com>`**
   unless the user says otherwise. Never leave the opencode default
   `dcon4@users.noreply.github.com` on a merged commit.
+
+## CI Build Monitoring (required agent behavior)
+
+After every push to `main`, the agent MUST:
+1. Wait for the triggered GitHub Actions workflow run to finish
+   (poll every ~60 s via the unauthenticated GitHub REST API).
+2. If the build **succeeds**: report the run URL plus the direct
+   artifact download link so the user can install the APK.
+3. If the build **fails**: fetch the build log (using the GitHub
+   REST check-run annotations API, or scrape the job log if
+   unauthenticated access allows), identify the root cause, fix it,
+   and push a new commit.  Repeat until green.
+
+The user is blind and cannot read build logs themselves — build
+failures are a hard block that makes new features unreachable.  Treat
+a red build as an urgent bug regardless of the context in which it
+was introduced.
