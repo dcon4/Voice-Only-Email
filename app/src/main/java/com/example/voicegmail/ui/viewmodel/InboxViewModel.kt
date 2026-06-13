@@ -274,21 +274,25 @@ class InboxViewModel @Inject constructor(
     fun selectVoiceFromPanel(voiceName: String) {
         voiceManager.setVoiceByName(voiceName)
         _selectedVoiceName.value = voiceName
+        voiceManager.speak("Hello, how can I help you?")
     }
 
     fun clearVoicePreferenceFromPanel() {
         voiceManager.clearVoicePreference()
         _selectedVoiceName.value = null
+        voiceManager.speak("Hello, how can I help you?")
     }
 
     fun selectBibleVoiceFromPanel(voiceName: String) {
         voiceManager.setBibleVoiceName(voiceName)
         _selectedBibleVoiceName.value = voiceName
+        voiceManager.speakWithVoice("Hello, how can I help you?", voiceName) { }
     }
 
     fun clearBibleVoiceFromPanel() {
         voiceManager.setBibleVoiceName("")
         _selectedBibleVoiceName.value = null
+        voiceManager.speak("Hello, how can I help you?")
     }
 
     fun selectBibleEngineFromPanel(engineName: String) {

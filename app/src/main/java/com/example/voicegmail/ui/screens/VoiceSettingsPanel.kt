@@ -188,10 +188,7 @@ fun VoiceSettingsPanel(viewModel: InboxViewModel) {
                     voice    = null,
                     label    = "Engine default",
                     selected = selectedVoice == null,
-                    onSelect = {
-                        viewModel.clearVoicePreferenceFromPanel()
-                        viewModel.testVoice()
-                    }
+                    onSelect = { viewModel.clearVoicePreferenceFromPanel() }
                 )
                 voices.forEach { voice ->
                     VoiceRow(
