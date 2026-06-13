@@ -1,12 +1,12 @@
 package com.example.voicegmail.bible
 
 import com.example.voicegmail.debug.DebugLogger
+import com.example.voicegmail.voice.TtsSettingsRepository
 import com.example.voicegmail.voice.VoiceManager
 import javax.inject.Inject
 import javax.inject.Singleton
 
 private const val TAG = "BibleRepository"
-private const val DEFAULT_TRANSLATION = "web"
 
 /**
  * Fetches Bible text from bible-api.com and reads it aloud via TTS.
@@ -15,19 +15,19 @@ private const val DEFAULT_TRANSLATION = "web"
 @Singleton
 class BibleRepository @Inject constructor(
     private val api: BibleApiService,
-    private val voiceManager: VoiceManager
+    private val voiceManager: VoiceManager,
+    private val ttsSettings: TtsSettingsRepository
 ) {
-    var translation: String = DEFAULT_TRANSLATION
-
     // ── Book list ─────────────────────────────────────────────────────────
 
-    private var cachedBooks: List<BibleBookInfo>? = null
+    private var cachedBooks: MutableMap<String, List<BibleBookInfo>> = mutableMapOf()
 
     suspend fun getBooks(): List<BibleBookInfo> {
-        cachedBooks?.let { return it }
-        val resp = api.getBooks(translation)
-        cachedBooks = resp.books
-        DebugLogger.log(TAG, "Loaded ${resp.books.size} books")
+        val trans = ttsSettings.getBibleTranslation()
+        cachedBooks[trans]?.let { return it }
+        val resp = api.getBooks(trans)
+        cachedBooks[trans] = resp.books
+        DebugLogger.log(TAG, "Loaded ${resp.books.size} books (translation=$trans)")
         return resp.books
     }
 
@@ -36,10 +36,12 @@ class BibleRepository @Inject constructor(
     private var cachedChapters: MutableMap<String, List<Int>> = mutableMapOf()
 
     suspend fun getChapters(bookId: String): List<Int> {
-        cachedChapters[bookId]?.let { return it }
-        val resp = api.getChapters(translation, bookId)
+        val trans = ttsSettings.getBibleTranslation()
+        val key = "$trans:$bookId"
+        cachedChapters[key]?.let { return it }
+        val resp = api.getChapters(trans, bookId)
         val chapters = resp.chapters.map { it.chapter }
-        cachedChapters[bookId] = chapters
+        cachedChapters[key] = chapters
         return chapters
     }
 
@@ -55,11 +57,16 @@ class BibleRepository @Inject constructor(
      * a single formatted string suitable for TTS.
      */
     suspend fun getChapterText(bookId: String, chapter: Int, bookName: String): String {
-        val resp = api.getChapter(translation, bookId, chapter)
+        val trans = ttsSettings.getBibleTranslation()
+        val resp = api.getChapter(trans, bookId, chapter)
         val sb = StringBuilder()
         sb.append("$bookName chapter $chapter. ")
+        val showVerseNumbers = ttsSettings.getBibleVerseNumbers()
         for (v in resp.verses) {
-            sb.append("Verse ${v.verse}: ${v.text.trim()} ")
+            if (showVerseNumbers) {
+                sb.append("Verse ${v.verse}: ")
+            }
+            sb.append("${v.text.trim()} ")
         }
         return sb.toString().replace(Regex("\\s+"), " ")
     }

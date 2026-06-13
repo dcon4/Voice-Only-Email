@@ -27,7 +27,8 @@ private const val TAG = "BibleVoiceFlow"
 class BibleVoiceFlow @Inject constructor(
     private val bibleRepository: BibleRepository,
     private val voiceCommandEngine: VoiceCommandEngine,
-    private val voiceManager: VoiceManager
+    private val voiceManager: VoiceManager,
+    private val ttsSettings: com.example.voicegmail.voice.TtsSettingsRepository
 ) {
     private var currentBookId: String? = null
     private var currentBookName: String? = null
@@ -190,6 +191,10 @@ class BibleVoiceFlow @Inject constructor(
     }
 
     private fun handleReadingComplete(scope: CoroutineScope, onExit: (VoiceCommand) -> Unit) {
+        if (ttsSettings.getBibleContinuousReading()) {
+            autoAdvanceChapter(scope, onExit)
+            return
+        }
         val hasNext = currentChapter < maxChapter
         val prompt = if (hasNext) {
             "End of $currentBookName chapter $currentChapter. " +
@@ -201,6 +206,45 @@ class BibleVoiceFlow @Inject constructor(
         }
         voiceCommandEngine.speakThenListen(prompt) { cmd ->
             handlePostReadingCommand(cmd, scope, onExit)
+        }
+    }
+
+    /**
+     * Auto-advance to the next chapter (or next book) without waiting for
+     * user input.  Called from [handleReadingComplete] when continuous
+     * reading is enabled.  The user can interrupt via the power button,
+     * which triggers [handleWakeEvent] → [stop] → [restoreMainEngine].
+     */
+    private fun autoAdvanceChapter(scope: CoroutineScope, onExit: (VoiceCommand) -> Unit) {
+        if (currentChapter < maxChapter) {
+            currentChapter++
+            voiceManager.speak("Chapter $currentChapter") {
+                readCurrentChapter(scope, onExit)
+            }
+        } else {
+            scope.launch {
+                try {
+                    val books = bibleRepository.getBooks()
+                    val currentIndex = books.indexOfFirst { it.id == currentBookId }
+                    if (currentIndex >= 0 && currentIndex < books.size - 1) {
+                        val nextBook = books[currentIndex + 1]
+                        currentBookId = nextBook.id
+                        currentBookName = nextBook.name
+                        currentChapter = 1
+                        maxChapter = bibleRepository.getMaxChapter(nextBook.id)
+                        voiceManager.speak("${nextBook.name}, chapter 1") {
+                            readCurrentChapter(scope, onExit)
+                        }
+                    } else {
+                        voiceManager.speak("End of the Bible.") {
+                            onExit(VoiceCommand.None)
+                        }
+                    }
+                } catch (e: Exception) {
+                    DebugLogger.log(TAG, "Error advancing to next book: ${e.message}")
+                    onExit(VoiceCommand.None)
+                }
+            }
         }
     }
 

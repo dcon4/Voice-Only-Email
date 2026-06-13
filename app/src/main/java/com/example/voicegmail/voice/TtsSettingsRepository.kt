@@ -85,4 +85,23 @@ class TtsSettingsRepository @Inject constructor(
     fun saveEmailReadRate(rate: Float) {
         prefs.edit().putFloat("email_read_rate", rate).apply()
     }
-}
+
+    // ── Bible options ──────────────────────────────────────────────────────
+
+    fun getBibleTranslation(): String = prefs.getString("bible_translation", "web") ?: "web"
+
+    fun saveBibleTranslation(translation: String) {
+        prefs.edit().putString("bible_translation", translation).apply()
+    }
+
+    fun getBibleVerseNumbers(): Boolean = prefs.getBoolean("bible_verse_numbers", true)
+
+    fun saveBibleVerseNumbers(enabled: Boolean) {
+        prefs.edit().putBoolean("bible_verse_numbers", enabled).apply()
+    }
+
+    fun getBibleContinuousReading(): Boolean = prefs.getBoolean("bible_continuous", false)
+
+    fun saveBibleContinuousReading(enabled: Boolean) {
+        prefs.edit().putBoolean("bible_continuous", enabled).apply()
+    }

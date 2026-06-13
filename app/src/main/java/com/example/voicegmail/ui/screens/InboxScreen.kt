@@ -196,6 +196,12 @@ fun InboxScreen(
         if (settingsVisible) {
             VoiceSettingsPanel(viewModel = viewModel)
         }
+
+        // Bible options sub-page — shown on top of inbox content
+        val bibleSettingsVisible by viewModel.bibleSettingsVisible.collectAsState()
+        if (bibleSettingsVisible) {
+            BibleSettingsScreen(viewModel = viewModel)
+        }
     }
 }
 

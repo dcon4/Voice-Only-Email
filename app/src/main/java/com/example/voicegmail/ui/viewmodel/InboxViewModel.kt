@@ -58,7 +58,8 @@ class InboxViewModel @Inject constructor(
     private val bibleVoiceFlow: BibleVoiceFlow,
     private val browserVoiceFlow: BrowserVoiceFlow,
     private val wakePreferences: com.example.voicegmail.voice.WakePreferences,
-    private val mediaSessionController: com.example.voicegmail.media.MediaSessionController
+    private val mediaSessionController: com.example.voicegmail.media.MediaSessionController,
+    private val ttsSettings: com.example.voicegmail.voice.TtsSettingsRepository
 ) : ViewModel() {
 
     private var isFirstLoad = true
@@ -98,6 +99,20 @@ class InboxViewModel @Inject constructor(
 
     private val _bibleSettingsVoices = MutableStateFlow<List<Voice>>(emptyList())
     val bibleSettingsVoices: StateFlow<List<Voice>> = _bibleSettingsVoices
+
+    // ── Bible options sub-page ──────────────────────────────────────────────
+
+    private val _bibleSettingsVisible = MutableStateFlow(false)
+    val bibleSettingsVisible: StateFlow<Boolean> = _bibleSettingsVisible
+
+    private val _bibleTranslation = MutableStateFlow("web")
+    val bibleTranslation: StateFlow<String> = _bibleTranslation
+
+    private val _bibleVerseNumbers = MutableStateFlow(true)
+    val bibleVerseNumbers: StateFlow<Boolean> = _bibleVerseNumbers
+
+    private val _bibleContinuousReading = MutableStateFlow(false)
+    val bibleContinuousReading: StateFlow<Boolean> = _bibleContinuousReading
 
     private val _isSwitchingEngine = MutableStateFlow(false)
     val isSwitchingEngine: StateFlow<Boolean> = _isSwitchingEngine
@@ -220,6 +235,32 @@ class InboxViewModel @Inject constructor(
     }
 
     fun closeSettingsPanel() { _settingsPanelVisible.value = false }
+
+    // ── Bible options sub-page ──────────────────────────────────────────────
+
+    fun openBibleSettings() {
+        _bibleTranslation.value = ttsSettings.getBibleTranslation()
+        _bibleVerseNumbers.value = ttsSettings.getBibleVerseNumbers()
+        _bibleContinuousReading.value = ttsSettings.getBibleContinuousReading()
+        _bibleSettingsVisible.value = true
+    }
+
+    fun closeBibleSettings() { _bibleSettingsVisible.value = false }
+
+    fun setBibleTranslation(translation: String) {
+        ttsSettings.saveBibleTranslation(translation)
+        _bibleTranslation.value = translation
+    }
+
+    fun setBibleVerseNumbers(enabled: Boolean) {
+        ttsSettings.saveBibleVerseNumbers(enabled)
+        _bibleVerseNumbers.value = enabled
+    }
+
+    fun setBibleContinuousReading(enabled: Boolean) {
+        ttsSettings.saveBibleContinuousReading(enabled)
+        _bibleContinuousReading.value = enabled
+    }
 
     /**
      * Toggle between background mode (wake on power button) and foreground-only mode.

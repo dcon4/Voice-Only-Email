@@ -320,6 +320,17 @@ fun VoiceSettingsPanel(viewModel: InboxViewModel) {
                     Text("Done")
                 }
             }
+
+            Spacer(Modifier.height(8.dp))
+
+            OutlinedButton(
+                onClick  = { viewModel.openBibleSettings() },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .semantics { contentDescription = "Open Bible options" }
+            ) {
+                Text("Bible Options")
+            }
         }
     }
 }
