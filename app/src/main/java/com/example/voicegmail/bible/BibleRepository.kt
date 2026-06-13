@@ -76,7 +76,7 @@ class BibleRepository @Inject constructor(
         }
         val bibleVoice = voiceManager.bibleVoiceName
         if (bibleVoice.isNotBlank()) {
-            voiceManager.speakWithVoice(text, bibleVoice, onDone)
+            voiceManager.speakInChunksWithVoice(text, bibleVoice, 1000, onDone)
         } else {
             voiceManager.speakInChunks(text, 1000, onDone)
         }

@@ -723,15 +723,16 @@ class VoiceManager @Inject constructor(
 
     /**
      * Restore the main TTS engine that was in use before [switchToBibleEngine].
-     * Clears the crash-safe restore pref and re-applies the saved main voice.
+     * Clears the crash-safe restore pref only after the engine re-init
+     * succeeds, so a mid-restore crash won't lose the saved engine.
      */
     fun restoreMainEngine(onRestored: () -> Unit = {}) {
         val mainEngine = ttsSettings.getSavedMainEnginePackage()?.takeIf { it.isNotBlank() } ?: run {
             mainHandler.post(onRestored)
             return
         }
-        ttsSettings.clearSavedMainEngine()
         reinitWithEngine(mainEngine) {
+            ttsSettings.clearSavedMainEngine()
             mainHandler.post(onRestored)
         }
     }
@@ -792,6 +793,29 @@ class VoiceManager @Inject constructor(
                 }
             })
             tts?.speak(phoneticize(text), TextToSpeech.QUEUE_FLUSH, null, utteranceId)
+        }
+    }
+
+    /**
+     * Speak [text] in chunks of up to ~[maxChunkSize] characters using the
+     * TTS voice named [voiceName].  The current voice is saved before the
+     * first chunk and restored after the last chunk completes.
+     *
+     * This is the chunked analogue of [speakWithVoice] — use when [text]
+     * is long enough to hit Android's per-speak character limit.
+     */
+    fun speakInChunksWithVoice(text: String, voiceName: String, maxChunkSize: Int = 1000, onDone: () -> Unit) {
+        mainHandler.post {
+            if (!ttsReady) { onDone(); return@post }
+            savedTtsVoice = tts?.voice
+            val bibleVoice = tts?.voices?.find { it.name == voiceName }
+            if (bibleVoice != null) tts?.voice = bibleVoice
+            val chunks = splitTextIntoChunks(text, maxChunkSize)
+            speakChunkSequence(chunks, 0) {
+                savedTtsVoice?.let { tts?.voice = it }
+                savedTtsVoice = null
+                onDone()
+            }
         }
     }
 
