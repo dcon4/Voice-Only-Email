@@ -77,6 +77,13 @@ class VoiceManager @Inject constructor(
             ttsSettings.saveEnginePackage(pendingRestore)
             DebugLogger.log(tag, "initTts — restoring main engine after Bible crash: $pendingRestore")
         }
+        // Restore main voice — handles both engine-switch and same-engine crashes
+        val savedVoice = ttsSettings.getSavedMainVoiceName()
+        if (!savedVoice.isNullOrBlank()) {
+            ttsSettings.saveVoiceName(savedVoice)
+            ttsSettings.clearSavedMainVoice()
+            DebugLogger.log(tag, "initTts — restoring main voice after Bible crash: $savedVoice")
+        }
         val savedEngine = ttsSettings.getEnginePackage()
         DebugLogger.log(tag, "initTts — savedEngine=$savedEngine")
         val listener = TextToSpeech.OnInitListener { status ->
@@ -708,6 +715,11 @@ class VoiceManager @Inject constructor(
         val bibleEngine = ttsSettings.getBibleEnginePackage()
         val mainEngine = ttsSettings.getEnginePackage()
 
+        // Save the main voice before any Bible voice change so it can be
+        // restored later.  Must run before the fast-path return too, because
+        // applyBibleVoice() sets tts.voice without saving the old one.
+        ttsSettings.saveMainVoiceName(ttsSettings.getVoiceName() ?: "")
+
         if (bibleEngine == null || bibleEngine == mainEngine) {
             applyBibleVoice()
             mainHandler.post(onReady)
@@ -727,12 +739,27 @@ class VoiceManager @Inject constructor(
      * succeeds, so a mid-restore crash won't lose the saved engine.
      */
     fun restoreMainEngine(onRestored: () -> Unit = {}) {
-        val mainEngine = ttsSettings.getSavedMainEnginePackage()?.takeIf { it.isNotBlank() } ?: run {
+        val mainEngine = ttsSettings.getSavedMainEnginePackage()?.takeIf { it.isNotBlank() }
+        val savedVoice = ttsSettings.getSavedMainVoiceName()
+
+        if (mainEngine == null) {
+            // Same-engine case: no engine switch, just restore the voice
+            if (!savedVoice.isNullOrBlank()) {
+                ttsSettings.saveVoiceName(savedVoice)
+                ttsSettings.clearSavedMainVoice()
+                applyVoicePreference()
+            }
             mainHandler.post(onRestored)
             return
         }
+
         reinitWithEngine(mainEngine) {
             ttsSettings.clearSavedMainEngine()
+            ttsSettings.clearSavedMainVoice()
+            if (!savedVoice.isNullOrBlank()) {
+                ttsSettings.saveVoiceName(savedVoice)
+                applyVoicePreference()
+            }
             mainHandler.post(onRestored)
         }
     }

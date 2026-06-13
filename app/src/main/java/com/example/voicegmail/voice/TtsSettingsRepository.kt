@@ -66,6 +66,22 @@ class TtsSettingsRepository @Inject constructor(
         prefs.edit().remove("saved_main_engine").apply()
     }
 
+    /**
+     * Crash-safe temporary store for the main voice while Bible engine is in
+     * use.  Saved alongside [saveMainEnginePackage].  The main voice pref
+     * can be cleared by [applyVoicePreference] when it fails to find the
+     * main voice on the Bible engine, so we keep a copy here for restore.
+     */
+    fun getSavedMainVoiceName(): String? = prefs.getString("saved_main_voice", null)
+
+    fun saveMainVoiceName(name: String) {
+        prefs.edit().putString("saved_main_voice", name).apply()
+    }
+
+    fun clearSavedMainVoice() {
+        prefs.edit().remove("saved_main_voice").apply()
+    }
+
     fun saveEmailReadRate(rate: Float) {
         prefs.edit().putFloat("email_read_rate", rate).apply()
     }
