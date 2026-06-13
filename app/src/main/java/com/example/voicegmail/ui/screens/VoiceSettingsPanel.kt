@@ -24,7 +24,10 @@ fun VoiceSettingsPanel(viewModel: InboxViewModel) {
     val selectedEngine   by viewModel.selectedEngineName.collectAsState()
     val selectedVoice    by viewModel.selectedVoiceName.collectAsState()
     val selectedBibleVoice by viewModel.selectedBibleVoiceName.collectAsState()
+    val bibleEngines     by viewModel.bibleSelectedEngineName.collectAsState()
+    val bibleVoices      by viewModel.bibleSettingsVoices.collectAsState()
     val switching        by viewModel.isSwitchingEngine.collectAsState()
+    val bibleSwitch      by viewModel.isSwitchingBibleEngine.collectAsState()
 
     ModalBottomSheet(
         onDismissRequest = { viewModel.closeSettingsPanel() },
@@ -202,6 +205,40 @@ fun VoiceSettingsPanel(viewModel: InboxViewModel) {
 
             HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
 
+            // ---- Bible TTS Engine --------------------------------------------
+            Text(
+                text = "Bible TTS Engine",
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.padding(top = 4.dp, bottom = 4.dp)
+            )
+
+            if (engines.isEmpty()) {
+                Text(
+                    "No TTS engines found.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            } else {
+                EngineRow(
+                    engine    = null,
+                    label     = "Use same engine as main",
+                    selected  = bibleEngines == null,
+                    switching = bibleSwitch,
+                    onSelect  = { viewModel.clearBibleEngineFromPanel() }
+                )
+                engines.forEach { engine ->
+                    EngineRow(
+                        engine    = engine,
+                        selected  = engine.name == bibleEngines,
+                        switching = bibleSwitch,
+                        onSelect  = { viewModel.selectBibleEngineFromPanel(engine.name) }
+                    )
+                }
+            }
+
+            HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
+
             // ---- Bible Voice --------------------------------------------------
             Text(
                 text = "Bible Reading Voice",
@@ -210,7 +247,7 @@ fun VoiceSettingsPanel(viewModel: InboxViewModel) {
                 modifier = Modifier.padding(bottom = 4.dp)
             )
 
-            if (switching) {
+            if (bibleSwitch) {
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -218,15 +255,23 @@ fun VoiceSettingsPanel(viewModel: InboxViewModel) {
                     contentAlignment = Alignment.Center
                 ) {
                     CircularProgressIndicator(modifier = Modifier.semantics {
-                        contentDescription = "Loading voices"
+                        contentDescription = "Loading voices for Bible engine"
                     })
                 }
-            } else if (voices.isEmpty()) {
-                Text(
-                    "No voices available.",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+            } else if (bibleVoices.isEmpty()) {
+                if (bibleEngines == null) {
+                    Text(
+                        "Using the same voices as the main engine. Select a different engine above for separate Bible voices.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                } else {
+                    Text(
+                        "No voices available for this engine.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
             } else {
                 VoiceRow(
                     voice    = null,
@@ -234,7 +279,7 @@ fun VoiceSettingsPanel(viewModel: InboxViewModel) {
                     selected = selectedBibleVoice == null,
                     onSelect = { viewModel.clearBibleVoiceFromPanel() }
                 )
-                voices.forEach { voice ->
+                bibleVoices.forEach { voice ->
                     VoiceRow(
                         voice      = voice,
                         label      = viewModel.friendlyVoiceName(voice),
@@ -252,13 +297,22 @@ fun VoiceSettingsPanel(viewModel: InboxViewModel) {
                 horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 OutlinedButton(
-                    onClick   = { viewModel.testVoice() },
+                    onClick   = { viewModel.testMainVoice() },
                     modifier  = Modifier
                         .weight(1f)
-                        .semantics { contentDescription = "Test current voice" },
+                        .semantics { contentDescription = "Test main voice" },
                     enabled   = !switching
                 ) {
-                    Text("Test Voice")
+                    Text("Test Main Voice")
+                }
+                OutlinedButton(
+                    onClick   = { viewModel.testBibleVoice() },
+                    modifier  = Modifier
+                        .weight(1f)
+                        .semantics { contentDescription = "Test Bible voice" },
+                    enabled   = !bibleSwitch
+                ) {
+                    Text("Test Bible Voice")
                 }
                 Button(
                     onClick  = { viewModel.closeSettingsPanel() },
@@ -275,18 +329,21 @@ fun VoiceSettingsPanel(viewModel: InboxViewModel) {
 
 @Composable
 private fun EngineRow(
-    engine: TextToSpeech.EngineInfo,
+    engine: TextToSpeech.EngineInfo?,
+    label: String? = null,
     selected: Boolean,
     switching: Boolean,
     onSelect: () -> Unit
 ) {
+    val displayLabel = label ?: engine?.label ?: "Unknown"
+    val desc = "TTS engine $displayLabel${if (selected) ", currently selected" else ""}"
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .clickable(enabled = !switching, onClick = onSelect)
             .padding(vertical = 4.dp)
             .semantics(mergeDescendants = true) {
-                contentDescription = "TTS engine ${engine.label}${if (selected) ", currently selected" else ""}"
+                contentDescription = desc
             },
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -296,7 +353,7 @@ private fun EngineRow(
         )
         Spacer(Modifier.width(8.dp))
         Text(
-            text  = engine.label,
+            text  = displayLabel,
             style = MaterialTheme.typography.bodyLarge
         )
     }

@@ -39,6 +39,33 @@ class TtsSettingsRepository @Inject constructor(
         prefs.edit().remove("bible_voice_name").apply()
     }
 
+    // ── Bible engine (separate TTS engine for Bible reading) ────────────────
+
+    fun getBibleEnginePackage(): String? = prefs.getString("bible_engine_package", null)
+
+    fun saveBibleEnginePackage(pkg: String) {
+        prefs.edit().putString("bible_engine_package", pkg).apply()
+    }
+
+    fun clearBibleEnginePackage() {
+        prefs.edit().remove("bible_engine_package").apply()
+    }
+
+    /**
+     * Crash-safe temporary store for the main engine while Bible engine is in
+     * use.  Written before switching to the Bible engine; read back and cleared
+     * on app startup if the previous session crashed mid-Bible-reading.
+     */
+    fun getSavedMainEnginePackage(): String? = prefs.getString("saved_main_engine", null)
+
+    fun saveMainEnginePackage(pkg: String) {
+        prefs.edit().putString("saved_main_engine", pkg).apply()
+    }
+
+    fun clearSavedMainEngine() {
+        prefs.edit().remove("saved_main_engine").apply()
+    }
+
     fun saveEmailReadRate(rate: Float) {
         prefs.edit().putFloat("email_read_rate", rate).apply()
     }

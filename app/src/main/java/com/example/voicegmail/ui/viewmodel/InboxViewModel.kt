@@ -93,8 +93,17 @@ class InboxViewModel @Inject constructor(
     private val _selectedBibleVoiceName = MutableStateFlow<String?>(null)
     val selectedBibleVoiceName: StateFlow<String?> = _selectedBibleVoiceName
 
+    private val _bibleSelectedEngineName = MutableStateFlow<String?>(null)
+    val bibleSelectedEngineName: StateFlow<String?> = _bibleSelectedEngineName
+
+    private val _bibleSettingsVoices = MutableStateFlow<List<Voice>>(emptyList())
+    val bibleSettingsVoices: StateFlow<List<Voice>> = _bibleSettingsVoices
+
     private val _isSwitchingEngine = MutableStateFlow(false)
     val isSwitchingEngine: StateFlow<Boolean> = _isSwitchingEngine
+
+    private val _isSwitchingBibleEngine = MutableStateFlow(false)
+    val isSwitchingBibleEngine: StateFlow<Boolean> = _isSwitchingBibleEngine
 
     private val _runInBackground = MutableStateFlow(true)
     val runInBackground: StateFlow<Boolean> = _runInBackground
@@ -195,11 +204,16 @@ class InboxViewModel @Inject constructor(
     // ------------------------------------------------------------------
 
     fun openSettingsPanel() {
-        _availableEngines.value   = voiceManager.getAvailableEngines()
-        _settingsVoices.value     = voiceManager.getAvailableVoices()
-        _selectedEngineName.value = voiceManager.getCurrentEngineName()
-        _selectedVoiceName.value  = voiceManager.getCurrentVoiceName()
+        _availableEngines.value       = voiceManager.getAvailableEngines()
+        _settingsVoices.value         = voiceManager.getAvailableVoices()
+        _selectedEngineName.value     = voiceManager.getCurrentEngineName()
+        _selectedVoiceName.value      = voiceManager.getCurrentVoiceName()
         _selectedBibleVoiceName.value = voiceManager.bibleVoiceName.ifBlank { null }
+        val bibleEng = voiceManager.bibleEnginePackage
+        _bibleSelectedEngineName.value = bibleEng
+        if (bibleEng != null) {
+            loadBibleVoicesForEngine(bibleEng)
+        }
         _runInBackground.value    = wakePreferences.isRunInBackground()
         _verboseLogging.value     = wakePreferences.isVerboseLogging()
         _settingsPanelVisible.value = true
@@ -275,6 +289,55 @@ class InboxViewModel @Inject constructor(
     fun clearBibleVoiceFromPanel() {
         voiceManager.setBibleVoiceName("")
         _selectedBibleVoiceName.value = null
+    }
+
+    fun selectBibleEngineFromPanel(engineName: String) {
+        if (engineName == _bibleSelectedEngineName.value) {
+            loadBibleVoicesForEngine(engineName)
+            return
+        }
+        _isSwitchingBibleEngine.value = true
+        voiceManager.setBibleEngineName(engineName)
+        _bibleSelectedEngineName.value = engineName
+        loadBibleVoicesForEngine(engineName)
+    }
+
+    fun clearBibleEngineFromPanel() {
+        voiceManager.setBibleEngineName(null)
+        _bibleSelectedEngineName.value = null
+        _bibleSettingsVoices.value = emptyList()
+    }
+
+    private fun loadBibleVoicesForEngine(engineName: String) {
+        voiceManager.getVoicesForEngine(engineName) { voices ->
+            _bibleSettingsVoices.value = voices.sortedWith(
+                compareBy({ it.locale.country != "US" }, { it.locale.country != "GB" },
+                    { it.isNetworkConnectionRequired }, { it.name })
+            )
+            _isSwitchingBibleEngine.value = false
+        }
+    }
+
+    fun testBibleVoice() {
+        val vName = _selectedBibleVoiceName.value
+        val label = if (vName != null)
+            _bibleSettingsVoices.value.find { it.name == vName }
+                ?.let { voiceManager.friendlyVoiceName(it) } ?: "the selected Bible voice"
+        else "the default Bible voice"
+        voiceManager.switchToBibleEngine {
+            voiceManager.speak("Hello. This is $label. Ready to read the Bible.") {
+                voiceManager.restoreMainEngine()
+            }
+        }
+    }
+
+    fun testMainVoice() {
+        val vName = _selectedVoiceName.value
+        val label = if (vName != null)
+            _settingsVoices.value.find { it.name == vName }
+                ?.let { voiceManager.friendlyVoiceName(it) } ?: "the selected voice"
+        else "the engine default voice"
+        voiceManager.speak("Hello. This is $label. VoiceGmail is ready to help you.")
     }
 
     fun testVoice() {
@@ -727,14 +790,17 @@ class InboxViewModel @Inject constructor(
             }
 
             is VoiceCommand.Bible -> {
-                bibleVoiceFlow.start(viewModelScope) { exitCmd ->
-                    // Bible flow exited — handle the exit command (or resume inbox)
-                    if (exitCmd is VoiceCommand.None) {
-                        voiceCommandEngine.speakThenListen("Back to inbox. Say a command.") { cmd ->
-                            handleCommand(cmd, emails)
+                voiceManager.switchToBibleEngine {
+                    bibleVoiceFlow.start(viewModelScope) { exitCmd ->
+                        voiceManager.restoreMainEngine {
+                            if (exitCmd is VoiceCommand.None) {
+                                voiceCommandEngine.speakThenListen("Back to inbox. Say a command.") { cmd ->
+                                    handleCommand(cmd, emails)
+                                }
+                            } else {
+                                handleCommand(exitCmd, emails)
+                            }
                         }
-                    } else {
-                        handleCommand(exitCmd, emails)
                     }
                 }
             }

@@ -69,6 +69,14 @@ class VoiceManager @Inject constructor(
     // ------------------------------------------------------------------
 
     private fun initTts() {
+        // Crash-safe restore: if the previous session crashed while the Bible
+        // engine was active, switch back to the main engine now.
+        val pendingRestore = ttsSettings.getSavedMainEnginePackage()
+        if (pendingRestore != null) {
+            ttsSettings.clearSavedMainEngine()
+            ttsSettings.saveEnginePackage(pendingRestore)
+            DebugLogger.log(tag, "initTts — restoring main engine after Bible crash: $pendingRestore")
+        }
         val savedEngine = ttsSettings.getEnginePackage()
         DebugLogger.log(tag, "initTts — savedEngine=$savedEngine")
         val listener = TextToSpeech.OnInitListener { status ->
@@ -631,7 +639,7 @@ class VoiceManager @Inject constructor(
         mainHandler.post { speechRecognizer?.stopListening(); _isListening.value = false }
     }
 
-    // ── Bible voice support ─────────────────────────────────────────────
+    // ── Bible engine & voice support ────────────────────────────────────
     private var savedTtsVoice: android.speech.tts.Voice? = null
 
     /** Name of the TTS voice used for Bible reading (empty = use default). */
@@ -645,6 +653,86 @@ class VoiceManager @Inject constructor(
 
     fun loadBibleVoiceFromSettings() {
         bibleVoiceName = ttsSettings.getBibleVoiceName()
+        bibleEnginePackage = ttsSettings.getBibleEnginePackage()
+    }
+
+    /** Engine package for Bible reading (null = same as main). */
+    var bibleEnginePackage: String? = null
+        private set
+
+    fun setBibleEngineName(name: String?) {
+        bibleEnginePackage = name
+        if (name != null) ttsSettings.saveBibleEnginePackage(name)
+        else ttsSettings.clearBibleEnginePackage()
+    }
+
+    fun loadBibleEngineFromSettings() {
+        bibleEnginePackage = ttsSettings.getBibleEnginePackage()
+    }
+
+    private fun applyBibleVoice() {
+        val name = ttsSettings.getBibleVoiceName()
+        if (name.isNotBlank()) {
+            val voice = tts?.voices?.find { it.name == name }
+            if (voice != null) tts?.voice = voice
+        }
+    }
+
+    /**
+     * Query voices for a given TTS engine by creating a temporary instance.
+     * The [callback] receives the list of voices (empty on failure).
+     */
+    fun getVoicesForEngine(enginePackage: String, callback: (List<Voice>) -> Unit) {
+        val tempTts = TextToSpeech(context, object : TextToSpeech.OnInitListener {
+            override fun onInit(status: Int) {
+                val voices = if (status == TextToSpeech.SUCCESS)
+                    tempTts.voices?.toList() ?: emptyList()
+                else emptyList()
+                tempTts.shutdown()
+                callback(voices)
+            }
+        }, enginePackage)
+    }
+
+    /**
+     * Switch the active TTS to the Bible engine (if different from the main
+     * engine) and apply the Bible voice.  Saves the current main engine to a
+     * crash-safe pref so it can be restored on next launch if the app crashes
+     * mid-Bible-reading.
+     *
+     * If the Bible engine is the same as the main engine, only the voice is
+     * switched (if a Bible voice is configured) and [onReady] fires immediately.
+     */
+    fun switchToBibleEngine(onReady: () -> Unit) {
+        val bibleEngine = ttsSettings.getBibleEnginePackage()
+        val mainEngine = ttsSettings.getEnginePackage()
+
+        if (bibleEngine == null || bibleEngine == mainEngine) {
+            applyBibleVoice()
+            mainHandler.post(onReady)
+            return
+        }
+
+        ttsSettings.saveMainEnginePackage(mainEngine ?: "")
+        reinitWithEngine(bibleEngine) {
+            applyBibleVoice()
+            mainHandler.post(onReady)
+        }
+    }
+
+    /**
+     * Restore the main TTS engine that was in use before [switchToBibleEngine].
+     * Clears the crash-safe restore pref and re-applies the saved main voice.
+     */
+    fun restoreMainEngine(onRestored: () -> Unit = {}) {
+        val mainEngine = ttsSettings.getSavedMainEnginePackage() ?: run {
+            mainHandler.post(onRestored)
+            return
+        }
+        ttsSettings.clearSavedMainEngine()
+        reinitWithEngine(mainEngine) {
+            mainHandler.post(onRestored)
+        }
     }
 
     fun isTtsReady(): Boolean = ttsReady
