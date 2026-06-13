@@ -435,6 +435,16 @@ class InboxViewModel @Inject constructor(
         // the following speakThenListen call.
         voiceCommandEngine.cancelListening()
         readingGen++ // invalidate any in-flight speakEmailChunk onDone callbacks
+        // Restore the main TTS engine+voice in case Bible mode was active.
+        // This runs even if Bible was not active (it is a no-op when no engine
+        // was saved) so the rest of the wake handler always speaks in the
+        // correct voice.
+        voiceManager.restoreMainEngine {
+            handleWakeEventAfterEngineRestore(browserWasReading)
+        }
+    }
+
+    private fun handleWakeEventAfterEngineRestore(browserWasReading: Boolean) {
         when (val state = _uiState.value) {
             is InboxUiState.Success -> {
                 if (browserWasReading) {
