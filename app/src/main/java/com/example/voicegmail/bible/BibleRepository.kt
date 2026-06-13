@@ -78,7 +78,7 @@ class BibleRepository @Inject constructor(
         if (bibleVoice.isNotBlank()) {
             voiceManager.speakWithVoice(text, bibleVoice, onDone)
         } else {
-            voiceManager.speak(text, onDone)
+            voiceManager.speakInChunks(text, 1000, onDone)
         }
     }
 

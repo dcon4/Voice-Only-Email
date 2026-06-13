@@ -706,6 +706,55 @@ class VoiceManager @Inject constructor(
         }
     }
 
+    /**
+     * Speak [text] in chunks of up to ~[maxChunkSize] characters, chaining
+     * each chunk's [onDone] to the next so they queue one after another.
+     * Splits at the last sentence boundary before the limit so TTS does not
+     * cut off mid-sentence.
+     *
+     * Android TTS engines have a per-[speak] character limit (typically 2000-
+     * 4000).  Passing text longer than the limit can cause silent truncation
+     * or premature [onDone].  This method avoids that by never handing more
+     * than [maxChunkSize] characters to a single [speak] call.
+     */
+    fun speakInChunks(text: String, maxChunkSize: Int = 1000, onDone: () -> Unit) {
+        val chunks = splitTextIntoChunks(text, maxChunkSize)
+        speakChunkSequence(chunks, 0, onDone)
+    }
+
+    private fun speakChunkSequence(chunks: List<String>, index: Int, onDone: () -> Unit) {
+        if (index >= chunks.size) {
+            onDone()
+            return
+        }
+        val chunk = chunks[index]
+        speak(chunk) {
+            speakChunkSequence(chunks, index + 1, onDone)
+        }
+    }
+
+    /**
+     * Split [text] into pieces no larger than [maxSize] characters, preferring
+     * to break at ". " boundaries so whole sentences stay together.
+     */
+    private fun splitTextIntoChunks(text: String, maxSize: Int): List<String> {
+        if (text.length <= maxSize) return listOf(text)
+        val result = mutableListOf<String>()
+        var start = 0
+        while (start < text.length) {
+            var end = minOf(start + maxSize, text.length)
+            if (end < text.length) {
+                val breakAt = text.lastIndexOf(". ", end - 1)
+                if (breakAt > start) {
+                    end = breakAt + 1
+                }
+            }
+            result.add(text.substring(start, end))
+            start = end
+        }
+        return result
+    }
+
     /** Stop TTS without affecting the mic. */
     fun stopTts() {
         mainHandler.post {
