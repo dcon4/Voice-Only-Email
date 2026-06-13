@@ -683,15 +683,16 @@ class VoiceManager @Inject constructor(
      * The [callback] receives the list of voices (empty on failure).
      */
     fun getVoicesForEngine(enginePackage: String, callback: (List<Voice>) -> Unit) {
-        val tempTts = TextToSpeech(context, object : TextToSpeech.OnInitListener {
-            override fun onInit(status: Int) {
-                val voices = if (status == TextToSpeech.SUCCESS)
-                    tempTts.voices?.toList() ?: emptyList()
-                else emptyList()
-                tempTts.shutdown()
-                callback(voices)
-            }
-        }, enginePackage)
+        var tempTts: TextToSpeech? = null
+        val listener = TextToSpeech.OnInitListener { status ->
+            val tts = tempTts ?: return@OnInitListener
+            val voices = if (status == TextToSpeech.SUCCESS)
+                tts.voices?.toList() ?: emptyList()
+            else emptyList()
+            tts.shutdown()
+            callback(voices)
+        }
+        tempTts = TextToSpeech(context, listener, enginePackage)
     }
 
     /**
@@ -725,7 +726,7 @@ class VoiceManager @Inject constructor(
      * Clears the crash-safe restore pref and re-applies the saved main voice.
      */
     fun restoreMainEngine(onRestored: () -> Unit = {}) {
-        val mainEngine = ttsSettings.getSavedMainEnginePackage() ?: run {
+        val mainEngine = ttsSettings.getSavedMainEnginePackage()?.takeIf { it.isNotBlank() } ?: run {
             mainHandler.post(onRestored)
             return
         }
@@ -830,7 +831,7 @@ class VoiceManager @Inject constructor(
         val result = mutableListOf<String>()
         var start = 0
         while (start < text.length) {
-            var end = minOf(start + maxSize, text.length)
+            var end = (start + maxSize).coerceAtMost(text.length)
             if (end < text.length) {
                 val breakAt = text.lastIndexOf(". ", end - 1)
                 if (breakAt > start) {
