@@ -10,6 +10,7 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 private const val TAG = "BibleVoiceFlow"
+private const val CHUNK_SIZE = 800
 
 /**
  * Voice-driven Bible reading flow using bible-api.com text + TTS.
@@ -17,10 +18,13 @@ private const val TAG = "BibleVoiceFlow"
  * No API key required. Reads each chapter as TTS-synthesized speech.
  * Supports separate Bible voice via [VoiceManager.bibleVoiceName].
  *
+ * Supports pause/resume: power button or "pause" during a listening
+ * window saves the position; wake and "continue" resumes from there.
+ *
  * Flow:
  * 1. Ask which book
  * 2. Ask which chapter
- * 3. Fetch chapter text from bible-api.com and read via TTS
+ * 3. Fetch chapter text from bible-api.com and read via TTS in chunks
  * 4. On completion, offer next chapter / repeat / cancel
  */
 @Singleton
@@ -35,6 +39,14 @@ class BibleVoiceFlow @Inject constructor(
     private var currentChapter: Int = 1
     private var maxChapter: Int = 1
 
+    // ── Chunked reading state ──────────────────────────────────────────────
+    private var readingGen: Int = 0
+    private var currentChunks: List<String> = emptyList()
+    private var currentChunkIndex: Int = 0
+    private var isReadingActive: Boolean = false
+    private var _isPaused: Boolean = false
+    val isPaused: Boolean get() = _isPaused
+
     /**
      * Entry point — start the Bible voice menu.
      * [scope] is used for suspend calls (API fetches).
@@ -42,7 +54,7 @@ class BibleVoiceFlow @Inject constructor(
      */
     fun start(scope: CoroutineScope, onExit: (VoiceCommand) -> Unit) {
         DebugLogger.log(TAG, "Bible flow started")
-
+        clearState()
         voiceCommandEngine.speakThenListen(
             "Bible. Which book would you like to hear? " +
                 "Say a book name like 'Genesis' or 'John', " +
@@ -55,15 +67,15 @@ class BibleVoiceFlow @Inject constructor(
     private fun handleBookSelection(cmd: VoiceCommand, scope: CoroutineScope, onExit: (VoiceCommand) -> Unit) {
         when (cmd) {
             is VoiceCommand.Cancel, is VoiceCommand.GoBack -> {
-                bibleRepository.stopReading()
+                stop()
                 onExit(VoiceCommand.None)
             }
             is VoiceCommand.GoToSleep -> {
-                bibleRepository.stopReading()
+                stop()
                 onExit(cmd)
             }
             is VoiceCommand.SessionTimeout -> {
-                bibleRepository.stopReading()
+                stop()
                 onExit(cmd)
             }
             is VoiceCommand.FreeText -> {
@@ -119,7 +131,7 @@ class BibleVoiceFlow @Inject constructor(
                 }
             }
             else -> {
-                bibleRepository.stopReading()
+                stop()
                 onExit(cmd)
             }
         }
@@ -141,11 +153,11 @@ class BibleVoiceFlow @Inject constructor(
                 ) { retry -> handleBookSelection(retry, scope, onExit) }
             }
             is VoiceCommand.GoToSleep -> {
-                bibleRepository.stopReading()
+                stop()
                 onExit(cmd)
             }
             is VoiceCommand.SessionTimeout -> {
-                bibleRepository.stopReading()
+                stop()
                 onExit(cmd)
             }
             is VoiceCommand.FreeText -> {
@@ -160,26 +172,31 @@ class BibleVoiceFlow @Inject constructor(
                 }
             }
             else -> {
-                bibleRepository.stopReading()
+                stop()
                 onExit(cmd)
             }
         }
     }
 
-    // ── TTS Reading ────────────────────────────────────────────────────────
+    // ── Chunked TTS Reading ────────────────────────────────────────────────
 
-    private fun readCurrentChapter(scope: CoroutineScope, onExit: (VoiceCommand) -> Unit) {
+    private fun readCurrentChapter(scope: CoroutineScope, onExit: (VoiceCommand) -> Unit, startChunk: Int = 0) {
         val bookId = currentBookId ?: return
         val bookName = currentBookName ?: return
+
+        isReadingActive = true
+        _isPaused = false
+        readingGen++
+        val gen = readingGen
 
         voiceManager.speak("Reading $bookName, chapter $currentChapter.")
 
         scope.launch {
             try {
                 val chapterText = bibleRepository.getChapterText(bookId, currentChapter, bookName)
-                bibleRepository.speakChapter(chapterText) {
-                    handleReadingComplete(scope, onExit)
-                }
+                currentChunks = splitTextIntoChunks(chapterText, CHUNK_SIZE)
+                currentChunkIndex = startChunk.coerceIn(0, (currentChunks.size - 1).coerceAtLeast(0))
+                readNextChunk(scope, onExit, gen)
             } catch (e: Exception) {
                 DebugLogger.log(TAG, "Error fetching chapter text: ${e.message}")
                 voiceCommandEngine.speakThenListen(
@@ -189,6 +206,109 @@ class BibleVoiceFlow @Inject constructor(
             }
         }
     }
+
+    private fun readNextChunk(scope: CoroutineScope, onExit: (VoiceCommand) -> Unit, gen: Int) {
+        if (gen != readingGen) {
+            DebugLogger.verbose(TAG, "readNextChunk: stale gen=$gen != readingGen=$readingGen — discarding")
+            return
+        }
+        if (currentChunkIndex >= currentChunks.size) {
+            isReadingActive = false
+            handleReadingComplete(scope, onExit)
+            return
+        }
+
+        val chunk = currentChunks[currentChunkIndex]
+        // Do NOT advance index yet — power-button wake leaves it pointing
+        // at the current (unfinished) chunk so resume can re-read it.
+        val bibleVoice = voiceManager.bibleVoiceName
+
+        val speak: (String, () -> Unit) -> Unit = if (bibleVoice.isNotBlank())
+            { text, done -> voiceManager.speakWithVoice(text, bibleVoice, done) }
+        else
+            { text, done -> voiceManager.speak(text, done) }
+
+        speak(chunk) {
+            if (gen != readingGen) return@speak
+            currentChunkIndex++
+            readNextChunk(scope, onExit, gen)
+        }
+    }
+
+    // ── Pause / Resume ─────────────────────────────────────────────────────
+
+    /**
+     * Called by [InboxViewModel.handleWakeEvent] on power-button interrupt.
+     * Increments [readingGen] (invalidating in-flight chunk callbacks), stops
+     * TTS, and preserves the current chunk index.
+     *
+     * @return true if a chapter was actively being read
+     */
+    fun handleWakeInterrupt(): Boolean {
+        val wasReading = isReadingActive
+        if (wasReading || _isPaused) {
+            DebugLogger.log(TAG, "handleWakeInterrupt: pausing at chunk $currentChunkIndex/${currentChunks.size}")
+            readingGen++
+            isReadingActive = false
+            _isPaused = true
+            bibleRepository.stopReading()
+        }
+        return wasReading
+    }
+
+    /**
+     * Resume reading from the saved chunk position.  Re-fetches the chapter
+     * text to ensure correct content, then skips to [currentChunkIndex].
+     *
+     * The caller must have already switched to the Bible TTS engine (via
+     * [VoiceManager.switchToBibleEngine]) before calling this method.
+     */
+    fun resumeReading(scope: CoroutineScope, onExit: (VoiceCommand) -> Unit) {
+        if (!_isPaused || currentBookId == null) {
+            DebugLogger.log(TAG, "resumeReading: nothing to resume — starting fresh")
+            clearState()
+            start(scope, onExit)
+            return
+        }
+        val savedChunkIndex = currentChunkIndex
+        DebugLogger.log(TAG, "resumeReading: resuming from chunk $savedChunkIndex")
+        _isPaused = false
+        readCurrentChapter(scope, onExit, savedChunkIndex)
+    }
+
+    /**
+     * Re-read the current chapter from the beginning.
+     * The caller must have already switched to the Bible TTS engine.
+     */
+    fun repeatChapter(scope: CoroutineScope, onExit: (VoiceCommand) -> Unit) {
+        if (currentBookId == null || currentBookName == null) {
+            clearState()
+            start(scope, onExit)
+            return
+        }
+        _isPaused = false
+        readCurrentChapter(scope, onExit, 0)
+    }
+
+    /** Stop reading and clear all state (full stop, not pause). */
+    fun stop() {
+        readingGen++
+        isReadingActive = false
+        _isPaused = false
+        currentChunks = emptyList()
+        currentChunkIndex = 0
+        bibleRepository.stopReading()
+    }
+
+    private fun clearState() {
+        readingGen = 0
+        currentChunks = emptyList()
+        currentChunkIndex = 0
+        isReadingActive = false
+        _isPaused = false
+    }
+
+    // ── Reading complete handlers ──────────────────────────────────────────
 
     private fun handleReadingComplete(scope: CoroutineScope, onExit: (VoiceCommand) -> Unit) {
         if (ttsSettings.getBibleContinuousReading()) {
@@ -211,9 +331,8 @@ class BibleVoiceFlow @Inject constructor(
 
     /**
      * Auto-advance to the next chapter (or next book) without waiting for
-     * user input.  Called from [handleReadingComplete] when continuous
-     * reading is enabled.  The user can interrupt via the power button,
-     * which triggers [handleWakeEvent] → [stop] → [restoreMainEngine].
+     * user input.  The user can interrupt via the power button,
+     * which triggers [handleWakeEvent] -> [handleWakeInterrupt] -> [restoreMainEngine].
      */
     private fun autoAdvanceChapter(scope: CoroutineScope, onExit: (VoiceCommand) -> Unit) {
         if (currentChapter < maxChapter) {
@@ -274,17 +393,17 @@ class BibleVoiceFlow @Inject constructor(
             is VoiceCommand.Repeat -> readCurrentChapter(scope, onExit)
             is VoiceCommand.TryAgain -> readCurrentChapter(scope, onExit)
             is VoiceCommand.Cancel, is VoiceCommand.GoBack -> {
-                bibleRepository.stopReading()
+                stop()
                 voiceCommandEngine.speakThenListen(
                     "Leaving Bible mode. Say a command."
                 ) { exitCmd -> onExit(exitCmd) }
             }
             is VoiceCommand.GoToSleep -> {
-                bibleRepository.stopReading()
+                stop()
                 onExit(cmd)
             }
             is VoiceCommand.SessionTimeout -> {
-                bibleRepository.stopReading()
+                stop()
                 onExit(cmd)
             }
             is VoiceCommand.FreeText -> {
@@ -319,15 +438,30 @@ class BibleVoiceFlow @Inject constructor(
                 }
             }
             else -> {
-                bibleRepository.stopReading()
+                stop()
                 onExit(cmd)
             }
         }
     }
 
-    /** Stop reading if active (e.g. on wake event or when leaving the app). */
-    fun stop() {
-        bibleRepository.stopReading()
+    // ── Chunk splitting ────────────────────────────────────────────────────
+
+    private fun splitTextIntoChunks(text: String, maxSize: Int): List<String> {
+        if (text.length <= maxSize) return listOf(text)
+        val result = mutableListOf<String>()
+        var start = 0
+        while (start < text.length) {
+            var end = (start + maxSize).coerceAtMost(text.length)
+            if (end < text.length) {
+                val breakAt = text.lastIndexOf(". ", end - 1)
+                if (breakAt > start) {
+                    end = breakAt + 1
+                }
+            }
+            result.add(text.substring(start, end))
+            start = end
+        }
+        return result
     }
 
     // ── Parsing helpers ───────────────────────────────────────────────────

@@ -466,8 +466,8 @@ class InboxViewModel @Inject constructor(
     private fun handleWakeEvent() {
         DebugLogger.log("InboxViewModel", "Wake event — state=${_uiState.value::class.simpleName} pausedPosition=${pausedPosition != null}")
         flowGen++ // invalidate stale compose/browser/other callbacks
-        // Stop any Bible audio that may be playing
-        bibleVoiceFlow.stop()
+        // Pause any Bible audio that may be playing (preserves position)
+        val bibleWasReading = bibleVoiceFlow.handleWakeInterrupt()
         // Check if browser was reading an article
         val browserWasReading = browserVoiceFlow.handleWakeInterrupt()
         // Destroy the in-flight recognizer silently so its error/result callback
@@ -480,13 +480,17 @@ class InboxViewModel @Inject constructor(
         // was saved) so the rest of the wake handler always speaks in the
         // correct voice.
         voiceManager.restoreMainEngine {
-            handleWakeEventAfterEngineRestore(browserWasReading)
+            handleWakeEventAfterEngineRestore(bibleWasReading, browserWasReading)
         }
     }
 
-    private fun handleWakeEventAfterEngineRestore(browserWasReading: Boolean) {
+    private fun handleWakeEventAfterEngineRestore(bibleWasReading: Boolean, browserWasReading: Boolean) {
         when (val state = _uiState.value) {
             is InboxUiState.Success -> {
+                if (bibleWasReading) {
+                    promptBibleResumeAndListen(state.emails)
+                    return
+                }
                 if (browserWasReading) {
                     // Browser article reading was interrupted — open a pause
                     // listener that PRESERVES the browser's chunk bookmark on
@@ -537,6 +541,45 @@ class InboxViewModel @Inject constructor(
      * the INBOX dispatcher — which has no browser bookmark of its own and
      * therefore answered "No reading in progress."
      */
+
+    private fun promptBibleResumeAndListen(emails: List<EmailItem>) {
+        val bibleOnExit: (VoiceCommand) -> Unit = { exitCmd ->
+            if (exitCmd is VoiceCommand.None) {
+                voiceCommandEngine.speakThenListen("Back to inbox. Say a command.") { c ->
+                    handleCommand(c, emails)
+                }
+            } else {
+                handleCommand(exitCmd, emails)
+            }
+        }
+        voiceCommandEngine.speakThenListen(
+            "Bible reading was paused. Say 'continue' to resume, or another command."
+        ) { cmd ->
+            when (cmd) {
+                is VoiceCommand.ContinueReading -> {
+                    voiceManager.switchToBibleEngine {
+                        bibleVoiceFlow.resumeReading(viewModelScope, bibleOnExit)
+                    }
+                }
+                is VoiceCommand.Repeat -> {
+                    voiceManager.switchToBibleEngine {
+                        bibleVoiceFlow.repeatChapter(viewModelScope, bibleOnExit)
+                    }
+                }
+                is VoiceCommand.SessionTimeout, is VoiceCommand.GoToSleep -> {
+                    voiceManager.stopAll()
+                    voiceManager.speak(
+                        "Going to sleep. Press the power button and say 'continue' to resume."
+                    )
+                }
+                else -> {
+                    bibleVoiceFlow.stop()
+                    handleCommand(cmd, emails)
+                }
+            }
+        }
+    }
+
     private fun promptBrowserResumeAndListen(emails: List<EmailItem>) {
         val browserOnExit: (VoiceCommand) -> Unit = { exitCmd ->
             if (exitCmd is VoiceCommand.None) {
@@ -778,7 +821,21 @@ class InboxViewModel @Inject constructor(
                 }
 
             is VoiceCommand.ContinueReading ->
-                if (pausedPosition != null) resumeFromPause(emails)
+                if (bibleVoiceFlow.isPaused) {
+                    voiceManager.switchToBibleEngine {
+                        bibleVoiceFlow.resumeReading(viewModelScope) { exitCmd ->
+                            voiceManager.restoreMainEngine {
+                                if (exitCmd is VoiceCommand.None) {
+                                    voiceCommandEngine.speakThenListen("Back to inbox. Say a command.") { c ->
+                                        handleCommand(c, emails)
+                                    }
+                                } else {
+                                    handleCommand(exitCmd, emails)
+                                }
+                            }
+                        }
+                    }
+                } else if (pausedPosition != null) resumeFromPause(emails)
                 else voiceCommandEngine.speakThenListen(
                     "No reading in progress. Say 'reed' to read the current email."
                 ) { c -> handleCommand(c, emails) }

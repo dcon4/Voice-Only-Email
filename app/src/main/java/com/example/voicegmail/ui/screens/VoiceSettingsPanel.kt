@@ -210,6 +210,15 @@ fun VoiceSettingsPanel(viewModel: InboxViewModel) {
                 modifier = Modifier.padding(top = 4.dp, bottom = 4.dp)
             )
 
+            Text(
+                text = "Note: When choosing a Bible voice, first set both the main\n" +
+                    "and Bible engine to the same engine. Then you can select a\n" +
+                    "different engine and voice for the main voice.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(bottom = 8.dp)
+            )
+
             if (engines.isEmpty()) {
                 Text(
                     "No TTS engines found.",
