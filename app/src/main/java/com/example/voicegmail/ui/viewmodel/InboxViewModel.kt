@@ -39,7 +39,6 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import net.openid.appauth.AuthorizationException
 import java.util.Calendar
-import java.util.Locale
 import javax.inject.Inject
 
 @HiltViewModel
@@ -220,7 +219,7 @@ class InboxViewModel @Inject constructor(
 
     fun openSettingsPanel() {
         _availableEngines.value       = voiceManager.getAvailableEngines()
-        _settingsVoices.value         = voiceManager.getAvailableVoices()
+        _settingsVoices.value         = filterEnglishVoices(voiceManager.getAvailableVoices())
         _selectedEngineName.value     = voiceManager.getCurrentEngineName()
         _selectedVoiceName.value      = voiceManager.getCurrentVoiceName()
         _selectedBibleVoiceName.value = voiceManager.bibleVoiceName.ifBlank { null }
@@ -301,11 +300,11 @@ class InboxViewModel @Inject constructor(
 
     fun selectEngineFromPanel(engineName: String) {
         if (engineName == _selectedEngineName.value) {
-            _settingsVoices.value = voiceManager.getAvailableVoices(); return
+            _settingsVoices.value = filterEnglishVoices(voiceManager.getAvailableVoices()); return
         }
         _isSwitchingEngine.value = true
         voiceManager.reinitWithEngine(engineName) {
-            _settingsVoices.value     = voiceManager.getAvailableVoices()
+            _settingsVoices.value     = filterEnglishVoices(voiceManager.getAvailableVoices())
             _selectedEngineName.value = engineName
             _selectedVoiceName.value  = voiceManager.getCurrentVoiceName()
             _isSwitchingEngine.value  = false
@@ -355,7 +354,7 @@ class InboxViewModel @Inject constructor(
 
     private fun loadBibleVoicesForEngine(engineName: String) {
         voiceManager.getVoicesForEngine(engineName) { voices ->
-            _bibleSettingsVoices.value = voices.sortedWith(
+            _bibleSettingsVoices.value = filterEnglishVoices(voices).sortedWith(
                 compareBy({ it.locale.country != "US" }, { it.locale.country != "GB" },
                     { it.isNetworkConnectionRequired }, { it.name })
             )
@@ -1852,17 +1851,22 @@ class InboxViewModel @Inject constructor(
         }
     }
 
+    private fun filterEnglishVoices(voices: List<Voice>): List<Voice> {
+        return voices.filter { voice ->
+            voice.locale.language == "en" && (voice.locale.country == "US" ||
+                voice.locale.country == "GB")
+        }
+    }
+
     // ------------------------------------------------------------------
     // Voice settings (browse TTS voices)
     // ------------------------------------------------------------------
 
     private fun handleVoiceSettings(emails: List<EmailItem>) {
-        val voices = voiceManager.getAvailableVoices()
-            .filter { it.locale.language == Locale.ENGLISH.language &&
-                it.locale.country.equals("US", ignoreCase = true) }
+        val voices = filterEnglishVoices(voiceManager.getAvailableVoices())
         if (voices.isEmpty()) {
             voiceCommandEngine.speakThenListen(
-                "No English United States voices found. Install Google Text-to-Speech " +
+                "No English (US or UK) voices found. Install Google Text-to-Speech " +
                     "from the Play Store, or use the settings icon to switch engine."
             ) { cmd -> handleCommand(cmd, emails) }
             return
