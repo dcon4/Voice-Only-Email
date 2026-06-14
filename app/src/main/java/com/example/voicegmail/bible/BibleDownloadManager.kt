@@ -52,10 +52,10 @@ class BibleDownloadManager @Inject constructor(
         val job = scope.launch(Dispatchers.IO) {
             _states.value = _states.value + (translation to DownloadState.Downloading(0f, "Starting..."))
             try {
-                val books = api.getBooks(translation)
+                val booksResponse = api.getBooks(translation)
                 val totalChapters = mutableListOf<Pair<String, Int>>() // (bookId, chapter)
 
-                for (book in books) {
+                for (book in booksResponse.books) {
                     if (!isActive) break
                     val chapters = api.getChapters(translation, book.id)
                     for (ch in chapters.chapters) {
