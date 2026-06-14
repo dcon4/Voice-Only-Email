@@ -27,13 +27,15 @@ interface BibleApiService {
         @Path("chapter") chapter: Int
     ): ChapterResponse
 
-    /** Fetch a single verse: {translation}/{bookId}/{chapter}:{verse} */
-    @GET("{translation}/{bookId}/{chapter}:{verse}")
+    /**
+     * Fetch a single verse.
+     * [ref] must be the literal path segment e.g. "3:16" (colon preserved).
+     */
+    @GET("{translation}/{bookId}/{ref}")
     suspend fun getVerse(
         @Path("translation") translation: String,
         @Path("bookId") bookId: String,
-        @Path("chapter") chapter: Int,
-        @Path("verse") verse: Int
+        @Path(value = "ref", encoded = true) ref: String
     ): ChapterResponse
 }
 

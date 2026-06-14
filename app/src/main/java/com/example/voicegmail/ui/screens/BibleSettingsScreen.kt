@@ -192,7 +192,7 @@ private fun OfflineTranslationRow(
             when (state) {
                 is DownloadState.Downloading -> {
                     LinearProgressIndicator(
-                        progress = state.progress,
+                        progress = { state.progress },
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(top = 4.dp)

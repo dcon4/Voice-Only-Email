@@ -104,7 +104,7 @@ class BibleRepository @Inject constructor(
     suspend fun getVerseText(bookId: String, chapter: Int, verse: Int): String {
         val trans = ttsSettings.getBibleTranslation()
         try {
-            val resp = api.getVerse(trans, bookId, chapter, verse)
+            val resp = api.getVerse(trans, bookId, "$chapter:$verse")
             return resp.verses.firstOrNull()?.text?.trim() ?: "Verse $verse not found."
         } catch (e: Exception) {
             // Fall back to cached chapter data
