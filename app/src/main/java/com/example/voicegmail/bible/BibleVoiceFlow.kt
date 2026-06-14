@@ -68,6 +68,7 @@ class BibleVoiceFlow @Inject constructor(
         DebugLogger.log(TAG, "startWithReference: $text")
         clearState()
         val (bookId, chapter, verse) = bibleRepository.tryParseVerseReference(text)
+        DebugLogger.log(TAG, "startWithReference: parsed -> bookId=$bookId ch=$chapter v=$verse")
         if (bookId == null) {
             voiceCommandEngine.speakThenListen(
                 "I couldn't recognise '$text' as a Bible reference. " +
@@ -274,9 +275,13 @@ class BibleVoiceFlow @Inject constructor(
     // ── Single-Verse Reading ───────────────────────────────────────────────
 
     private fun readSingleVerse(scope: CoroutineScope, onExit: (VoiceCommand) -> Unit) {
-        val bookId = currentBookId ?: return
-        val bookName = currentBookName ?: return
-        val verse = currentVerse ?: return
+        val bookId = currentBookId
+        val bookName = currentBookName
+        val verse = currentVerse
+        DebugLogger.log(TAG, "readSingleVerse: bookId=$bookId bookName=$bookName ch=$currentChapter v=$verse")
+        if (bookId == null || bookName == null || verse == null) {
+            start(scope, onExit); return
+        }
 
         voiceManager.speak("$bookName $currentChapter, verse $verse.")
 
@@ -307,8 +312,12 @@ class BibleVoiceFlow @Inject constructor(
     // ── Chunked TTS Reading ────────────────────────────────────────────────
 
     private fun readCurrentChapter(scope: CoroutineScope, onExit: (VoiceCommand) -> Unit, startChunk: Int = 0) {
-        val bookId = currentBookId ?: return
-        val bookName = currentBookName ?: return
+        val bookId = currentBookId
+        val bookName = currentBookName
+        DebugLogger.log(TAG, "readCurrentChapter: bookId=$bookId bookName=$bookName ch=$currentChapter")
+        if (bookId == null || bookName == null) {
+            start(scope, onExit); return
+        }
 
         isReadingActive = true
         _isPaused = false
@@ -415,13 +424,13 @@ class BibleVoiceFlow @Inject constructor(
 
     fun resumeReading(scope: CoroutineScope, onExit: (VoiceCommand) -> Unit) {
         if (!_isPaused || currentBookId == null) {
-            DebugLogger.log(TAG, "resumeReading: nothing to resume — starting fresh")
+            DebugLogger.log(TAG, "resumeReading: nothing to resume (_isPaused=$_isPaused bookId=$currentBookId) — starting fresh")
             clearState()
             start(scope, onExit)
             return
         }
         val savedChunkIndex = currentChunkIndex
-        DebugLogger.log(TAG, "resumeReading: resuming from chunk $savedChunkIndex")
+        DebugLogger.log(TAG, "resumeReading: resuming book=$currentBookName ch=$currentChapter v=$currentVerse chunk=$savedChunkIndex/${currentChunks.size} isSingleVerse=$isSingleVerse")
         _isPaused = false
         if (isSingleVerse) {
             readSingleVerse(scope, onExit)
@@ -460,6 +469,7 @@ class BibleVoiceFlow @Inject constructor(
         isReadingActive = false
         _isPaused = false
         currentVerse = null
+        currentChapter = 1
     }
 
     // ── Post-reading commands ──────────────────────────────────────────────

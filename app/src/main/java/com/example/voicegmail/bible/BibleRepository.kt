@@ -163,6 +163,7 @@ class BibleRepository @Inject constructor(
             .replace(Regex("\\bverse\\b"), "")
             .trim()
         val words = lower.split("\\s+".toRegex()).filter { it.isNotBlank() }
+        DebugLogger.verbose(TAG, "tryParseVerseReference: input='$text' words=$words")
         if (words.isEmpty()) return Triple(null, null, null)
 
         for (bookWordCount in minOf(words.size - 1, 3) downTo 1) {
@@ -172,9 +173,11 @@ class BibleRepository @Inject constructor(
                 val numbers = words.drop(bookWordCount).mapNotNull { it.toIntOrNull() }
                 val chapter = numbers.getOrNull(0)
                 val verse = numbers.getOrNull(1)
+                DebugLogger.verbose(TAG, "tryParseVerseReference: match bookId=$bookId (bookParts='$bookParts') ch=$chapter v=$verse")
                 return Triple(bookId, chapter, verse)
             }
         }
+        DebugLogger.verbose(TAG, "tryParseVerseReference: no match for '$text'")
         return Triple(null, null, null)
     }
 
@@ -186,7 +189,7 @@ class BibleRepository @Inject constructor(
     fun resolveBookId(spokenName: String): String? {
         val lower = spokenName.trim().lowercase()
         return BOOK_NAME_MAP.entries.firstOrNull { (key, _) ->
-            lower == key || lower.startsWith(key) || key.startsWith(lower)
+            lower == key || lower == key.replace(" ", "")
         }?.value
     }
 

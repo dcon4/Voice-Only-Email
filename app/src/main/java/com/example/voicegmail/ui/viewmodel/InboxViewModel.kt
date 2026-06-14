@@ -488,8 +488,8 @@ class InboxViewModel @Inject constructor(
         flowGen++ // invalidate stale compose/browser/other callbacks
         // Pause any Bible audio that may be playing (preserves position)
         val bibleWasReading = bibleVoiceFlow.handleWakeInterrupt()
-        // Check if browser was reading an article
         val browserWasReading = browserVoiceFlow.handleWakeInterrupt()
+        DebugLogger.log("InboxViewModel", "handleWakeEvent: bibleWasReading=$bibleWasReading browserWasReading=$browserWasReading")
         // Destroy the in-flight recognizer silently so its error/result callback
         // cannot race with this new session. TTS is handled by QUEUE_FLUSH inside
         // the following speakThenListen call.
