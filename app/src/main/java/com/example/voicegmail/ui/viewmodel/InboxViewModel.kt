@@ -15,6 +15,7 @@ import com.example.voicegmail.auth.AuthRepository
 import com.example.voicegmail.auth.OAuthDiagnostics
 import com.example.voicegmail.auth.OAuthRedirectBus
 import com.example.voicegmail.bible.BibleVoiceFlow
+import com.example.voicegmail.bible.DownloadState
 import com.example.voicegmail.browser.BrowserVoiceFlow
 import com.example.voicegmail.debug.DebugLogger
 import com.example.voicegmail.gmail.AttachmentReader
@@ -58,7 +59,8 @@ class InboxViewModel @Inject constructor(
     private val browserVoiceFlow: BrowserVoiceFlow,
     private val wakePreferences: com.example.voicegmail.voice.WakePreferences,
     private val mediaSessionController: com.example.voicegmail.media.MediaSessionController,
-    private val ttsSettings: com.example.voicegmail.voice.TtsSettingsRepository
+    private val ttsSettings: com.example.voicegmail.voice.TtsSettingsRepository,
+    private val downloadManager: com.example.voicegmail.bible.BibleDownloadManager
 ) : ViewModel() {
 
     private var isFirstLoad = true
@@ -110,8 +112,32 @@ class InboxViewModel @Inject constructor(
     private val _bibleVerseNumbers = MutableStateFlow(true)
     val bibleVerseNumbers: StateFlow<Boolean> = _bibleVerseNumbers
 
-    private val _bibleContinuousReading = MutableStateFlow(false)
-    val bibleContinuousReading: StateFlow<Boolean> = _bibleContinuousReading
+    private val _offlineDownloads = MutableStateFlow<Map<String, DownloadState>>(emptyMap())
+    val offlineDownloads: StateFlow<Map<String, DownloadState>> = _offlineDownloads
+
+    init {
+        // Sync offline download states from download manager
+        viewModelScope.launch {
+            downloadManager.states.collect { states ->
+                _offlineDownloads.value = states
+            }
+        }
+    }
+
+    fun toggleOfflineDownload(translation: String) {
+        val current = _offlineDownloads.value[translation]
+        when (current) {
+            is DownloadState.Completed, is DownloadState.Error -> {
+                downloadManager.deleteDownload(translation)
+            }
+            is DownloadState.Downloading -> {
+                downloadManager.cancelDownload(translation)
+            }
+            else -> {
+                downloadManager.startDownload(translation, viewModelScope)
+            }
+        }
+    }
 
     private val _isSwitchingEngine = MutableStateFlow(false)
     val isSwitchingEngine: StateFlow<Boolean> = _isSwitchingEngine
@@ -240,7 +266,6 @@ class InboxViewModel @Inject constructor(
     fun openBibleSettings() {
         _bibleTranslation.value = ttsSettings.getBibleTranslation()
         _bibleVerseNumbers.value = ttsSettings.getBibleVerseNumbers()
-        _bibleContinuousReading.value = ttsSettings.getBibleContinuousReading()
         _bibleSettingsVisible.value = true
     }
 
@@ -254,11 +279,6 @@ class InboxViewModel @Inject constructor(
     fun setBibleVerseNumbers(enabled: Boolean) {
         ttsSettings.saveBibleVerseNumbers(enabled)
         _bibleVerseNumbers.value = enabled
-    }
-
-    fun setBibleContinuousReading(enabled: Boolean) {
-        ttsSettings.saveBibleContinuousReading(enabled)
-        _bibleContinuousReading.value = enabled
     }
 
     /**
@@ -933,21 +953,32 @@ class InboxViewModel @Inject constructor(
             is VoiceCommand.VoiceSettings -> handleVoiceSettings(emails)
             is VoiceCommand.Instructions  -> handleInstructions(emails)
 
-            else -> {
-                val detail = when (command) {
-                    is VoiceCommand.FreeText -> "FreeText='${command.text}'"
-                    else -> command::class.simpleName ?: "unknown"
-                }
-                DebugLogger.log("InboxViewModel", "UNHANDLED command: $detail")
-                // Empty FreeText means the user said nothing — go to sleep
-                // instead of looping on "Sorry, I didn't understand".
-                if (command is VoiceCommand.FreeText && command.text.isBlank()) {
+            is VoiceCommand.FreeText -> {
+                val text = command.text.trim()
+                if (text.isBlank()) {
                     voiceManager.speak("Going to sleep. Press the power button to wake me.")
+                } else if (bibleVoiceFlow.isBibleReference(text)) {
+                    // Direct Bible reference from inbox (e.g., "John 3:16")
+                    voiceManager.switchToBibleEngine {
+                        bibleVoiceFlow.startWithReference(text, viewModelScope) { exitCmd ->
+                            voiceManager.restoreMainEngine {
+                                handleCommand(exitCmd, emails)
+                            }
+                        }
+                    }
                 } else {
                     voiceCommandEngine.speakThenListen(
-                        "Sorry, I didn't understand: $detail. Say 'help' to hear available commands."
+                        "Sorry, I didn't understand: FreeText='$text'. Say 'help' to hear available commands."
                     ) { cmd -> handleCommand(cmd, emails) }
                 }
+            }
+
+            else -> {
+                val detail = command::class.simpleName ?: "unknown"
+                DebugLogger.log("InboxViewModel", "UNHANDLED command: $detail")
+                voiceCommandEngine.speakThenListen(
+                    "Sorry, I didn't understand: $detail. Say 'help' to hear available commands."
+                ) { cmd -> handleCommand(cmd, emails) }
             }
         }
     }

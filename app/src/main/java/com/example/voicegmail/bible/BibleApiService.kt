@@ -26,6 +26,15 @@ interface BibleApiService {
         @Path("bookId") bookId: String,
         @Path("chapter") chapter: Int
     ): ChapterResponse
+
+    /** Fetch a single verse: {translation}/{bookId}/{chapter}:{verse} */
+    @GET("{translation}/{bookId}/{chapter}:{verse}")
+    suspend fun getVerse(
+        @Path("translation") translation: String,
+        @Path("bookId") bookId: String,
+        @Path("chapter") chapter: Int,
+        @Path("verse") verse: Int
+    ): ChapterResponse
 }
 
 data class BooksResponse(val books: List<BibleBookInfo>)

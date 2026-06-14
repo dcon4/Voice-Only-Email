@@ -100,9 +100,4 @@ class TtsSettingsRepository @Inject constructor(
         prefs.edit().putBoolean("bible_verse_numbers", enabled).apply()
     }
 
-    fun getBibleContinuousReading(): Boolean = prefs.getBoolean("bible_continuous", false)
-
-    fun saveBibleContinuousReading(enabled: Boolean) {
-        prefs.edit().putBoolean("bible_continuous", enabled).apply()
-    }
 }

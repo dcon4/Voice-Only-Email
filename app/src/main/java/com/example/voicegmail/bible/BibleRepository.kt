@@ -3,6 +3,7 @@ package com.example.voicegmail.bible
 import com.example.voicegmail.debug.DebugLogger
 import com.example.voicegmail.voice.TtsSettingsRepository
 import com.example.voicegmail.voice.VoiceManager
+import com.google.gson.Gson
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -10,14 +11,17 @@ private const val TAG = "BibleRepository"
 
 /**
  * Fetches Bible text from bible-api.com and reads it aloud via TTS.
- * No API key required — rate limited to 15 requests per 30 seconds.
+ * Supports offline cache via [BibleOfflineStorage].
  */
 @Singleton
 class BibleRepository @Inject constructor(
     private val api: BibleApiService,
     private val voiceManager: VoiceManager,
-    private val ttsSettings: TtsSettingsRepository
+    private val ttsSettings: TtsSettingsRepository,
+    private val offlineStorage: BibleOfflineStorage
 ) {
+    private val gson = Gson()
+
     // ── Book list ─────────────────────────────────────────────────────────
 
     private var cachedBooks: MutableMap<String, List<BibleBookInfo>> = mutableMapOf()
@@ -50,31 +54,76 @@ class BibleRepository @Inject constructor(
         return chapters.maxOrNull() ?: 1
     }
 
-    // ── Chapter text + TTS reading ────────────────────────────────────────
+    // ── Chapter text ──────────────────────────────────────────────────────
 
-    /**
-     * Fetches all verses for [bookId] chapter [chapter] and returns them as
-     * a single formatted string suitable for TTS.
-     */
+    private val chapterTextCache = mutableMapOf<String, String>()
+
     suspend fun getChapterText(bookId: String, chapter: Int, bookName: String): String {
         val trans = ttsSettings.getBibleTranslation()
+        val cacheKey = "$trans/$bookId/$chapter"
+
+        chapterTextCache[cacheKey]?.let { return it }
+
+        // Try disk cache
+        val cached = offlineStorage.readChapter(trans, bookId, chapter)
+        if (cached != null) {
+            try {
+                val resp = gson.fromJson(cached, ChapterResponse::class.java)
+                val text = formatChapterText(resp, bookName, chapter)
+                chapterTextCache[cacheKey] = text
+                return text
+            } catch (e: Exception) {
+                DebugLogger.log(TAG, "Error parsing cached chapter: ${e.message}")
+            }
+        }
+
+        // Fetch from API
         val resp = api.getChapter(trans, bookId, chapter)
+        offlineStorage.saveChapter(trans, bookId, chapter, gson.toJson(resp))
+
+        val text = formatChapterText(resp, bookName, chapter)
+        chapterTextCache[cacheKey] = text
+        return text
+    }
+
+    private fun formatChapterText(resp: ChapterResponse, bookName: String, chapter: Int): String {
         val sb = StringBuilder()
         sb.append("$bookName chapter $chapter. ")
         val showVerseNumbers = ttsSettings.getBibleVerseNumbers()
         for (v in resp.verses) {
             if (showVerseNumbers) {
-                sb.append("Verse ${v.verse}: ")
+                sb.append("${v.verse} ")
             }
             sb.append("${v.text.trim()} ")
         }
         return sb.toString().replace(Regex("\\s+"), " ")
     }
 
-    /**
-     * Speaks [text] via TTS and invokes [onDone] when complete.
-     * Uses the Bible voice if one has been configured.
-     */
+    // ── Verse text ─────────────────────────────────────────────────────────
+
+    suspend fun getVerseText(bookId: String, chapter: Int, verse: Int): String {
+        val trans = ttsSettings.getBibleTranslation()
+        try {
+            val resp = api.getVerse(trans, bookId, chapter, verse)
+            return resp.verses.firstOrNull()?.text?.trim() ?: "Verse $verse not found."
+        } catch (e: Exception) {
+            // Fall back to cached chapter data
+            val cached = offlineStorage.readChapter(trans, bookId, chapter)
+            if (cached != null) {
+                try {
+                    val resp = gson.fromJson(cached, ChapterResponse::class.java)
+                    return resp.verses.find { it.verse == verse }?.text?.trim()
+                        ?: "Verse $verse not found."
+                } catch (parseError: Exception) {
+                    DebugLogger.log(TAG, "Error parsing cached chapter for verse: ${parseError.message}")
+                }
+            }
+            throw e
+        }
+    }
+
+    // ── TTS reading ────────────────────────────────────────────────────────
+
     fun speakChapter(text: String, onDone: () -> Unit) {
         if (!voiceManager.isTtsReady()) {
             DebugLogger.log(TAG, "TTS not ready")
@@ -89,12 +138,50 @@ class BibleRepository @Inject constructor(
         }
     }
 
-    /** Cancel any ongoing TTS Bible reading. */
     fun stopReading() {
         voiceManager.stopTts()
     }
 
+    // ── Offline helpers ────────────────────────────────────────────────────
+
+    /** Check if a chapter is available offline. */
+    fun isChapterOffline(translation: String, bookId: String, chapter: Int): Boolean {
+        return offlineStorage.isChapterCached(translation, bookId, chapter)
+    }
+
+    /** Count how many chapters are cached for a translation. */
+    fun countCachedChapters(translation: String): Int {
+        return offlineStorage.countCachedChapters(translation)
+    }
+
     // ── Book name resolution ──────────────────────────────────────────────
+
+    fun tryParseVerseReference(text: String): Triple<String?, Int?, Int?> {
+        val lower = text.trim().lowercase()
+            .replace(":", " ")
+            .replace(Regex("\\bchapter\\b"), "")
+            .replace(Regex("\\bverse\\b"), "")
+            .trim()
+        val words = lower.split("\\s+".toRegex()).filter { it.isNotBlank() }
+        if (words.isEmpty()) return Triple(null, null, null)
+
+        for (bookWordCount in minOf(words.size - 1, 3) downTo 1) {
+            val bookParts = words.take(bookWordCount).joinToString(" ")
+            val bookId = resolveBookId(bookParts)
+            if (bookId != null) {
+                val numbers = words.drop(bookWordCount).mapNotNull { it.toIntOrNull() }
+                val chapter = numbers.getOrNull(0)
+                val verse = numbers.getOrNull(1)
+                return Triple(bookId, chapter, verse)
+            }
+        }
+        return Triple(null, null, null)
+    }
+
+    fun isBibleReference(text: String): Boolean {
+        val (bookId, _, _) = tryParseVerseReference(text)
+        return bookId != null
+    }
 
     fun resolveBookId(spokenName: String): String? {
         val lower = spokenName.trim().lowercase()

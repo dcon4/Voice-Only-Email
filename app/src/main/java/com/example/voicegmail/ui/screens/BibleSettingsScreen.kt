@@ -11,6 +11,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
+import com.example.voicegmail.bible.DownloadState
 import com.example.voicegmail.ui.viewmodel.InboxViewModel
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -18,7 +19,7 @@ import com.example.voicegmail.ui.viewmodel.InboxViewModel
 fun BibleSettingsScreen(viewModel: InboxViewModel) {
     val translation by viewModel.bibleTranslation.collectAsState()
     val verseNumbers by viewModel.bibleVerseNumbers.collectAsState()
-    val continuous by viewModel.bibleContinuousReading.collectAsState()
+    val offlineDownloads by viewModel.offlineDownloads.collectAsState()
 
     ModalBottomSheet(
         onDismissRequest = { viewModel.closeBibleSettings() },
@@ -84,7 +85,7 @@ fun BibleSettingsScreen(viewModel: InboxViewModel) {
                     )
                     Text(
                         text = if (verseNumbers)
-                            "Announces 'Verse 1', 'Verse 2', etc."
+                            "Announces verse numbers during chapter reading"
                         else
                             "Only verse text is spoken",
                         style = MaterialTheme.typography.bodySmall,
@@ -99,37 +100,28 @@ fun BibleSettingsScreen(viewModel: InboxViewModel) {
 
             HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
 
-            // ── Continuous reading ─────────────────────────────────────────────
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(vertical = 8.dp)
-                    .semantics(mergeDescendants = true) {
-                        contentDescription = if (continuous)
-                            "Continuous reading is on. Chapters play automatically."
-                        else
-                            "Continuous reading is off. The app asks after each chapter."
-                    },
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = "Continuous reading",
-                        style = MaterialTheme.typography.bodyLarge
-                    )
-                    Text(
-                        text = if (continuous)
-                            "Chapters play automatically book to book"
-                        else
-                            "Asks after each chapter what to do next",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-                Switch(
-                    checked = continuous,
-                    onCheckedChange = { viewModel.setBibleContinuousReading(it) }
+            // ── Offline Storage ───────────────────────────────────────────────
+            Text(
+                text = "Offline Storage",
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.padding(top = 4.dp, bottom = 4.dp)
+            )
+
+            Text(
+                text = "Download a translation for offline use. " +
+                    "This fetches all ~1189 chapters and takes about 40 minutes.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(bottom = 8.dp)
+            )
+
+            TRANSLATIONS.forEach { (id, label) ->
+                val state = offlineDownloads[id] ?: DownloadState.NotDownloaded
+                OfflineTranslationRow(
+                    label = label,
+                    state = state,
+                    onToggle = { viewModel.toggleOfflineDownload(id) }
                 )
             }
 
@@ -167,6 +159,61 @@ private fun TranslationRow(
         RadioButton(selected = selected, onClick = onSelect)
         Spacer(Modifier.width(8.dp))
         Text(text = label, style = MaterialTheme.typography.bodyMedium)
+    }
+}
+
+@Composable
+private fun OfflineTranslationRow(
+    label: String,
+    state: DownloadState,
+    onToggle: () -> Unit
+) {
+    val desc = when (state) {
+        is DownloadState.NotDownloaded -> "$label. Tap to download for offline use."
+        is DownloadState.Downloading -> "$label. Downloading: ${(state.progress * 100).toInt()}%. ${state.detail}"
+        is DownloadState.Completed -> "$label. Downloaded. Tap to remove offline data."
+        is DownloadState.Error -> "$label. Download error: ${state.message}. Tap to retry."
+    }
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onToggle)
+            .padding(vertical = 4.dp)
+            .semantics(mergeDescendants = true) { contentDescription = desc },
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Checkbox(
+            checked = state is DownloadState.Completed || state is DownloadState.Downloading,
+            onCheckedChange = { onToggle() }
+        )
+        Spacer(Modifier.width(8.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(text = label, style = MaterialTheme.typography.bodyMedium)
+            when (state) {
+                is DownloadState.Downloading -> {
+                    LinearProgressIndicator(
+                        progress = state.progress,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 4.dp)
+                            .height(4.dp)
+                    )
+                    Text(
+                        text = state.detail,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                is DownloadState.Error -> {
+                    Text(
+                        text = "Error: ${state.message}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                }
+                else -> {}
+            }
+        }
     }
 }
 
