@@ -4,14 +4,11 @@ import com.example.voicegmail.debug.DebugLogger
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import javax.inject.Inject
 import javax.inject.Singleton
 
 private const val TAG = "BibleDownloadManager"
 private const val MIN_DELAY_MS = 3500L  // 1 request per 3.5s (well under 15/30s limit)
-private val globalRateLimit = kotlinx.coroutines.sync.Mutex()
 
 /**
  * State of an offline download for a translation.
@@ -36,6 +33,7 @@ class BibleDownloadManager @Inject constructor(
     val states: StateFlow<Map<String, DownloadState>> = _states
 
     private val activeJobs = mutableMapOf<String, Job>()
+    private var globalDownloadJob: Job? = null
 
     fun getState(translation: String): DownloadState {
         return _states.value[translation] ?: DownloadState.NotDownloaded
@@ -43,31 +41,34 @@ class BibleDownloadManager @Inject constructor(
 
     /**
      * Start downloading all chapters for [translation].
+     * Only one translation can download at a time globally (rate limiting).
      * [scope] is the coroutine scope (usually viewModelScope).
-     * [books] and chapter counts are fetched from the API automatically.
      */
     fun startDownload(translation: String, scope: CoroutineScope) {
         if (activeJobs.containsKey(translation)) {
             DebugLogger.log(TAG, "Download already in progress for $translation")
             return
         }
+        if (globalDownloadJob != null) {
+            DebugLogger.log(TAG, "Another translation is downloading — cannot start $translation")
+            return
+        }
 
         val job = scope.launch(Dispatchers.IO) {
             _states.value = _states.value + (translation to DownloadState.Downloading(0f, "Starting..."))
             try {
-                globalRateLimit.withLock {
-                    val booksResponse = api.getBooks(translation)
-                    val totalChapters = mutableListOf<Pair<String, Int>>() // (bookId, chapter)
+                // Phase 1: enumerate books and chapter counts
+                val booksResponse = api.getBooks(translation)
+                val totalChapters = mutableListOf<Pair<String, Int>>()
 
-                    for (book in booksResponse.books) {
+                for (book in booksResponse.books) {
+                    if (!isActive) break
+                    val chapters = api.getChapters(translation, book.id)
+                    for (ch in chapters.chapters) {
                         if (!isActive) break
-                        val chapters = api.getChapters(translation, book.id)
-                        for (ch in chapters.chapters) {
-                            if (!isActive) break
-                            totalChapters.add(book.id to ch.chapter)
-                        }
-                        delay(MIN_DELAY_MS)
+                        totalChapters.add(book.id to ch.chapter)
                     }
+                    delay(MIN_DELAY_MS)
                 }
 
                 val total = totalChapters.size
@@ -76,6 +77,7 @@ class BibleDownloadManager @Inject constructor(
                     return@launch
                 }
 
+                // Phase 2: download each chapter with rate limiting
                 for ((i, pair) in totalChapters.withIndex()) {
                     if (!isActive) {
                         DebugLogger.log(TAG, "Download cancelled for $translation")
@@ -83,21 +85,16 @@ class BibleDownloadManager @Inject constructor(
                     }
                     val (bookId, chapter) = pair
 
-                    // Check if already cached
                     if (!offlineStorage.isChapterCached(translation, bookId, chapter)) {
-                        globalRateLimit.withLock {
-                            val resp = api.getChapter(translation, bookId, chapter)
-                            val json = buildJsonForCache(resp)
-                            offlineStorage.saveChapter(translation, bookId, chapter, json)
-                        }
+                        val resp = api.getChapter(translation, bookId, chapter)
+                        val json = buildJsonForCache(resp)
+                        offlineStorage.saveChapter(translation, bookId, chapter, json)
                     }
 
                     val progress = (i + 1).toFloat() / total
                     _states.value = _states.value + (translation to
                         DownloadState.Downloading(progress, "$bookId chapter $chapter"))
 
-                    // Rate limit — delay AFTER the mutex is released so other
-                    // translations can queue
                     if (i < total - 1 && isActive) {
                         delay(MIN_DELAY_MS)
                     }
@@ -114,10 +111,12 @@ class BibleDownloadManager @Inject constructor(
                     DownloadState.Error(e.message ?: "Unknown error"))
             } finally {
                 activeJobs.remove(translation)
+                globalDownloadJob = null
             }
         }
 
         activeJobs[translation] = job
+        globalDownloadJob = job
     }
 
     /** Cancel an in-progress download for [translation]. */
