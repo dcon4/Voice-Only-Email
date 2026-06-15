@@ -1,5 +1,6 @@
 package com.example.voicegmail.bible
 
+import com.google.gson.annotations.SerializedName
 import retrofit2.http.GET
 import retrofit2.http.Path
 import retrofit2.http.Query
@@ -49,6 +50,7 @@ data class ChapterInfo(val book_id: String, val chapter: Int)
 data class ChapterResponse(val verses: List<VerseInfo>)
 data class VerseInfo(
     val book_id: String,
+    @SerializedName(value = "book", alternate = ["book_name"])
     val book: String,
     val chapter: Int,
     val verse: Int,
