@@ -533,7 +533,7 @@ class BibleVoiceFlow @Inject constructor(
                         currentChapter = ch ?: 1
                         currentVerse = v
                         val cmdBookName = bibleRepository.extractBookName(cmd.text) ?: cmd.text.replaceFirstChar { it.uppercase() }
-                    scope.launch {
+                        scope.launch {
                             try {
                                 val resolved = bibleRepository.resolveApiBookId(cmdBookName)
                                 currentBookId = resolved?.first ?: bookId
