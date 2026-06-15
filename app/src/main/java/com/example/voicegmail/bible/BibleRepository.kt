@@ -191,7 +191,6 @@ class BibleRepository @Inject constructor(
         verses: List<Map<String, Any>>
     ): String {
         val sb = StringBuilder()
-        sb.append("$bookName chapter $chapter. ")
         val showVerseNumbers = ttsSettings.getBibleVerseNumbers()
         for (v in verses) {
             val vnum = (v["verse"] as? Double)?.toInt() ?: continue
@@ -206,7 +205,6 @@ class BibleRepository @Inject constructor(
 
     private fun formatChapterText(resp: ChapterResponse, bookName: String, chapter: Int): String {
         val sb = StringBuilder()
-        sb.append("$bookName chapter $chapter. ")
         val showVerseNumbers = ttsSettings.getBibleVerseNumbers()
         for (v in resp.verses) {
             if (showVerseNumbers) {

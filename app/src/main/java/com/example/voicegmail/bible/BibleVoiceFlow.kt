@@ -327,20 +327,20 @@ class BibleVoiceFlow @Inject constructor(
         readingGen++
         val gen = readingGen
 
-        voiceManager.speak("Reading $bookName, chapter $currentChapter.")
-
-        scope.launch {
-            try {
-                val chapterText = bibleRepository.getChapterText(bookId, currentChapter, bookName)
-                currentChunks = splitTextIntoChunks(chapterText, CHUNK_SIZE)
-                currentChunkIndex = startChunk.coerceIn(0, (currentChunks.size - 1).coerceAtLeast(0))
-                readNextChunk(scope, onExit, gen)
-            } catch (e: Exception) {
-                DebugLogger.log(TAG, "Error fetching chapter text: ${e.message}")
-                voiceCommandEngine.speakThenListen(
-                    "Error loading chapter. ${e.message ?: "Unknown error."}. " +
-                        "Say 'try again', another chapter, or 'cancel'."
-                ) { cmd -> handlePostReadingCommand(cmd, scope, onExit) }
+        voiceManager.speak("Reading $bookName, chapter $currentChapter.") {
+            scope.launch {
+                try {
+                    val chapterText = bibleRepository.getChapterText(bookId, currentChapter, bookName)
+                    currentChunks = splitTextIntoChunks(chapterText, CHUNK_SIZE)
+                    currentChunkIndex = startChunk.coerceIn(0, (currentChunks.size - 1).coerceAtLeast(0))
+                    readNextChunk(scope, onExit, gen)
+                } catch (e: Exception) {
+                    DebugLogger.log(TAG, "Error fetching chapter text: ${e.message}")
+                    voiceCommandEngine.speakThenListen(
+                        "Error loading chapter. ${e.message ?: "Unknown error."}. " +
+                            "Say 'try again', another chapter, or 'cancel'."
+                    ) { cmd -> handlePostReadingCommand(cmd, scope, onExit) }
+                }
             }
         }
     }
@@ -351,7 +351,6 @@ class BibleVoiceFlow @Inject constructor(
             return
         }
         if (currentChunkIndex >= currentChunks.size) {
-            isReadingActive = false
             handleReadingComplete(scope, onExit)
             return
         }
@@ -437,6 +436,9 @@ class BibleVoiceFlow @Inject constructor(
         _isPaused = false
         if (isSingleVerse) {
             readSingleVerse(scope, onExit)
+        } else if (savedChunkIndex >= currentChunks.size) {
+            // Was between chapters — advance instead of re-reading last chunk
+            handleReadingComplete(scope, onExit)
         } else {
             readCurrentChapter(scope, onExit, savedChunkIndex)
         }
@@ -466,7 +468,7 @@ class BibleVoiceFlow @Inject constructor(
     }
 
     private fun clearState() {
-        readingGen = 0
+        readingGen++
         currentChunks = emptyList()
         currentChunkIndex = 0
         isReadingActive = false
