@@ -101,21 +101,25 @@ class BibleRepository @Inject constructor(
 
     // ── Verse text ─────────────────────────────────────────────────────────
 
-    suspend fun getVerseText(bookId: String, chapter: Int, verse: Int): String {
+    suspend fun getVerseText(bookName: String, chapter: Int, verse: Int): String {
         val trans = ttsSettings.getBibleTranslation()
+        val ref = bookName.replace(" ", "+") + "+$chapter:$verse"
         try {
-            val resp = api.getVerse(trans, bookId, "$chapter:$verse")
+            val resp = api.getVerse(trans, ref)
             return resp.verses.firstOrNull()?.text?.trim() ?: "Verse $verse not found."
         } catch (e: Exception) {
             // Fall back to cached chapter data
-            val cached = offlineStorage.readChapter(trans, bookId, chapter)
-            if (cached != null) {
-                try {
-                    val resp = gson.fromJson(cached, ChapterResponse::class.java)
-                    return resp.verses.find { it.verse == verse }?.text?.trim()
-                        ?: "Verse $verse not found."
-                } catch (parseError: Exception) {
-                    DebugLogger.log(TAG, "Error parsing cached chapter for verse: ${parseError.message}")
+            val bookId = resolveBookId(bookName.lowercase())
+            if (bookId != null) {
+                val cached = offlineStorage.readChapter(trans, bookId, chapter)
+                if (cached != null) {
+                    try {
+                        val resp = gson.fromJson(cached, ChapterResponse::class.java)
+                        return resp.verses.find { it.verse == verse }?.text?.trim()
+                            ?: "Verse $verse not found."
+                    } catch (parseError: Exception) {
+                        DebugLogger.log(TAG, "Error parsing cached chapter for verse: ${parseError.message}")
+                    }
                 }
             }
             throw e

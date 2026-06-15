@@ -29,12 +29,11 @@ interface BibleApiService {
 
     /**
      * Fetch a single verse.
-     * [ref] must be the literal path segment e.g. "3:16" (colon preserved).
+     * [ref] must use the book NAME (not ID) with + for spaces, e.g. "John+3:16".
      */
-    @GET("{translation}/{bookId}/{ref}")
+    @GET("{translation}/{ref}")
     suspend fun getVerse(
         @Path("translation") translation: String,
-        @Path("bookId") bookId: String,
         @Path(value = "ref", encoded = true) ref: String
     ): ChapterResponse
 }

@@ -287,7 +287,7 @@ class BibleVoiceFlow @Inject constructor(
 
         scope.launch {
             try {
-                val verseText = bibleRepository.getVerseText(bookId, currentChapter, verse)
+                val verseText = bibleRepository.getVerseText(bookName, currentChapter, verse)
                 val bibleVoice = voiceManager.bibleVoiceName
                 val speak: (String, () -> Unit) -> Unit = if (bibleVoice.isNotBlank())
                     { t, done -> voiceManager.speakWithVoice(t, bibleVoice, done) }
