@@ -28,6 +28,9 @@ jobs:
         with:
           cache-disabled: true
 
+      - name: Generate Bible data from XML sources
+        run: python3 tools/convert-bible.py
+
       - name: Make gradlew executable
         run: chmod +x ./gradlew
 
