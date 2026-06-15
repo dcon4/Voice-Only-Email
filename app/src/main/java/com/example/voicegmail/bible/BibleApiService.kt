@@ -34,7 +34,7 @@ interface BibleApiService {
      * [ref] must use the book NAME (not ID) with + for spaces, e.g. "John+3:16".
      * Translation is passed as a query parameter, e.g. /John+3:16?translation=asv
      */
-    @GET("{ref}")
+    @GET("/{ref}")
     suspend fun getVerse(
         @Path(value = "ref", encoded = true) ref: String,
         @Query("translation") translation: String
