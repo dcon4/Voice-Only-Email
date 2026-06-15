@@ -527,13 +527,13 @@ class BibleVoiceFlow @Inject constructor(
                 } else {
                     val (bookId, ch, v) = bibleRepository.tryParseVerseReference(cmd.text)
                     if (bookId != null) {
-                        val resolved = bibleRepository.resolveApiBookId(cmd.text)
-                        currentBookId = resolved?.first ?: bookId
-                        currentBookName = resolved?.second ?: cmd.text.replaceFirstChar { it.uppercase() }
                         currentChapter = ch ?: 1
                         currentVerse = v
                         scope.launch {
                             try {
+                                val resolved = bibleRepository.resolveApiBookId(cmd.text)
+                                currentBookId = resolved?.first ?: bookId
+                                currentBookName = resolved?.second ?: cmd.text.replaceFirstChar { it.uppercase() }
                                 maxChapter = bibleRepository.getMaxChapter(currentBookId!!)
                                 if (v != null) readSingleVerse(scope, onExit)
                                 else readCurrentChapter(scope, onExit)
@@ -572,13 +572,13 @@ class BibleVoiceFlow @Inject constructor(
             is VoiceCommand.FreeText -> {
                 val (bookId, ch, v) = bibleRepository.tryParseVerseReference(cmd.text)
                 if (bookId != null) {
-                    val resolved = bibleRepository.resolveApiBookId(cmd.text)
-                    currentBookId = resolved?.first ?: bookId
-                    currentBookName = resolved?.second ?: cmd.text.replaceFirstChar { it.uppercase() }
+                    currentChapter = ch ?: 1
                     currentVerse = v
                     scope.launch {
                         try {
-                            currentChapter = ch ?: 1
+                            val resolved = bibleRepository.resolveApiBookId(cmd.text)
+                            currentBookId = resolved?.first ?: bookId
+                            currentBookName = resolved?.second ?: cmd.text.replaceFirstChar { it.uppercase() }
                             maxChapter = bibleRepository.getMaxChapter(currentBookId!!)
                             if (v != null) readSingleVerse(scope, onExit)
                             else readCurrentChapter(scope, onExit)
