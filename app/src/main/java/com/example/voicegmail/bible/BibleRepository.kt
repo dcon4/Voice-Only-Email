@@ -105,7 +105,7 @@ class BibleRepository @Inject constructor(
         val trans = ttsSettings.getBibleTranslation()
         val ref = bookName.replace(" ", "+") + "+$chapter:$verse"
         try {
-            val resp = api.getVerse(trans, ref)
+            val resp = api.getVerse(ref, trans)
             return resp.verses.firstOrNull()?.text?.trim() ?: "Verse $verse not found."
         } catch (e: Exception) {
             // Fall back to cached chapter data

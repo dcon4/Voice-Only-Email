@@ -2,6 +2,7 @@ package com.example.voicegmail.bible
 
 import retrofit2.http.GET
 import retrofit2.http.Path
+import retrofit2.http.Query
 
 /**
  * Retrofit interface for bible-api.com (no API key needed).
@@ -30,11 +31,12 @@ interface BibleApiService {
     /**
      * Fetch a single verse.
      * [ref] must use the book NAME (not ID) with + for spaces, e.g. "John+3:16".
+     * Translation is passed as a query parameter, e.g. /John+3:16?translation=asv
      */
-    @GET("{translation}/{ref}")
+    @GET("{ref}")
     suspend fun getVerse(
-        @Path("translation") translation: String,
-        @Path(value = "ref", encoded = true) ref: String
+        @Path(value = "ref", encoded = true) ref: String,
+        @Query("translation") translation: String
     ): ChapterResponse
 }
 
