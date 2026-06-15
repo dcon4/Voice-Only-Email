@@ -85,9 +85,10 @@ class BibleVoiceFlow @Inject constructor(
 
         scope.launch {
             try {
-                val resolved = bibleRepository.resolveApiBookId(text)
+                val bookName = bibleRepository.extractBookName(text) ?: text
+                val resolved = bibleRepository.resolveApiBookId(bookName)
                 currentBookId = resolved?.first ?: bookId
-                currentBookName = resolved?.second ?: text
+                currentBookName = resolved?.second ?: bookName
                 maxChapter = bibleRepository.getMaxChapter(currentBookId!!)
 
                 if (chapter != null && chapter in 1..maxChapter) {
@@ -148,15 +149,16 @@ class BibleVoiceFlow @Inject constructor(
                 // Try verse reference first (e.g. "John 3:16")
                 val (bookId, chapter, verse) = bibleRepository.tryParseVerseReference(spoken)
                 if (bookId != null) {
+                    val spokenBookName = bibleRepository.extractBookName(spoken) ?: spoken.replaceFirstChar { it.uppercase() }
                     currentBookId = bookId
-                    currentBookName = spoken.replaceFirstChar { it.uppercase() }
+                    currentBookName = spokenBookName
                     currentVerse = verse
                     DebugLogger.log(TAG, "Book selected: $currentBookName ($bookId) ch=$chapter v=$verse")
                     scope.launch {
                         try {
-                            val resolved = bibleRepository.resolveApiBookId(spoken)
+                            val resolved = bibleRepository.resolveApiBookId(spokenBookName)
                             currentBookId = resolved?.first ?: bookId
-                            currentBookName = resolved?.second ?: currentBookName
+                            currentBookName = resolved?.second ?: spokenBookName
                             maxChapter = bibleRepository.getMaxChapter(currentBookId!!)
 
                             if (chapter != null && chapter in 1..maxChapter) {
@@ -192,16 +194,17 @@ class BibleVoiceFlow @Inject constructor(
                     return
                 }
 
+                val parsedBookName = bibleRepository.extractBookName(spoken) ?: spoken.replaceFirstChar { it.uppercase() }
                 currentBookId = parsed.first
-                currentBookName = spoken.replaceFirstChar { it.uppercase() }
+                currentBookName = parsedBookName
                 currentVerse = null
                 DebugLogger.log(TAG, "Book selected: $currentBookName (${parsed.first})")
 
                 scope.launch {
                     try {
-                        val resolved = bibleRepository.resolveApiBookId(spoken)
+                        val resolved = bibleRepository.resolveApiBookId(parsedBookName)
                         currentBookId = resolved?.first ?: parsed.first
-                        currentBookName = resolved?.second ?: currentBookName
+                        currentBookName = resolved?.second ?: parsedBookName
                         maxChapter = bibleRepository.getMaxChapter(currentBookId!!)
 
                         val chapterFromSpeech = parsed.second
@@ -529,11 +532,12 @@ class BibleVoiceFlow @Inject constructor(
                     if (bookId != null) {
                         currentChapter = ch ?: 1
                         currentVerse = v
-                        scope.launch {
+                        val cmdBookName = bibleRepository.extractBookName(cmd.text) ?: cmd.text.replaceFirstChar { it.uppercase() }
+                    scope.launch {
                             try {
-                                val resolved = bibleRepository.resolveApiBookId(cmd.text)
+                                val resolved = bibleRepository.resolveApiBookId(cmdBookName)
                                 currentBookId = resolved?.first ?: bookId
-                                currentBookName = resolved?.second ?: cmd.text.replaceFirstChar { it.uppercase() }
+                                currentBookName = resolved?.second ?: cmdBookName
                                 maxChapter = bibleRepository.getMaxChapter(currentBookId!!)
                                 if (v != null) readSingleVerse(scope, onExit)
                                 else readCurrentChapter(scope, onExit)
@@ -574,11 +578,12 @@ class BibleVoiceFlow @Inject constructor(
                 if (bookId != null) {
                     currentChapter = ch ?: 1
                     currentVerse = v
+                    val cmdBookName = bibleRepository.extractBookName(cmd.text) ?: cmd.text.replaceFirstChar { it.uppercase() }
                     scope.launch {
                         try {
-                            val resolved = bibleRepository.resolveApiBookId(cmd.text)
+                            val resolved = bibleRepository.resolveApiBookId(cmdBookName)
                             currentBookId = resolved?.first ?: bookId
-                            currentBookName = resolved?.second ?: cmd.text.replaceFirstChar { it.uppercase() }
+                            currentBookName = resolved?.second ?: cmdBookName
                             maxChapter = bibleRepository.getMaxChapter(currentBookId!!)
                             if (v != null) readSingleVerse(scope, onExit)
                             else readCurrentChapter(scope, onExit)

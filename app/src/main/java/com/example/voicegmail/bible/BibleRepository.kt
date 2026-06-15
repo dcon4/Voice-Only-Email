@@ -185,6 +185,24 @@ class BibleRepository @Inject constructor(
         return Triple(null, null, null)
     }
 
+    /** Extract just the book name from a reference like "John 3:16" -> "John". */
+    fun extractBookName(text: String): String? {
+        val words = text.trim().lowercase()
+            .replace(":", " ")
+            .replace(Regex("\\bchapter\\b"), "")
+            .replace(Regex("\\bverse\\b"), "")
+            .trim()
+            .split("\\s+".toRegex())
+            .filter { it.isNotBlank() }
+        for (bookWordCount in minOf(words.size - 1, 3) downTo 1) {
+            val bookParts = words.take(bookWordCount).joinToString(" ")
+            if (resolveBookId(bookParts) != null) {
+                return bookParts.replaceFirstChar { it.uppercase() }
+            }
+        }
+        return null
+    }
+
     fun isBibleReference(text: String): Boolean {
         val (bookId, _, _) = tryParseVerseReference(text)
         return bookId != null
@@ -203,11 +221,12 @@ class BibleRepository @Inject constructor(
      * specific book ID (which may differ from BOOK_NAME_MAP entries).
      */
     suspend fun resolveApiBookId(spokenName: String): Pair<String, String>? {
-        val lower = spokenName.trim().lowercase()
-        val trans = ttsSettings.getBibleTranslation()
         val books = getBooks()
+        // Extract just the book name part (e.g. "Matthew 5" -> "matthew", "Genesis" -> "genesis")
+        val cleanName = extractBookName(spokenName)?.lowercase()
+            ?: spokenName.trim().lowercase()
         // Match by name in the API list (case-insensitive)
-        val match = books.find { it.name.lowercase() == lower }
+        val match = books.find { it.name.lowercase() == cleanName }
         if (match != null) return match.id to match.name
         // Fallback: try BOOK_NAME_MAP then look up by ID
         val bookId = resolveBookId(spokenName)
