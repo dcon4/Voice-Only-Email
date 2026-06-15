@@ -197,27 +197,6 @@ class BibleRepository @Inject constructor(
         }?.value
     }
 
-    /**
-     * Look up a book by its display name (e.g. "Genesis", "John") in the
-     * API's book list for the current translation.  Returns the translation-
-     * specific book ID (which may differ from BOOK_NAME_MAP entries).
-     */
-    suspend fun resolveApiBookId(spokenName: String): Pair<String, String>? {
-        val lower = spokenName.trim().lowercase()
-        val trans = ttsSettings.getBibleTranslation()
-        val books = getBooks()
-        // Match by name in the API list (case-insensitive)
-        val match = books.find { it.name.lowercase() == lower }
-        if (match != null) return match.id to match.name
-        // Fallback: try BOOK_NAME_MAP then look up by ID
-        val bookId = resolveBookId(spokenName)
-        if (bookId != null) {
-            val byId = books.find { it.id == bookId }
-            if (byId != null) return byId.id to byId.name
-        }
-        return null
-    }
-
     companion object {
         val BOOK_NAME_MAP: Map<String, String> = linkedMapOf(
             "genesis" to "GEN", "gen" to "GEN",
