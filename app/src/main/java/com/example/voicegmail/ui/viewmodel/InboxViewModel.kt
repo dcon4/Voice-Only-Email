@@ -15,7 +15,6 @@ import com.example.voicegmail.auth.AuthRepository
 import com.example.voicegmail.auth.OAuthDiagnostics
 import com.example.voicegmail.auth.OAuthRedirectBus
 import com.example.voicegmail.bible.BibleVoiceFlow
-import com.example.voicegmail.bible.DownloadState
 import com.example.voicegmail.browser.BrowserVoiceFlow
 import com.example.voicegmail.debug.DebugLogger
 import com.example.voicegmail.gmail.AttachmentReader
@@ -59,8 +58,7 @@ class InboxViewModel @Inject constructor(
     private val browserVoiceFlow: BrowserVoiceFlow,
     private val wakePreferences: com.example.voicegmail.voice.WakePreferences,
     private val mediaSessionController: com.example.voicegmail.media.MediaSessionController,
-    private val ttsSettings: com.example.voicegmail.voice.TtsSettingsRepository,
-    private val downloadManager: com.example.voicegmail.bible.BibleDownloadManager
+    private val ttsSettings: com.example.voicegmail.voice.TtsSettingsRepository
 ) : ViewModel() {
 
     private var isFirstLoad = true
@@ -111,33 +109,6 @@ class InboxViewModel @Inject constructor(
 
     private val _bibleVerseNumbers = MutableStateFlow(true)
     val bibleVerseNumbers: StateFlow<Boolean> = _bibleVerseNumbers
-
-    private val _offlineDownloads = MutableStateFlow<Map<String, DownloadState>>(emptyMap())
-    val offlineDownloads: StateFlow<Map<String, DownloadState>> = _offlineDownloads
-
-    init {
-        // Sync offline download states from download manager
-        viewModelScope.launch {
-            downloadManager.states.collect { states ->
-                _offlineDownloads.value = states
-            }
-        }
-    }
-
-    fun toggleOfflineDownload(translation: String) {
-        val current = _offlineDownloads.value[translation]
-        when (current) {
-            is DownloadState.Completed, is DownloadState.Error -> {
-                downloadManager.deleteDownload(translation)
-            }
-            is DownloadState.Downloading -> {
-                downloadManager.cancelDownload(translation)
-            }
-            else -> {
-                downloadManager.startDownload(translation, viewModelScope)
-            }
-        }
-    }
 
     private val _isSwitchingEngine = MutableStateFlow(false)
     val isSwitchingEngine: StateFlow<Boolean> = _isSwitchingEngine
