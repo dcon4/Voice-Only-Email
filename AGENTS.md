@@ -149,15 +149,57 @@ nice-to-haves.
 
 After every push to `main`, the agent MUST:
 1. Wait for the triggered GitHub Actions workflow run to finish
-   (poll every ~60 s via the unauthenticated GitHub REST API).
-2. If the build **succeeds**: report the run URL plus the direct
-   artifact download link so the user can install the APK.
-3. If the build **fails**: fetch the build log (using the GitHub
+   (poll every ~60-120 s via the unauthenticated GitHub REST API).
+2. Check jobs/steps progress if the build is slow, and report what
+   step is currently running so the user knows it has not stalled.
+3. If the build **succeeds**:
+   - List all available artifacts (name + size) so the user knows
+     which APKs are ready.
+   - Report the run URL.
+   - Clearly identify `debug-apk-standard` as the primary APK to
+     install for normal testing.
+4. If the build **fails**: fetch the build log (using the GitHub
    REST check-run annotations API, or scrape the job log if
    unauthenticated access allows), identify the root cause, fix it,
    and push a new commit.  Repeat until green.
+5. After a green build, give a short summary of what changed and
+   what the user should test / listen for.  Do NOT paste a full
+   commit diff into the chat — one or two sentences is enough.
 
 The user is blind and cannot read build logs themselves — build
 failures are a hard block that makes new features unreachable.  Treat
 a red build as an urgent bug regardless of the context in which it
 was introduced.
+
+## Testing Workflow (required agent behavior)
+
+After every green build the agent MUST explain what was done and what to test,
+using this pattern:
+
+1. **Install the debug APK first.** The primary artifact is always
+   `debug-apk-standard`. Tell the user to install it directly from the
+   GitHub Actions run page (provide the URL).
+2. **Explain the changes in one short paragraph** — what file(s) were
+   touched and what the user should expect to hear differently.
+3. **Give explicit test steps** — what to tap or say, and what the
+   correct outcome sounds like.  Be concrete: "Open chapter X, listen
+   for Y, expect Z."
+4. **If there are multiple artifacts (debug, release),** tell the user
+   to test the debug APK first.  When the user reports back that the
+   debug build is correct, the agent should investigate any difference
+   with the release build (code paths that differ when a Bible voice
+   or engine is configured, ProGuard side-effects, signing-keystore
+   quirks, source-set differences, etc.).
+5. **After the user confirms the fix works**, check whether any stale
+   or redundant UI (e.g., offline-download checkboxes for bundled
+   data) should be cleaned up.  Ask before deleting code the user
+   didn't explicitly request to remove.
+
+### Typical test flow the user follows
+- Installs `debug-apk-standard` from CI artifacts.
+- Opens the app, says "Bible", picks a book and chapter.
+- Listens for clean single-pass reading (no repeated sentences).
+- Tests pause/resume (power button, then "continue").
+- Switches between translations to confirm bundled data loads.
+- If there are issues, reports which APK (debug or release) was used
+  and which TTS engine/voice was active (IVONA, Supertonic, etc.).
