@@ -291,12 +291,7 @@ class BibleVoiceFlow @Inject constructor(
         scope.launch {
             try {
                 val verseText = bibleRepository.getVerseText(bookName, currentChapter, verse)
-                val bibleVoice = voiceManager.bibleVoiceName
-                val speak: (String, () -> Unit) -> Unit = if (bibleVoice.isNotBlank())
-                    { t, done -> voiceManager.speakWithVoice(t, bibleVoice, done) }
-                else
-                    { t, done -> voiceManager.speak(t, done) }
-                speak(verseText) {
+                voiceManager.speak(verseText) {
                     voiceCommandEngine.speakThenListen(
                         "End of $bookName $currentChapter verse $verse. " +
                             "Say 'repeat' or 'cancel'."
@@ -356,14 +351,7 @@ class BibleVoiceFlow @Inject constructor(
         }
 
         val chunk = currentChunks[currentChunkIndex]
-        val bibleVoice = voiceManager.bibleVoiceName
-
-        val speak: (String, () -> Unit) -> Unit = if (bibleVoice.isNotBlank())
-            { text, done -> voiceManager.speakWithVoice(text, bibleVoice, done) }
-        else
-            { text, done -> voiceManager.speak(text, done) }
-
-        speak(chunk) {
+        voiceManager.speak(chunk) {
             if (gen != readingGen) return@speak
             currentChunkIndex++
             readNextChunk(scope, onExit, gen)
