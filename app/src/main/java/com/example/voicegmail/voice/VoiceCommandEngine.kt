@@ -49,6 +49,9 @@ sealed class VoiceCommand {
     /** User wants to browse the web by voice. */
     object Browser         : VoiceCommand()
 
+    /** User wants to hear the battery percentage. */
+    object Battery         : VoiceCommand()
+
     /** Read all results in a browser set sequentially. */
     object ReadAll         : VoiceCommand()
     /** Show the next page of browser results. */
@@ -317,6 +320,15 @@ class VoiceCommandEngine @Inject constructor(
                 lower.contains("read the bible") || lower.contains("listen to the bible") ||
                 lower.contains("play bible") || lower.contains("bible audio") ->
                 VoiceCommand.Bible
+
+            // ── Battery ───────────────────────────────────────────────────────
+
+            lower == "battery" || lower == "battery level" || lower == "battery percentage" ||
+                lower == "what's my battery" || lower == "how's my battery" ||
+                lower == "battery status" || lower == "check battery" ||
+                lower.contains("battery level") || lower.contains("battery percentage") ||
+                lower.contains("check my battery") || lower.contains("what is my battery") ->
+                VoiceCommand.Battery
 
             // ── Browser — in-app voice web browsing ───────────────────────────
 

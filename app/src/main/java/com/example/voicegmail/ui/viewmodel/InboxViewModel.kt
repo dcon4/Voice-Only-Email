@@ -2,7 +2,9 @@ package com.example.voicegmail.ui.viewmodel
 
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.net.Uri
+import android.os.BatteryManager
 import android.speech.tts.TextToSpeech
 import android.speech.tts.Voice
 import androidx.core.content.FileProvider
@@ -122,6 +124,9 @@ class InboxViewModel @Inject constructor(
     private val _verboseLogging = MutableStateFlow(false)
     val verboseLogging: StateFlow<Boolean> = _verboseLogging
 
+    private val _batteryThreshold = MutableStateFlow(30)
+    val batteryThreshold: StateFlow<Int> = _batteryThreshold
+
     // ------------------------------------------------------------------
     // Pause/resume reading state
     // ------------------------------------------------------------------
@@ -227,6 +232,7 @@ class InboxViewModel @Inject constructor(
         }
         _runInBackground.value    = wakePreferences.isRunInBackground()
         _verboseLogging.value     = wakePreferences.isVerboseLogging()
+        _batteryThreshold.value   = ttsSettings.getBatteryThreshold()
         _settingsPanelVisible.value = true
     }
 
@@ -287,6 +293,12 @@ class InboxViewModel @Inject constructor(
         _verboseLogging.value = enabled
         DebugLogger.verboseEnabled = enabled
         DebugLogger.log("InboxViewModel", "Verbose logging = $enabled")
+    }
+
+    fun setBatteryThreshold(threshold: Int) {
+        ttsSettings.saveBatteryThreshold(threshold)
+        _batteryThreshold.value = threshold
+        DebugLogger.log("InboxViewModel", "Battery threshold = $threshold")
     }
 
     fun selectEngineFromPanel(engineName: String) {
@@ -502,8 +514,10 @@ class InboxViewModel @Inject constructor(
                         state.emails
                     )
                 } else {
-                    voiceCommandEngine.speakThenListen("VoiceGmail ready. Say a command.") { cmd ->
-                        handleCommand(cmd, state.emails)
+                    lowBatteryAnnouncement {
+                        voiceCommandEngine.speakThenListen("VoiceGmail ready. Say a command.") { cmd ->
+                            handleCommand(cmd, state.emails)
+                        }
                     }
                 }
             }
@@ -903,6 +917,14 @@ class InboxViewModel @Inject constructor(
                                 handleCommand(exitCmd, emails)
                             }
                         }
+                    }
+                }
+            }
+
+            is VoiceCommand.Battery -> {
+                announceBatteryLevel {
+                    voiceCommandEngine.speakThenListen("Say a command.") { cmd ->
+                        handleCommand(cmd, emails)
                     }
                 }
             }
@@ -2109,6 +2131,40 @@ class InboxViewModel @Inject constructor(
                 "That is the end of the instructions. " +
                 "Say 'previous', 'repeat', or any command to return to your inbox."
         )
+    }
+
+    // ── Battery ────────────────────────────────────────────────────────────
+
+    private fun getBatteryLevel(): Int {
+        val intent = context.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
+        val level = intent?.getIntExtra(BatteryManager.EXTRA_LEVEL, -1) ?: -1
+        val scale = intent?.getIntExtra(BatteryManager.EXTRA_SCALE, -1) ?: -1
+        return if (scale > 0) (level * 100 / scale) else -1
+    }
+
+    private fun announceBatteryLevel(onDone: () -> Unit) {
+        val pct = getBatteryLevel()
+        if (pct >= 0) {
+            voiceManager.speak("Battery at $pct percent.") {
+                onDone()
+            }
+        } else {
+            voiceManager.speak("Unable to read battery level.") {
+                onDone()
+            }
+        }
+    }
+
+    private fun lowBatteryAnnouncement(onDone: () -> Unit) {
+        val pct = getBatteryLevel()
+        val threshold = ttsSettings.getBatteryThreshold()
+        if (pct in 0..threshold) {
+            voiceManager.speak("Battery $pct percent.") {
+                onDone()
+            }
+        } else {
+            onDone()
+        }
     }
 }
 

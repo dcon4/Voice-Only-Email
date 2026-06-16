@@ -28,6 +28,7 @@ fun VoiceSettingsPanel(viewModel: InboxViewModel) {
     val bibleVoices      by viewModel.bibleSettingsVoices.collectAsState()
     val switching        by viewModel.isSwitchingEngine.collectAsState()
     val bibleSwitch      by viewModel.isSwitchingBibleEngine.collectAsState()
+    val batteryThreshold by viewModel.batteryThreshold.collectAsState()
 
     ModalBottomSheet(
         onDismissRequest = { viewModel.closeSettingsPanel() },
@@ -327,6 +328,58 @@ fun VoiceSettingsPanel(viewModel: InboxViewModel) {
                         .semantics { contentDescription = "Close voice settings" }
                 ) {
                     Text("Done")
+                }
+            }
+
+            HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
+
+            // ── Battery threshold ─────────────────────────────────────────────
+            Text(
+                text = "Battery Warning",
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.padding(top = 4.dp, bottom = 4.dp)
+            )
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Low battery announcement at",
+                        style = MaterialTheme.typography.bodyLarge
+                    )
+                    Text(
+                        text = "When the battery is at or below this percentage, " +
+                            "it is announced on every wake.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    FilledTonalButton(
+                        onClick = { viewModel.setBatteryThreshold(batteryThreshold - 5) },
+                        modifier = Modifier.semantics {
+                            contentDescription = "Decrease threshold to ${batteryThreshold - 5} percent"
+                        },
+                        enabled = batteryThreshold > 5
+                    ) { Text("-") }
+                    Text(
+                        text = " $batteryThreshold% ",
+                        modifier = Modifier.semantics { contentDescription = "$batteryThreshold percent" },
+                        style = MaterialTheme.typography.bodyLarge
+                    )
+                    FilledTonalButton(
+                        onClick = { viewModel.setBatteryThreshold(batteryThreshold + 5) },
+                        modifier = Modifier.semantics {
+                            contentDescription = "Increase threshold to ${batteryThreshold + 5} percent"
+                        },
+                        enabled = batteryThreshold < 100
+                    ) { Text("+") }
                 }
             }
 

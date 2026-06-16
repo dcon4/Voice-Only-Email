@@ -100,4 +100,12 @@ class TtsSettingsRepository @Inject constructor(
         prefs.edit().putBoolean("bible_verse_numbers", enabled).apply()
     }
 
+    // ── Battery threshold ──────────────────────────────────────────────────
+
+    fun getBatteryThreshold(): Int = prefs.getInt("battery_threshold", 30)
+
+    fun saveBatteryThreshold(threshold: Int) {
+        prefs.edit().putInt("battery_threshold", threshold.coerceIn(0, 100)).apply()
+    }
+
 }
