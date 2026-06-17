@@ -184,10 +184,8 @@ dependencies {
     implementation("androidx.camera:camera-lifecycle:1.2.3")
 
     // ── Tesseract OCR (tess-two) for on-device text recognition ─────────
-    implementation("com.googlecode.tesseract.android:tess-two:9.1.0")
-
-    // ── RenderScript legacy support for YUV→Bitmap conversion ───────────
-    implementation("androidx.renderscript:renderscript:1.0.0")
+    // YUV→Bitmap uses built-in YuvImage + BitmapFactory (no RenderScript needed)
+    implementation("com.rmtheis:tess-two:9.0.0")
 
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test.ext:junit:1.2.1")
