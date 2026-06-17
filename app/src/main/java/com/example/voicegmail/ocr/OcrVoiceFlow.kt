@@ -39,10 +39,11 @@ class OcrVoiceFlow @Inject constructor(
     private val tag = "OcrVoiceFlow"
     private val cameraExecutor = Executors.newSingleThreadExecutor()
 
-    private val lifecycleOwner = object : LifecycleOwner {
-        private val registry = LifecycleRegistry(this)
-        override fun getLifecycle(): Lifecycle = registry
+    private inner class CameraLifecycleOwner : LifecycleOwner {
+        val registry = LifecycleRegistry(this)
+        override val lifecycle: Lifecycle get() = registry
     }
+    private val cameraLifecycle = CameraLifecycleOwner()
 
     private var cameraProvider: ProcessCameraProvider? = null
     private var imageAnalysis: ImageAnalysis? = null
@@ -228,9 +229,8 @@ class OcrVoiceFlow @Inject constructor(
                 val provider = cameraProviderFuture.get()
                 cameraProvider = provider
 
-                val lifecycle = lifecycleOwner.lifecycle as LifecycleRegistry
-                lifecycle.handleLifecycleEvent(Lifecycle.Event.ON_CREATE)
-                lifecycle.handleLifecycleEvent(Lifecycle.Event.ON_START)
+                cameraLifecycle.registry.handleLifecycleEvent(Lifecycle.Event.ON_CREATE)
+                cameraLifecycle.registry.handleLifecycleEvent(Lifecycle.Event.ON_START)
                 lifecycleStarted = true
 
                 val selector = CameraSelector.Builder()
@@ -257,7 +257,7 @@ class OcrVoiceFlow @Inject constructor(
 
                 imageAnalysis = analysis
                 provider.unbindAll()
-                provider.bindToLifecycle(lifecycleOwner, selector, analysis)
+                provider.bindToLifecycle(cameraLifecycle, selector, analysis)
 
                 DebugLogger.log(tag, "Camera started")
                 onResult(true)
@@ -275,9 +275,8 @@ class OcrVoiceFlow @Inject constructor(
             cameraProvider?.unbindAll()
             cameraProvider = null
             if (lifecycleStarted) {
-                val lifecycle = lifecycleOwner.lifecycle as LifecycleRegistry
-                lifecycle.handleLifecycleEvent(Lifecycle.Event.ON_STOP)
-                lifecycle.handleLifecycleEvent(Lifecycle.Event.ON_DESTROY)
+                cameraLifecycle.registry.handleLifecycleEvent(Lifecycle.Event.ON_STOP)
+                cameraLifecycle.registry.handleLifecycleEvent(Lifecycle.Event.ON_DESTROY)
                 lifecycleStarted = false
             }
             DebugLogger.log(tag, "Camera stopped")
