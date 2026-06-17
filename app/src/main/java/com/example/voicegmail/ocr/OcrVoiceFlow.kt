@@ -111,6 +111,11 @@ class OcrVoiceFlow @Inject constructor(
         if (!isRunning) return
 
         when (cmd) {
+            is VoiceCommand.ScanDocument -> {
+                // "scan", "read this page", "ocr" etc. while in OCR mode
+                // triggers a capture instead of re-entering OCR mode.
+                captureAndRecognize(scope, onExit)
+            }
             is VoiceCommand.Cancel, is VoiceCommand.GoBack -> {
                 stop()
                 onExit(VoiceCommand.None)
