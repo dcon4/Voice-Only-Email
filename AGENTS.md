@@ -195,6 +195,11 @@ using this pattern:
    data) should be cleaned up.  Ask before deleting code the user
    didn't explicitly request to remove.
 
+## Known Bugs and Fixes
+
+- **"Go to sleep" re-prompts immediately.** Root cause: `VoiceManager.stopAll()` called `speechRecognizer?.stopListening()` which can fire `onError(ERROR_CLIENT)` on the binder thread. The error handler then calls `onResults(emptyList())`, triggering the FreeText branch in `promptResumeAndListen`, which starts a new `speakThenListen` session. This makes the sleep message appear to be ignored. Fix: changed `stopAll()` at `VoiceManager.kt:916` to use `destroy(); speechRecognizer = null` instead of `stopListening()`, matching `cancelListening()` which already used `destroy()`.
+- **Wake-duplication bug.** `handleWakeEvent` fires twice simultaneously (once from `MainActivity` screen receiver, once from `VoiceWakeService`), causing duplicate `promptResumeAndListen` sessions. One wakes, the other receives `FreeText=''` and re-prompts. Not yet fixed.
+
 ### Typical test flow the user follows
 - Installs `debug-apk-standard` from CI artifacts.
 - Opens the app, says "Bible", picks a book and chapter.

@@ -913,7 +913,7 @@ class VoiceManager @Inject constructor(
             tts?.setOnUtteranceProgressListener(null)
             tts?.stop()
             tts?.setSpeechRate(1.0f)
-            speechRecognizer?.stopListening()
+            speechRecognizer?.destroy(); speechRecognizer = null
             _isListening.value = false
             unmuteRecognitionBeep()
             bluetoothRouter.stopSco()
