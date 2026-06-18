@@ -2,11 +2,8 @@ package com.example.voicegmail.ocr
 
 import android.content.Context
 import android.graphics.Bitmap
-import android.graphics.BitmapFactory
-import android.graphics.ImageFormat
 import android.graphics.Matrix
-import android.graphics.Rect
-import android.graphics.YuvImage
+import android.util.Size
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageProxy
@@ -24,7 +21,6 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.io.ByteArrayOutputStream
 import java.util.concurrent.Executors
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -112,9 +108,10 @@ class OcrVoiceFlow @Inject constructor(
 
         when (cmd) {
             is VoiceCommand.ScanDocument -> {
-                // "scan", "read this page", "ocr" etc. while in OCR mode
-                // triggers a capture instead of re-entering OCR mode.
                 captureAndRecognize(scope, onExit)
+            }
+            is VoiceCommand.Repeat -> {
+                readLastResult(scope, onExit)
             }
             is VoiceCommand.Cancel, is VoiceCommand.GoBack -> {
                 stop()
@@ -216,13 +213,33 @@ class OcrVoiceFlow @Inject constructor(
     // ── Frame processing ────────────────────────────────────────────────
 
     private fun frameToBitmap(frame: CapturedFrame): Bitmap {
-        val yuvImage = YuvImage(frame.data, ImageFormat.NV21, frame.width, frame.height, null)
-        val out = ByteArrayOutputStream()
-        yuvImage.compressToJpeg(Rect(0, 0, frame.width, frame.height), 85, out)
-        val bmp = BitmapFactory.decodeByteArray(out.toByteArray(), 0, out.size())
+        val bmp = nv21ToBitmap(frame.data, frame.width, frame.height)
         if (frame.rotationDegrees == 0) return bmp
         val matrix = Matrix().apply { postRotate(frame.rotationDegrees.toFloat()) }
         return Bitmap.createBitmap(bmp, 0, 0, bmp.width, bmp.height, matrix, true)
+    }
+
+    private fun nv21ToBitmap(nv21: ByteArray, width: Int, height: Int): Bitmap {
+        val pixels = IntArray(width * height)
+        val ySize = width * height
+        var index = 0
+        for (y in 0 until height) {
+            for (x in 0 until width) {
+                val yIndex = y * width + x
+                val uvIndex = ySize + (y / 2) * width + (x / 2) * 2
+                val yValue = nv21[yIndex].toInt() and 0xFF
+                val vValue = nv21[uvIndex].toInt() and 0xFF
+                val uValue = nv21[uvIndex + 1].toInt() and 0xFF
+
+                val r = (yValue + 1.370705 * (vValue - 128)).toInt().coerceIn(0, 255)
+                val g = (yValue - 0.698001 * (vValue - 128) - 0.337633 * (uValue - 128))
+                    .toInt().coerceIn(0, 255)
+                val b = (yValue + 1.732446 * (uValue - 128)).toInt().coerceIn(0, 255)
+
+                pixels[index++] = (0xFF shl 24) or (r shl 16) or (g shl 8) or b
+            }
+        }
+        return Bitmap.createBitmap(pixels, width, height, Bitmap.Config.ARGB_8888)
     }
 
     // ── Camera management ───────────────────────────────────────────────
@@ -243,6 +260,7 @@ class OcrVoiceFlow @Inject constructor(
                     .build()
 
                 val analysis = ImageAnalysis.Builder()
+                    .setTargetResolution(Size(1920, 1080))
                     .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
                     .build()
 
