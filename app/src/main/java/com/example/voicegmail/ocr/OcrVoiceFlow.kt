@@ -155,8 +155,9 @@ class OcrVoiceFlow @Inject constructor(
     private fun captureAndRecognize(scope: CoroutineScope, onExit: (VoiceCommand) -> Unit) {
         val frame = latestFrame
         if (frame == null) {
+            DebugLogger.log(tag, "captureAndRecognize: latestFrame is null")
             voiceCommandEngine.speakThenListen(
-                "No camera frame available. Make sure the camera is pointed at the text, then say 'scan'."
+                "No camera frame available. Please make sure the camera is pointed at the text, then say 'scan'."
             ) { cmd -> handleCommand(cmd, scope, onExit) }
             return
         }
@@ -259,13 +260,16 @@ class OcrVoiceFlow @Inject constructor(
                     .build()
 
                 val analysis = ImageAnalysis.Builder()
-                    .setTargetResolution(Size(1920, 1080))
+                    .setTargetResolution(Size(1280, 720))
                     .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
                     .build()
 
                 analysis.setAnalyzer(cameraExecutor) { imageProxy ->
                     val image = imageProxy.image
                     if (image != null) {
+                        if (latestFrame == null) {
+                            DebugLogger.log(tag, "First camera frame received: ${image.width}x${image.height}")
+                        }
                         val yuvBytes = yuv420ToNv21(image)
                         latestFrame = CapturedFrame(
                             data = yuvBytes,
@@ -274,7 +278,7 @@ class OcrVoiceFlow @Inject constructor(
                             rotationDegrees = imageProxy.imageInfo.rotationDegrees
                         )
                     } else {
-                        DebugLogger.verbose(tag, "Null image in camera analyzer")
+                        DebugLogger.log(tag, "Null image in camera analyzer")
                     }
                     imageProxy.close()
                 }
