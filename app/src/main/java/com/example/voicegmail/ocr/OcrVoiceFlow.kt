@@ -39,10 +39,9 @@ class OcrVoiceFlow @Inject constructor(
         val registry = LifecycleRegistry(this)
         override val lifecycle: Lifecycle get() = registry
     }
-    private val cameraLifecycle = CameraLifecycleOwner()
-
     private var cameraProvider: ProcessCameraProvider? = null
     private var imageAnalysis: ImageAnalysis? = null
+    private var cameraLifecycle: CameraLifecycleOwner? = null
     private var isRunning = false
 
     @Volatile private var latestFrame: CapturedFrame? = null
@@ -54,8 +53,6 @@ class OcrVoiceFlow @Inject constructor(
         val height: Int,
         val rotationDegrees: Int
     )
-
-    private var lifecycleStarted = false
 
     fun start(scope: CoroutineScope, onExit: (VoiceCommand) -> Unit) {
         DebugLogger.log(tag, "OCR flow started")
@@ -169,20 +166,21 @@ class OcrVoiceFlow @Inject constructor(
         scope.launch {
             try {
                 val bitmap = withContext(Dispatchers.Default) { frameToBitmap(frame) }
-                ocrRepository.recognize(bitmap) { text ->
-                    if (text.isBlank()) {
+                val text = withContext(Dispatchers.Default) {
+                    ocrRepository.recognizeBlocking(bitmap)
+                }
+                if (text.isBlank()) {
+                    voiceCommandEngine.speakThenListen(
+                        "No text found. Make sure the text is in focus and well lit, " +
+                            "then say 'scan' again, or 'cancel' to exit."
+                    ) { cmd -> handleCommand(cmd, scope, onExit) }
+                } else {
+                    lastResult = text
+                    voiceManager.speak(text) {
                         voiceCommandEngine.speakThenListen(
-                            "No text found. Make sure the text is in focus and well lit, " +
-                                "then say 'scan' again, or 'cancel' to exit."
+                            "Say 'scan again' to capture another page, " +
+                                "'repeat' to hear that again, or 'cancel' to exit."
                         ) { cmd -> handleCommand(cmd, scope, onExit) }
-                    } else {
-                        lastResult = text
-                        voiceManager.speak(text) {
-                            voiceCommandEngine.speakThenListen(
-                                "Say 'scan again' to capture another page, " +
-                                    "'repeat' to hear that again, or 'cancel' to exit."
-                            ) { cmd -> handleCommand(cmd, scope, onExit) }
-                        }
                     }
                 }
             } catch (e: Exception) {
@@ -251,9 +249,10 @@ class OcrVoiceFlow @Inject constructor(
                 val provider = cameraProviderFuture.get()
                 cameraProvider = provider
 
-                cameraLifecycle.registry.handleLifecycleEvent(Lifecycle.Event.ON_CREATE)
-                cameraLifecycle.registry.handleLifecycleEvent(Lifecycle.Event.ON_START)
-                lifecycleStarted = true
+                val lifecycle = CameraLifecycleOwner()
+                lifecycle.registry.handleLifecycleEvent(Lifecycle.Event.ON_CREATE)
+                lifecycle.registry.handleLifecycleEvent(Lifecycle.Event.ON_START)
+                cameraLifecycle = lifecycle
 
                 val selector = CameraSelector.Builder()
                     .requireLensFacing(CameraSelector.LENS_FACING_BACK)
@@ -274,13 +273,15 @@ class OcrVoiceFlow @Inject constructor(
                             height = image.height,
                             rotationDegrees = imageProxy.imageInfo.rotationDegrees
                         )
+                    } else {
+                        DebugLogger.verbose(tag, "Null image in camera analyzer")
                     }
                     imageProxy.close()
                 }
 
                 imageAnalysis = analysis
                 provider.unbindAll()
-                provider.bindToLifecycle(cameraLifecycle, selector, analysis)
+                provider.bindToLifecycle(lifecycle, selector, analysis)
 
                 DebugLogger.log(tag, "Camera started")
                 onResult(true)
@@ -297,11 +298,9 @@ class OcrVoiceFlow @Inject constructor(
             imageAnalysis = null
             cameraProvider?.unbindAll()
             cameraProvider = null
-            if (lifecycleStarted) {
-                cameraLifecycle.registry.handleLifecycleEvent(Lifecycle.Event.ON_STOP)
-                cameraLifecycle.registry.handleLifecycleEvent(Lifecycle.Event.ON_DESTROY)
-                lifecycleStarted = false
-            }
+            cameraLifecycle?.registry?.handleLifecycleEvent(Lifecycle.Event.ON_STOP)
+            cameraLifecycle?.registry?.handleLifecycleEvent(Lifecycle.Event.ON_DESTROY)
+            cameraLifecycle = null
             DebugLogger.log(tag, "Camera stopped")
         } catch (e: Exception) {
             DebugLogger.log(tag, "Error stopping camera: ${e.message}")

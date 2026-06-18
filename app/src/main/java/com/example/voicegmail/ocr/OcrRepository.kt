@@ -49,11 +49,12 @@ class OcrRepository @Inject constructor(
     }
 
     fun recognize(bitmap: Bitmap, onResult: (String) -> Unit) {
-        val api = tess
-        if (api == null) {
-            onResult("")
-            return
-        }
+        val text = recognizeBlocking(bitmap)
+        onResult(text)
+    }
+
+    fun recognizeBlocking(bitmap: Bitmap): String {
+        val api = tess ?: return ""
         try {
             val gray = toGrayscale(bitmap)
             val downsampled = ImageUtils.downsample(gray, 1080)
@@ -61,14 +62,10 @@ class OcrRepository @Inject constructor(
             val text = api.utF8Text ?: ""
             val cleaned = text.trim()
             DebugLogger.log(tag, "OCR result: ${cleaned.take(100)}")
-            if (cleaned.isNotBlank()) {
-                onResult(cleaned)
-            } else {
-                onResult("")
-            }
+            return cleaned
         } catch (e: Exception) {
             DebugLogger.log(tag, "OCR recognition failed: ${e.message}")
-            onResult("")
+            return ""
         }
     }
 
