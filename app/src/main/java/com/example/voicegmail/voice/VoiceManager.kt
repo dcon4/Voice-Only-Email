@@ -423,6 +423,13 @@ class VoiceManager @Inject constructor(
         acquireRecognitionWakeLock()
         muteRecognitionBeep()
 
+        // Samsung One UI requires MODE_IN_COMMUNICATION for the speech recogniser
+        // to receive mic audio.  The bt flavour already sets this via
+        // BluetoothAudioRouter when SCO connects, so we skip it there.
+        if (!BuildConfig.BLUETOOTH_AUDIO) {
+            audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
+        }
+
         var speechBegan = false
 
         speechRecognizer?.destroy()
@@ -461,6 +468,7 @@ class VoiceManager @Inject constructor(
                             _recognizedText.value = candidates[0]
                             DebugLogger.verbose(tag, "Recognition results (${candidates.size}): ${candidates.take(3)}")
                             Log.d(tag, "Results (${candidates.size}): ${candidates.take(3)}")
+                            restoreAudioMode()
                             bluetoothRouter.stopSco() // Release SCO so TTS uses A2DP
                             onResults(candidates)
                         }
@@ -473,10 +481,12 @@ class VoiceManager @Inject constructor(
                         !speechBegan -> {
                             if (noSpeechMaxRetries == 0) {
                                 Log.d(tag, "Brief listen: no speech — returning empty (continue reading)")
+                                restoreAudioMode()
                                 bluetoothRouter.stopSco()
                                 onResults(emptyList())
                             } else {
                                 Log.d(tag, "Session timeout after $noSpeechMaxRetries no-speech retries")
+                                restoreAudioMode()
                                 bluetoothRouter.stopSco()
                                 onResults(listOf("SESSION_TIMEOUT"))
                             }
@@ -500,10 +510,12 @@ class VoiceManager @Inject constructor(
                         !speechBegan -> {
                             if (noSpeechMaxRetries == 0) {
                                 Log.d(tag, "Brief listen error: no speech — returning empty (continue reading)")
+                                restoreAudioMode()
                                 bluetoothRouter.stopSco()
                                 onResults(emptyList())
                             } else {
                                 Log.d(tag, "Session timeout (error path) after $noSpeechMaxRetries no-speech retries")
+                                restoreAudioMode()
                                 bluetoothRouter.stopSco()
                                 onResults(listOf("SESSION_TIMEOUT"))
                             }
@@ -533,6 +545,13 @@ class VoiceManager @Inject constructor(
         speechRecognizer?.startListening(intent)
     }
 
+    /** Restore audio mode after recognition completes. */
+    private fun restoreAudioMode() {
+        if (!BuildConfig.BLUETOOTH_AUDIO) {
+            audioManager.mode = AudioManager.MODE_NORMAL
+        }
+    }
+
     private fun retryOrFail(
         error: Int,
         onResults: (List<String>) -> Unit,
@@ -550,6 +569,7 @@ class VoiceManager @Inject constructor(
             }, delay)
         } else {
             Log.e(tag, "Recognition giving up (error=$error retries=$retryCount)")
+            restoreAudioMode()
             bluetoothRouter.stopSco()
             onResults(emptyList())
         }
@@ -916,6 +936,7 @@ class VoiceManager @Inject constructor(
             speechRecognizer?.destroy(); speechRecognizer = null
             _isListening.value = false
             unmuteRecognitionBeep()
+            restoreAudioMode()
             bluetoothRouter.stopSco()
         }
     }
@@ -925,6 +946,7 @@ class VoiceManager @Inject constructor(
             tts?.stop(); tts?.shutdown()
             speechRecognizer?.destroy(); speechRecognizer = null
             releaseRecognitionWakeLock()
+            restoreAudioMode()
             bluetoothRouter.stopSco()
         }
     }
