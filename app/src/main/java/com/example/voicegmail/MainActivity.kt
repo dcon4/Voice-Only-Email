@@ -69,24 +69,6 @@ class MainActivity : ComponentActivity() {
                         "Please grant microphone permission in your device settings."
                 )
             }
-            // Request camera permission next (sequentially, after mic dialog)
-            if (ContextCompat.checkSelfPermission(
-                    this, Manifest.permission.CAMERA
-                ) != PackageManager.PERMISSION_GRANTED
-            ) {
-                cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
-            }
-        }
-
-    private val cameraPermissionLauncher =
-        registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-            DebugLogger.log("MainActivity", "CAMERA granted=$granted")
-            if (!granted) {
-                voiceManager.speak(
-                    "Camera permission was denied. The document scanner will not work. " +
-                        "You can grant camera permission later in your device settings."
-                )
-            }
         }
 
     private val notifPermissionLauncher =
@@ -263,15 +245,6 @@ class MainActivity : ComponentActivity() {
         // Request mic separately (or immediately if notification was not needed)
         if (micNeeded && !notifNeeded) {
             micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
-        }
-
-        // Request camera after mic (or immediately if mic was already granted and notif was not needed)
-        val cameraNeeded = ContextCompat.checkSelfPermission(
-            this, Manifest.permission.CAMERA
-        ) != PackageManager.PERMISSION_GRANTED
-
-        if (cameraNeeded && !micNeeded && !notifNeeded) {
-            cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
         }
     }
 

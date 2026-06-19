@@ -31,12 +31,6 @@ jobs:
       - name: Generate Bible data from XML sources
         run: python3 tools/convert-bible.py
 
-      - name: Download Tesseract OCR language data
-        run: |
-          mkdir -p app/src/main/assets/tessdata
-          curl -L -o app/src/main/assets/tessdata/eng.traineddata \
-            "https://github.com/tesseract-ocr/tessdata/raw/main/eng.traineddata"
-
       - name: Make gradlew executable
         run: chmod +x ./gradlew
 

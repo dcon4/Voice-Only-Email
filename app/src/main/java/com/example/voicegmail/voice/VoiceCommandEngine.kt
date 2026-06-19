@@ -52,9 +52,6 @@ sealed class VoiceCommand {
     /** User wants to hear the battery percentage. */
     object Battery         : VoiceCommand()
 
-    /** Scan a printed document using camera OCR. */
-    object ScanDocument    : VoiceCommand()
-
     /** Read all results in a browser set sequentially. */
     object ReadAll         : VoiceCommand()
     /** Show the next page of browser results. */
@@ -344,14 +341,6 @@ class VoiceCommandEngine @Inject constructor(
                 lower == "google" || lower == "search online" ||
                 lower.contains("search online") || lower.contains("look up online") ->
                 VoiceCommand.Browser
-
-            // ── OCR document scanner ─────────────────────────────────────────
-
-            lower.contains("read this page") || lower.contains("read this document") ||
-                lower == "scan" || lower.contains("scan document") || lower.contains("scan this") ||
-                lower.contains("ocr") || lower.contains("text recognition") ||
-                lower.contains("read printed") || lower.contains("camera reader") ->
-                VoiceCommand.ScanDocument
 
             // ── Pause / resume reading ────────────────────────────────────────
 

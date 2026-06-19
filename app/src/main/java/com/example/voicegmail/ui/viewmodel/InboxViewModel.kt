@@ -19,7 +19,6 @@ import com.example.voicegmail.auth.OAuthRedirectBus
 import com.example.voicegmail.bible.BibleVoiceFlow
 import com.example.voicegmail.browser.BrowserVoiceFlow
 import com.example.voicegmail.debug.DebugLogger
-import com.example.voicegmail.ocr.OcrVoiceFlow
 import com.example.voicegmail.gmail.AttachmentReader
 import com.example.voicegmail.gmail.DraftItem
 import com.example.voicegmail.gmail.EmailItem
@@ -59,7 +58,6 @@ class InboxViewModel @Inject constructor(
     private val wakeEventBus: WakeEventBus,
     private val bibleVoiceFlow: BibleVoiceFlow,
     private val browserVoiceFlow: BrowserVoiceFlow,
-    private val ocrVoiceFlow: OcrVoiceFlow,
     private val wakePreferences: com.example.voicegmail.voice.WakePreferences,
     private val mediaSessionController: com.example.voicegmail.media.MediaSessionController,
     private val ttsSettings: com.example.voicegmail.voice.TtsSettingsRepository
@@ -474,8 +472,7 @@ class InboxViewModel @Inject constructor(
         // Pause any Bible audio that may be playing (preserves position)
         val bibleWasReading = bibleVoiceFlow.handleWakeInterrupt()
         val browserWasReading = browserVoiceFlow.handleWakeInterrupt()
-        val ocrWasReading = ocrVoiceFlow.handleWakeInterrupt()
-        DebugLogger.log("InboxViewModel", "handleWakeEvent: bibleWasReading=$bibleWasReading browserWasReading=$browserWasReading ocrWasReading=$ocrWasReading")
+        DebugLogger.log("InboxViewModel", "handleWakeEvent: bibleWasReading=$bibleWasReading browserWasReading=$browserWasReading")
         // Destroy the in-flight recognizer silently so its error/result callback
         // cannot race with this new session. TTS is handled by QUEUE_FLUSH inside
         // the following speakThenListen call.
@@ -486,28 +483,21 @@ class InboxViewModel @Inject constructor(
         // was saved) so the rest of the wake handler always speaks in the
         // correct voice.
         voiceManager.restoreMainEngine {
-            handleWakeEventAfterEngineRestore(bibleWasReading, browserWasReading, ocrWasReading)
+            handleWakeEventAfterEngineRestore(bibleWasReading, browserWasReading)
         }
     }
 
-    private fun handleWakeEventAfterEngineRestore(
-        bibleWasReading: Boolean,
-        browserWasReading: Boolean,
-        ocrWasReading: Boolean = false
-    ) {
+    private fun handleWakeEventAfterEngineRestore(bibleWasReading: Boolean, browserWasReading: Boolean) {
         when (val state = _uiState.value) {
             is InboxUiState.Success -> {
-                if (ocrWasReading) {
-                    voiceCommandEngine.speakThenListen(
-                        "Camera scanner closed. Say a command."
-                    ) { cmd -> handleCommand(cmd, state.emails) }
-                    return
-                }
                 if (bibleWasReading) {
                     promptBibleResumeAndListen(state.emails)
                     return
                 }
                 if (browserWasReading) {
+                    // Browser article reading was interrupted — open a pause
+                    // listener that PRESERVES the browser's chunk bookmark on
+                    // unrecognized speech, sleep, and timeout.
                     mediaSessionController.setPaused()
                     promptBrowserResumeAndListen(state.emails)
                     return
@@ -871,7 +861,7 @@ class InboxViewModel @Inject constructor(
                 voiceCommandEngine.speakThenListen(
                     "Commands: reed, next, previous, repeat, reply, forward, delete, compose, " +
                         "search, refresh, reed unread, mark as read, mark as unread, " +
-                        "pause, continue, go to sleep, bible, browser, read this page, list attachments, " +
+                        "pause, continue, go to sleep, bible, browser, list attachments, " +
                         "list drafts, read slower, read faster, voice settings, instructions. " +
                         "While composing: add more, delete last word or sentence, start over, " +
                         "save draft, read back, send, cancel."
@@ -943,18 +933,6 @@ class InboxViewModel @Inject constructor(
                 mediaSessionController.setPlaying("Browser", "Searching...")
                 browserVoiceFlow.start(viewModelScope) { exitCmd ->
                     mediaSessionController.setStopped()
-                    if (exitCmd is VoiceCommand.None) {
-                        voiceCommandEngine.speakThenListen("Back to inbox. Say a command.") { cmd ->
-                            handleCommand(cmd, emails)
-                        }
-                    } else {
-                        handleCommand(exitCmd, emails)
-                    }
-                }
-            }
-
-            is VoiceCommand.ScanDocument -> {
-                ocrVoiceFlow.start(viewModelScope) { exitCmd ->
                     if (exitCmd is VoiceCommand.None) {
                         voiceCommandEngine.speakThenListen("Back to inbox. Say a command.") { cmd ->
                             handleCommand(cmd, emails)
