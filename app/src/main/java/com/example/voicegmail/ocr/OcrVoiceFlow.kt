@@ -21,6 +21,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.delay
 import java.util.concurrent.Executors
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -68,10 +69,11 @@ class OcrVoiceFlow @Inject constructor(
 
         startCamera(scope) { success ->
             if (success) {
-                voiceCommandEngine.speakThenListen(
-                    "Scanner mode. Point the camera at the text. " +
-                        "Say 'scan' when ready, or 'cancel' to exit."
-                ) { cmd -> handleCommand(cmd, scope, onExit) }
+                voiceManager.speak("Camera ready. Scanning.")
+                scope.launch {
+                    delay(2000)
+                    captureAndRecognize(scope, onExit)
+                }
             } else {
                 voiceCommandEngine.speakThenListen(
                     "Camera could not be opened. " +
@@ -213,9 +215,16 @@ class OcrVoiceFlow @Inject constructor(
 
     private fun frameToBitmap(frame: CapturedFrame): Bitmap {
         val bmp = nv21ToBitmap(frame.data, frame.width, frame.height)
-        if (frame.rotationDegrees == 0) return bmp
-        val matrix = Matrix().apply { postRotate(frame.rotationDegrees.toFloat()) }
-        return Bitmap.createBitmap(bmp, 0, 0, bmp.width, bmp.height, matrix, true)
+        val rotated = if (frame.rotationDegrees != 0) {
+            val matrix = Matrix().apply { postRotate(frame.rotationDegrees.toFloat()) }
+            Bitmap.createBitmap(bmp, 0, 0, bmp.width, bmp.height, matrix, true)
+                .also { bmp.recycle() }
+        } else {
+            bmp
+        }
+        return ImageUtils.downsample(rotated).also {
+            if (it !== rotated) rotated.recycle()
+        }
     }
 
     private fun nv21ToBitmap(nv21: ByteArray, width: Int, height: Int): Bitmap {
