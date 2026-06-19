@@ -34,6 +34,7 @@ fun InboxScreen(
     val isSignedIn       by viewModel.isSignedIn.collectAsState()
     val settingsVisible  by viewModel.settingsPanelVisible.collectAsState()
     val context          = LocalContext.current
+    var showDebugDialog  by remember { mutableStateOf(false) }
 
     // One-shot navigation events from voice commands
     LaunchedEffect(Unit) {
@@ -41,6 +42,13 @@ fun InboxScreen(
             when (event) {
                 is InboxNavEvent.NavigateToCompose -> onCompose(event.replyTo, event.isForward)
             }
+        }
+    }
+
+    // Sign-in requested by voice command
+    LaunchedEffect(Unit) {
+        viewModel.signInRequested.collect { intent ->
+            context.startActivity(intent)
         }
     }
 
@@ -72,13 +80,7 @@ fun InboxScreen(
                     }
                     // Debug log share
                     IconButton(
-                        onClick = {
-                            viewModel.getShareLogIntent()?.let { intent ->
-                                context.startActivity(
-                                    android.content.Intent.createChooser(intent, "Share debug log")
-                                )
-                            }
-                        },
+                        onClick = { showDebugDialog = true },
                         modifier = Modifier.semantics {
                             contentDescription = "Share debug log"
                         }
@@ -201,6 +203,35 @@ fun InboxScreen(
         val bibleSettingsVisible by viewModel.bibleSettingsVisible.collectAsState()
         if (bibleSettingsVisible) {
             BibleSettingsScreen(viewModel = viewModel)
+        }
+
+        // Debug log share/email dialog
+        if (showDebugDialog) {
+            AlertDialog(
+                onDismissRequest = { showDebugDialog = false },
+                title = { Text("Debug Log") },
+                text = { Text("Share the debug log file with another app, or open an email with the subject and file pre-filled.") },
+                confirmButton = {
+                    TextButton(onClick = {
+                        viewModel.getShareLogIntent()?.let { intent ->
+                            context.startActivity(
+                                android.content.Intent.createChooser(intent, "Share debug log")
+                            )
+                        }
+                        showDebugDialog = false
+                    }) { Text("Share") }
+                },
+                dismissButton = {
+                    TextButton(onClick = {
+                        viewModel.getEmailLogIntent()?.let { intent ->
+                            context.startActivity(
+                                android.content.Intent.createChooser(intent, "Email debug log")
+                            )
+                        }
+                        showDebugDialog = false
+                    }) { Text("Email") }
+                }
+            )
         }
     }
 }

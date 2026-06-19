@@ -40,7 +40,10 @@ import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import net.openid.appauth.AuthorizationException
+import java.text.SimpleDateFormat
 import java.util.Calendar
+import java.util.Date
+import java.util.Locale
 import javax.inject.Inject
 
 @HiltViewModel
@@ -183,17 +186,19 @@ class InboxViewModel @Inject constructor(
                     if (forcedReConsent) {
                         _isSignedIn.value = false
                         _uiState.value = InboxUiState.SignedOut
-                        voiceManager.speak(
+                        voiceCommandEngine.speakThenListen(
                             "VoiceGmail has been updated and needs additional " +
-                                "permission to access your contacts. Please sign in again to continue."
-                        )
+                                "permission to access your contacts. Say 'sign in' to begin."
+                        ) { cmd -> handleCommand(cmd, emptyList()) }
                     } else {
                         val hasToken = authRepository.hasAccessToken().first()
                         _isSignedIn.value = hasToken
                         if (hasToken) loadInbox()
                         else {
                             _uiState.value = InboxUiState.SignedOut
-                            voiceManager.speak("Please sign in to access your Gmail inbox.")
+                            voiceCommandEngine.speakThenListen(
+                                "Please sign in to access your Gmail inbox. Say 'sign in' to begin."
+                            ) { cmd -> handleCommand(cmd, emptyList()) }
                         }
                     }
                 }
@@ -522,7 +527,9 @@ class InboxViewModel @Inject constructor(
                 }
             }
             is InboxUiState.SignedOut ->
-                voiceManager.speak("VoiceGmail. Please sign in to access your inbox.")
+                voiceCommandEngine.speakThenListen(
+                    "VoiceGmail. Please sign in to access your inbox. Say 'sign in' to start."
+                ) { cmd -> handleCommand(cmd, emptyList()) }
             is InboxUiState.Loading ->
                 voiceManager.speak("Loading your inbox. Please wait.")
             is InboxUiState.Error ->
@@ -697,6 +704,15 @@ class InboxViewModel @Inject constructor(
     // ------------------------------------------------------------------
     // Auth
     // ------------------------------------------------------------------
+
+    /** One-shot event for the UI to start the sign-in browser. */
+    private val _signInRequested = MutableSharedFlow<Intent>(extraBufferCapacity = 1)
+    val signInRequested: SharedFlow<Intent> = _signInRequested
+
+    fun requestSignIn() {
+        val intent = getSignInIntent()
+        _signInRequested.tryEmit(intent)
+    }
 
     fun getSignInIntent(): Intent {
         DebugLogger.log("Auth", "Sign-in button pressed")
@@ -903,6 +919,11 @@ class InboxViewModel @Inject constructor(
                 else
                     "Going to sleep. Press the power button to wake me."
                 voiceManager.speak(msg)
+            }
+
+            is VoiceCommand.SignIn -> {
+                voiceManager.speak("Opening sign in page.")
+                requestSignIn()
             }
 
             is VoiceCommand.Bible -> {
@@ -2062,6 +2083,20 @@ class InboxViewModel @Inject constructor(
         )
         return Intent(Intent.ACTION_SEND).apply {
             type = "text/plain"
+            putExtra(Intent.EXTRA_STREAM, uri)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+    }
+
+    fun getEmailLogIntent(): Intent? {
+        val file = DebugLogger.getLogFile()?.takeIf { it.exists() } ?: return null
+        val uri  = FileProvider.getUriForFile(
+            context, "${BuildConfig.APPLICATION_ID}.debug.fileprovider", file
+        )
+        val dateTime = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US).format(Date())
+        return Intent(Intent.ACTION_SEND).apply {
+            type = "message/rfc822"
+            putExtra(Intent.EXTRA_SUBJECT, "VoiceGmail debug log - $dateTime")
             putExtra(Intent.EXTRA_STREAM, uri)
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }

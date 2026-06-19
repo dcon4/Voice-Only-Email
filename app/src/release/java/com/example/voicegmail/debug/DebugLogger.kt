@@ -15,7 +15,7 @@ import java.util.Locale
  */
 object DebugLogger {
     private const val TAG = "VoiceGmailDebug"
-    private const val LOG_FILE_NAME = "voicegmail-debug.log"
+    private const val LOG_FILE_PREFIX = "voicegmail-debug.log"
 
     private var logFile: File? = null
 
@@ -24,7 +24,9 @@ object DebugLogger {
 
     fun init(context: Context) {
         if (logFile != null) return
-        logFile = File(context.filesDir, LOG_FILE_NAME)
+        val datePart = SimpleDateFormat("yyyy-MM-dd-HH-mm", Locale.US).format(Date())
+        val fileName = "$LOG_FILE_PREFIX.$datePart.txt"
+        logFile = File(context.filesDir, fileName)
         try {
             if (!logFile!!.exists()) logFile!!.createNewFile()
         } catch (e: IOException) {

@@ -83,6 +83,8 @@ sealed class VoiceCommand {
     /** Delete draft number [index] (1-based). */
     data class DeleteDraft(val index: Int) : VoiceCommand()
 
+    object SignIn         : VoiceCommand()
+
     data class FreeText(val text: String) : VoiceCommand()
 }
 
@@ -312,6 +314,13 @@ class VoiceCommandEngine @Inject constructor(
                 lower.startsWith("sleep") || lower.endsWith("sleep") ||
                 lower == "i want to sleep" || lower.contains("time to sleep") ->
                 VoiceCommand.GoToSleep
+
+            // ── Sign in ────────────────────────────────────────────────────────
+
+            lower == "sign in" || lower == "signin" || lower == "login" ||
+                lower == "log in" || lower == "log in again" || lower == "sign in again" ||
+                lower == "sign me in" || lower.contains("connect") ||
+                lower == "authenticate" -> VoiceCommand.SignIn
 
             // ── Bible audio ───────────────────────────────────────────────────
 
