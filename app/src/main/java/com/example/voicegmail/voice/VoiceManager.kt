@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.media.AudioManager
+import android.media.MediaRecorder
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -432,6 +433,14 @@ class VoiceManager @Inject constructor(
 
         var speechBegan = false
 
+        // Request audio focus so the recognizer gets mic input (Samsung One UI)
+        val audioFocusResult = audioManager.requestAudioFocus(
+            null, AudioManager.STREAM_VOICE_CALL, AudioManager.AUDIOFOCUS_GAIN_TRANSIENT
+        )
+        if (audioFocusResult != AudioManager.AUDIOFOCUS_REQUEST_GRANTED) {
+            DebugLogger.log(tag, "Audio focus request denied: $audioFocusResult")
+        }
+
         speechRecognizer?.destroy()
         speechRecognizer = SpeechRecognizer.createSpeechRecognizer(context).apply {
             setRecognitionListener(object : RecognitionListener {
@@ -499,7 +508,7 @@ class VoiceManager @Inject constructor(
                     _isListening.value = false
                     releaseRecognitionWakeLock()
                     unmuteRecognitionBeep()
-                    Log.w(tag, "Recognition error $error speechBegan=$speechBegan retry=$retryCount noSpeech=$noSpeechRetries max=$noSpeechMaxRetries")
+                    DebugLogger.log(tag, "Recognition error $error speechBegan=$speechBegan retry=$retryCount noSpeech=$noSpeechRetries max=$noSpeechMaxRetries")
 
                     when {
                         !speechBegan && noSpeechRetries < noSpeechMaxRetries -> {
@@ -537,7 +546,8 @@ class VoiceManager @Inject constructor(
             putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.US.toString())
             putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 5)
             putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
-            putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
+            putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE,
+                MediaRecorder.AudioSource.VOICE_RECOGNITION)
             putExtra("android.speech.extra.SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS", 5000L)
             putExtra("android.speech.extra.SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS", 2500L)
             putExtra("android.speech.extra.SPEECH_INPUT_MINIMUM_LENGTH_MILLIS", 500L)
@@ -545,11 +555,12 @@ class VoiceManager @Inject constructor(
         speechRecognizer?.startListening(intent)
     }
 
-    /** Restore audio mode after recognition completes. */
+    /** Restore audio mode and abandon audio focus after recognition completes. */
     private fun restoreAudioMode() {
         if (!BuildConfig.BLUETOOTH_AUDIO) {
             audioManager.mode = AudioManager.MODE_NORMAL
         }
+        audioManager.abandonAudioFocus(null)
     }
 
     private fun retryOrFail(
