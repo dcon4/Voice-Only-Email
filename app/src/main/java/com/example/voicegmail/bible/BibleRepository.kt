@@ -68,11 +68,11 @@ class BibleRepository @Inject constructor(
         val key = translation.lowercase()
         bundledBibles[key]?.let { return it }
         return try {
-            val json = withContext(Dispatchers.IO) {
-                assetManager.open("bible/$key.json").bufferedReader().use { it.readText() }
+            val data = withContext(Dispatchers.Default) {
+                val json = assetManager.open("bible/$key.json").bufferedReader().use { it.readText() }
+                val type = object : TypeToken<Map<String, Map<String, List<Map<String, Any>>>>>() {}.type
+                gson.fromJson<Map<String, Map<String, List<Map<String, Any>>>>>(json, type)
             }
-            val type = object : TypeToken<Map<String, Map<String, List<Map<String, Any>>>>>() {}.type
-            val data: Map<String, Map<String, List<Map<String, Any>>>> = gson.fromJson(json, type)
             bundledBibles[key] = data
             DebugLogger.log(TAG, "Loaded bundled Bible: $key (${data.size} books)")
             data
