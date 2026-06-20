@@ -1954,10 +1954,15 @@ class InboxViewModel @Inject constructor(
     }
 
     private fun filterEnglishVoices(voices: List<Voice>): List<Voice> {
-        return voices.filter { voice ->
+        val english = voices.filter { voice ->
             voice.locale.language == "en" && (voice.locale.country == "US" ||
-                voice.locale.country == "GB")
+                voice.locale.country == "GB" || voice.locale.country.isEmpty())
         }
+        DebugLogger.log("InboxViewModel", "filterEnglishVoices: " +
+            "${english.size} of ${voices.size} (countries: ${
+                voices.filter { it.locale.language == "en" }.map { "'${it.locale.country}'" }.distinct()
+            })")
+        return english
     }
 
     // ------------------------------------------------------------------
@@ -1976,7 +1981,7 @@ class InboxViewModel @Inject constructor(
         val originalVoiceName = voiceManager.getCurrentVoiceName()
         val count = voices.size
         voiceCommandEngine.speakThenListen(
-            "Voice chooser. $count English U.S. voice${if (count == 1) "" else "s"} available. " +
+            "Voice chooser. $count English voice${if (count == 1) "" else "s"} available. " +
                 "Each will introduce itself. Say 'keep it' when you hear one you like, " +
                 "or 'cancel' to exit. Otherwise I will move on automatically."
         ) { _ -> browseVoice(voices, 0, originalVoiceName, emails) }
@@ -1997,7 +2002,7 @@ class InboxViewModel @Inject constructor(
         }
         val voice  = voices[index]
         val total  = voices.size
-        val sample = "Hello. This is English U.S.A. voice ${index + 1} of $total. What do you think?"
+        val sample = "Hello. I am voice ${index + 1} of $total. What do you think?"
         voiceCommandEngine.speakWithVoiceAndListen(sample, voice) { cmd ->
             val raw = ((cmd as? VoiceCommand.FreeText)?.text ?: "").lowercase()
             when {
@@ -2157,7 +2162,7 @@ class InboxViewModel @Inject constructor(
                 "Say 'reed attachment one' to have the first attachment read aloud. " +
                 "P D F, Word, and plain text files are supported. Say 'next' to continue.",
             "Section 9 of 9: Voice and speed settings. " +
-                "Say 'voice settings' to browse English U.S. voices. " +
+                "Say 'voice settings' to browse available English voices. " +
                 "Say 'read slower' or 'slow down' to decrease email reading speed by 10 percent. " +
                 "Say 'read faster' or 'speed up' to increase it. " +
                 "After adjusting, say 'repeat' to hear the current email at the new speed. " +
