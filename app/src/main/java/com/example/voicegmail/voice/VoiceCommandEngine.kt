@@ -85,6 +85,13 @@ sealed class VoiceCommand {
 
     object SignIn         : VoiceCommand()
 
+    /** User wants to configure the app launcher (sighted-helper panel). */
+    object AppLauncherSetup : VoiceCommand()
+    /** User said "launch [X]" where X is a voice command assigned to an app. */
+    data class LaunchApp(val query: String) : VoiceCommand()
+    /** User says "kill app" or "close" — terminates the last launched app. */
+    object KillApp : VoiceCommand()
+
     data class FreeText(val text: String) : VoiceCommand()
 }
 
@@ -350,6 +357,26 @@ class VoiceCommandEngine @Inject constructor(
                 lower == "google" || lower == "search online" ||
                 lower.contains("search online") || lower.contains("look up online") ->
                 VoiceCommand.Browser
+
+            // ── App launcher ──────────────────────────────────────────────────
+
+            lower.contains("app launcher") || lower.contains("launcher setup") ||
+                lower.contains("manage apps") || lower.contains("configure launcher") ||
+                lower.contains("app manager") || lower.contains("launch setup") ->
+                VoiceCommand.AppLauncherSetup
+
+            lower == "kill app" || lower == "kill" ||
+                lower == "close app" || lower == "close the app" ||
+                lower == "stop app" || lower == "stop the app" ||
+                lower == "quit app" || lower == "quit" ||
+                lower.contains("close that") || lower.contains("kill that") ->
+                VoiceCommand.KillApp
+
+            lower.startsWith("launch ") || lower.startsWith("start ") -> {
+                val query = lower.substringAfter(" ").trim()
+                if (query.isNotBlank()) VoiceCommand.LaunchApp(query)
+                else VoiceCommand.FreeText(text)
+            }
 
             // ── Pause / resume reading ────────────────────────────────────────
 

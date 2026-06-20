@@ -1,5 +1,6 @@
 package com.example.voicegmail.ui.viewmodel
 
+import android.app.ActivityManager
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
@@ -63,7 +64,8 @@ class InboxViewModel @Inject constructor(
     private val browserVoiceFlow: BrowserVoiceFlow,
     private val wakePreferences: com.example.voicegmail.voice.WakePreferences,
     private val mediaSessionController: com.example.voicegmail.media.MediaSessionController,
-    private val ttsSettings: com.example.voicegmail.voice.TtsSettingsRepository
+    private val ttsSettings: com.example.voicegmail.voice.TtsSettingsRepository,
+    private val appLauncherPrefs: com.example.voicegmail.voice.AppLauncherPreferences
 ) : ViewModel() {
 
     private var isFirstLoad = true
@@ -129,6 +131,10 @@ class InboxViewModel @Inject constructor(
 
     private val _batteryThreshold = MutableStateFlow(30)
     val batteryThreshold: StateFlow<Int> = _batteryThreshold
+
+    private var lastLaunchedPackage: String? = null
+    private val _launcherPanelVisible = MutableStateFlow(false)
+    val launcherPanelVisible: StateFlow<Boolean> = _launcherPanelVisible
 
     // ------------------------------------------------------------------
     // Pause/resume reading state
@@ -242,6 +248,27 @@ class InboxViewModel @Inject constructor(
     }
 
     fun closeSettingsPanel() { _settingsPanelVisible.value = false }
+
+    // ── App launcher panel ───────────────────────────────────────────────────
+
+    fun openLauncherPanel() {
+        _launcherApps.value = appLauncherPrefs.getApps()
+        _launcherPanelVisible.value = true
+    }
+    fun closeLauncherPanel() { _launcherPanelVisible.value = false }
+
+    private val _launcherApps = MutableStateFlow<List<com.example.voicegmail.voice.LauncherApp>>(emptyList())
+    val launcherApps: StateFlow<List<com.example.voicegmail.voice.LauncherApp>> = _launcherApps
+
+    fun saveLauncherApp(app: com.example.voicegmail.voice.LauncherApp) {
+        appLauncherPrefs.saveApp(app)
+        _launcherApps.value = appLauncherPrefs.getApps()
+    }
+
+    fun removeLauncherApp(packageName: String) {
+        appLauncherPrefs.removeApp(packageName)
+        _launcherApps.value = appLauncherPrefs.getApps()
+    }
 
     // ── Bible options sub-page ──────────────────────────────────────────────
 
@@ -966,6 +993,61 @@ class InboxViewModel @Inject constructor(
 
             is VoiceCommand.VoiceSettings -> handleVoiceSettings(emails)
             is VoiceCommand.Instructions  -> handleInstructions(emails)
+
+            is VoiceCommand.AppLauncherSetup -> {
+                _launcherApps.value = appLauncherPrefs.getApps()
+                _launcherPanelVisible.value = true
+                voiceManager.speak("App launcher panel opened.")
+            }
+
+            is VoiceCommand.LaunchApp -> {
+                val app = appLauncherPrefs.findByVoiceCommand(command.query)
+                if (app != null) {
+                    try {
+                        val intent = context.packageManager.getLaunchIntentForPackage(app.packageName)
+                        if (intent != null) {
+                            lastLaunchedPackage = app.packageName
+                            context.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                        } else {
+                            voiceCommandEngine.speakThenListen(
+                                "Could not launch ${app.displayName}. The app may not be installed."
+                            ) { cmd -> handleCommand(cmd, emails) }
+                        }
+                    } catch (e: Exception) {
+                        DebugLogger.log("InboxViewModel", "Launch failed: ${e.message}")
+                        voiceCommandEngine.speakThenListen(
+                            "Could not launch ${app.displayName}."
+                        ) { cmd -> handleCommand(cmd, emails) }
+                    }
+                } else {
+                    voiceCommandEngine.speakThenListen(
+                        "No app is configured with the voice command '${command.query}'. " +
+                            "Say 'app launcher set up' to add apps."
+                    ) { cmd -> handleCommand(cmd, emails) }
+                }
+            }
+
+            is VoiceCommand.KillApp -> {
+                val pkg = lastLaunchedPackage
+                if (pkg != null) {
+                    try {
+                        val am = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
+                        am.killBackgroundProcesses(pkg)
+                    } catch (_: Exception) { /* best effort */ }
+                    lastLaunchedPackage = null
+                    // Bring self to foreground
+                    val bringBack = context.packageManager.getLaunchIntentForPackage(context.packageName)
+                    if (bringBack != null) {
+                        bringBack.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                        context.startActivity(bringBack)
+                    }
+                    voiceManager.speak("App closed.")
+                } else {
+                    voiceCommandEngine.speakThenListen(
+                        "No app has been launched from VoiceGmail yet."
+                    ) { cmd -> handleCommand(cmd, emails) }
+                }
+            }
 
             is VoiceCommand.FreeText -> {
                 val text = command.text.trim()

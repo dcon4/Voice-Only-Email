@@ -199,6 +199,12 @@ fun InboxScreen(
             VoiceSettingsPanel(viewModel = viewModel)
         }
 
+        // App launcher panel — shown on top of inbox content
+        val launcherPanelVisible by viewModel.launcherPanelVisible.collectAsState()
+        if (launcherPanelVisible) {
+            AppLauncherPanel(viewModel = viewModel)
+        }
+
         // Bible options sub-page — shown on top of inbox content
         val bibleSettingsVisible by viewModel.bibleSettingsVisible.collectAsState()
         if (bibleSettingsVisible) {
