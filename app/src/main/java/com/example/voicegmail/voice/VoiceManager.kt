@@ -5,7 +5,6 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.media.AudioManager
-import android.media.MediaRecorder
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -546,8 +545,9 @@ class VoiceManager @Inject constructor(
             putExtra(RecognizerIntent.EXTRA_LANGUAGE, "en-US")
             putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 5)
             putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
-            putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE,
-                MediaRecorder.AudioSource.VOICE_RECOGNITION)
+            // Note: EXTRA_AUDIO_SOURCE intentionally omitted — on Samsung A16
+            // it causes intermittent ERROR_LANGUAGE_NOT_SUPPORTED (code 11).
+            // MODE_IN_COMMUNICATION + audio focus are the correct fix.
             putExtra("android.speech.extra.SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS", 5000L)
             putExtra("android.speech.extra.SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS", 2500L)
             putExtra("android.speech.extra.SPEECH_INPUT_MINIMUM_LENGTH_MILLIS", 500L)
@@ -805,6 +805,13 @@ class VoiceManager @Inject constructor(
             if (!ttsReady) { onDone(); return@post }
             DebugLogger.verbose(tag, "speak: ${text.take(80)}")
             tts?.setSpeechRate(1.0f)
+            // Clear any previous listener and stop the previous utterance
+            // before setting up the new listener.  On some Samsung Google TTS
+            // versions, QUEUE_FLUSH alone does not prevent overlap, and calling
+            // stop() with the new listener attached can trigger a spurious
+            // onError/onDone on the new listener.
+            tts?.setOnUtteranceProgressListener(null)
+            tts?.stop()
             tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
                 override fun onStart(uid: String?) {}
                 override fun onDone(uid: String?) {
