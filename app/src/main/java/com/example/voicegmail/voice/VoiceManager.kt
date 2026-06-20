@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.media.AudioManager
+import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -89,17 +90,15 @@ class VoiceManager @Inject constructor(
         val listener = TextToSpeech.OnInitListener { status ->
             if (status == TextToSpeech.SUCCESS) {
                 ttsReady = true
-                applyVoicePreference()
-                loadBibleVoiceFromSettings()
 
-                // Only set language explicitly if the engine exposes voices.
-                // Engines like IVONA manage their own voice/language internally
-                // and setting language can interfere with their default behavior.
+                // IMPORTANT ORDER: setLanguage first, then applyVoicePreference.
+                // setLanguage(Locale.US) internally calls setVoice() with the US
+                // default voice, which would overwrite any saved UK voice if called
+                // after applyVoicePreference(). We set language first so the engine
+                // has a fallback, then restore the user's saved voice preference.
                 val availableVoices = tts?.voices
                 if (!availableVoices.isNullOrEmpty()) {
                     tts?.language = Locale.US
-                    // If no voice was applied (no saved preference) and TTS has no
-                    // default voice selected, pick the first available English voice.
                     if (tts?.voice == null) {
                         val fallbackVoice = availableVoices
                             .filter { it.locale.language == "en" && !it.isNetworkConnectionRequired }
@@ -113,9 +112,18 @@ class VoiceManager @Inject constructor(
                     DebugLogger.log(tag, "Engine reports 0 voices — using engine's internal default")
                 }
 
+                // Now apply the saved voice preference (overrides whatever was set above).
+                applyVoicePreference()
+                loadBibleVoiceFromSettings()
+
                 val engineName = tts?.defaultEngine
                 val voiceCount = availableVoices?.size ?: 0
                 val allEngines = tts?.engines?.map { "${it.label} (${it.name})" } ?: emptyList()
+                // Log Samsung TTS status for diagnostics
+                if (Build.MANUFACTURER.equals("samsung", ignoreCase = true) &&
+                    allEngines.none { it.contains("samsung", ignoreCase = true) }) {
+                    DebugLogger.log(tag, "Samsung device detected but Samsung TTS is not available to third-party apps on One UI 7+")
+                }
                 DebugLogger.log(tag, "TTS ready — defaultEngine=$engineName, activeVoice=${tts?.voice?.name}, voices=$voiceCount, allEngines=$allEngines")
             } else {
                 DebugLogger.log(tag, "TTS initialization FAILED: status=$status")
