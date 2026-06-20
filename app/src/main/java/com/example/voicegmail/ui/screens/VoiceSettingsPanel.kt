@@ -393,6 +393,20 @@ fun VoiceSettingsPanel(viewModel: InboxViewModel) {
             ) {
                 Text("Bible Options")
             }
+
+            Spacer(Modifier.height(8.dp))
+
+            OutlinedButton(
+                onClick  = {
+                    viewModel.closeSettingsPanel()
+                    viewModel.openLauncherPanel()
+                },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .semantics { contentDescription = "Open app launcher" }
+            ) {
+                Text("App Launcher")
+            }
         }
     }
 }

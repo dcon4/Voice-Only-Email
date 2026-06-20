@@ -39,6 +39,8 @@ class VoiceManager @Inject constructor(
 ) {
     private val tag = "VoiceManager"
     private val utteranceId = "vm_utterance"
+    private var ttsSequence = 0L
+    private var lastCompletedTtsId = 0L
     private val mainHandler = Handler(Looper.getMainLooper())
 
     private var tts: TextToSpeech? = null
@@ -440,14 +442,6 @@ class VoiceManager @Inject constructor(
 
         var speechBegan = false
 
-        // Request audio focus so the recognizer gets mic input (Samsung One UI)
-        val audioFocusResult = audioManager.requestAudioFocus(
-            null, AudioManager.STREAM_VOICE_CALL, AudioManager.AUDIOFOCUS_GAIN_TRANSIENT
-        )
-        if (audioFocusResult != AudioManager.AUDIOFOCUS_REQUEST_GRANTED) {
-            DebugLogger.log(tag, "Audio focus request denied: $audioFocusResult")
-        }
-
         speechRecognizer?.destroy()
         speechRecognizer = SpeechRecognizer.createSpeechRecognizer(context).apply {
             setRecognitionListener(object : RecognitionListener {
@@ -568,7 +562,6 @@ class VoiceManager @Inject constructor(
         if (!BuildConfig.BLUETOOTH_AUDIO) {
             audioManager.mode = AudioManager.MODE_NORMAL
         }
-        audioManager.abandonAudioFocus(null)
     }
 
     private fun retryOrFail(
@@ -813,26 +806,33 @@ class VoiceManager @Inject constructor(
             if (!ttsReady) { onDone(); return@post }
             DebugLogger.verbose(tag, "speak: ${text.take(80)}")
             tts?.setSpeechRate(1.0f)
-            // Clear any previous listener and stop the previous utterance
-            // before setting up the new listener.  On some Samsung Google TTS
-            // versions, QUEUE_FLUSH alone does not prevent overlap, and calling
-            // stop() with the new listener attached can trigger a spurious
-            // onError/onDone on the new listener.
+            val myId = ++ttsSequence
+            val myIdStr = myId.toString()
             tts?.setOnUtteranceProgressListener(null)
             tts?.stop()
             tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
                 override fun onStart(uid: String?) {}
                 override fun onDone(uid: String?) {
-                    tts?.setOnUtteranceProgressListener(null)
-                    mainHandler.post(onDone)
+                    if (uid != myIdStr) return
+                    mainHandler.post {
+                        if (myId <= lastCompletedTtsId) return@post
+                        lastCompletedTtsId = myId
+                        tts?.setOnUtteranceProgressListener(null)
+                        onDone()
+                    }
                 }
                 @Deprecated("Deprecated in API 21")
                 override fun onError(uid: String?) {
-                    tts?.setOnUtteranceProgressListener(null)
-                    mainHandler.post(onDone)
+                    if (uid != myIdStr) return
+                    mainHandler.post {
+                        if (myId <= lastCompletedTtsId) return@post
+                        lastCompletedTtsId = myId
+                        tts?.setOnUtteranceProgressListener(null)
+                        onDone()
+                    }
                 }
             })
-            tts?.speak(phoneticize(text), TextToSpeech.QUEUE_FLUSH, null, utteranceId)
+            tts?.speak(phoneticize(text), TextToSpeech.QUEUE_FLUSH, null, myIdStr)
         }
     }
 
