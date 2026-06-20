@@ -38,6 +38,7 @@ class BibleVoiceFlow @Inject constructor(
 
     // ── Chunked reading state ──────────────────────────────────────────────
     private var readingGen: Int = 0
+    private var chunkSpeakGen: Int = 0
     private var currentChunks: List<String> = emptyList()
     private var currentChunkIndex: Int = 0
     private var isReadingActive: Boolean = false
@@ -350,9 +351,11 @@ class BibleVoiceFlow @Inject constructor(
             return
         }
 
+        chunkSpeakGen++
+        val myChunkGen = chunkSpeakGen
         val chunk = currentChunks[currentChunkIndex]
         voiceManager.speak(chunk) {
-            if (gen != readingGen) return@speak
+            if (gen != readingGen || myChunkGen != chunkSpeakGen) return@speak
             currentChunkIndex++
             readNextChunk(scope, onExit, gen)
         }
