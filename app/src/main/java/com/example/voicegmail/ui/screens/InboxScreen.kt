@@ -1,5 +1,6 @@
 package com.example.voicegmail.ui.screens
 
+import android.content.Intent
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -23,6 +24,7 @@ import com.example.voicegmail.gmail.EmailItem
 import com.example.voicegmail.ui.viewmodel.InboxNavEvent
 import com.example.voicegmail.ui.viewmodel.InboxUiState
 import com.example.voicegmail.ui.viewmodel.InboxViewModel
+import com.example.voicegmail.voice.LauncherApp
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -212,6 +214,129 @@ fun InboxScreen(
         val bibleSettingsVisible by viewModel.bibleSettingsVisible.collectAsState()
         if (bibleSettingsVisible) {
             BibleSettingsScreen(viewModel = viewModel)
+        }
+
+        // Direct app picker dialog (from VoiceSettingsPanel "App Launcher" button)
+        val showAppPicker by viewModel.showAppPicker.collectAsState()
+        var pendingApp by remember { mutableStateOf<LauncherApp?>(null) }
+        var voiceCmdInput by remember { mutableStateOf("") }
+
+        if (showAppPicker) {
+            val pm = context.packageManager
+            val allApps = remember {
+                val intent = Intent(Intent.ACTION_MAIN).apply { addCategory(Intent.CATEGORY_LAUNCHER) }
+                pm.queryIntentActivities(intent, 0)
+                    .filter { it.activityInfo.packageName != context.packageName }
+                    .distinctBy { it.activityInfo.packageName }
+                    .sortedBy { it.loadLabel(pm).toString() }
+            }
+
+            var searchQuery by remember { mutableStateOf("") }
+
+            AlertDialog(
+                onDismissRequest = { viewModel.closeAppPicker() },
+                title = { Text("Select an App") },
+                text = {
+                    Column {
+                        OutlinedTextField(
+                            value = searchQuery,
+                            onValueChange = { searchQuery = it },
+                            label = { Text("Search apps") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        val launcherApps = viewModel.launcherApps.collectAsState().value
+                        val filtered = allApps.filter {
+                            searchQuery.isBlank() ||
+                                it.loadLabel(pm).toString()
+                                    .contains(searchQuery, ignoreCase = true) ||
+                                it.activityInfo.packageName.contains(searchQuery, ignoreCase = true)
+                        }
+                        LazyColumn(modifier = Modifier.heightIn(max = 400.dp)) {
+                            items(filtered) { resolveInfo ->
+                                val label = resolveInfo.loadLabel(pm).toString()
+                                val pkg = resolveInfo.activityInfo.packageName
+                                val alreadyAdded = launcherApps.any { it.packageName == pkg }
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable(enabled = !alreadyAdded) {
+                                            pendingApp = LauncherApp(
+                                                packageName = pkg,
+                                                displayName = label,
+                                                voiceCommand = ""
+                                            )
+                                            voiceCmdInput = ""
+                                            viewModel.closeAppPicker()
+                                        }
+                                        .padding(12.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = label,
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                    if (alreadyAdded) {
+                                        Text(
+                                            text = "Already added",
+                                            color = MaterialTheme.colorScheme.error,
+                                            style = MaterialTheme.typography.bodySmall
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+                confirmButton = {},
+                dismissButton = {
+                    TextButton(onClick = { viewModel.closeAppPicker() }) {
+                        Text("Cancel")
+                    }
+                }
+            )
+        }
+
+        // Voice command input dialog (after picking an app)
+        pendingApp?.let { app ->
+            AlertDialog(
+                onDismissRequest = { pendingApp = null },
+                title = { Text("Voice Command for ${app.displayName}") },
+                text = {
+                    Column {
+                        Text(
+                            "What voice command should launch this app? " +
+                                "For example, 'maps' to say 'launch maps'.",
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        OutlinedTextField(
+                            value = voiceCmdInput,
+                            onValueChange = { voiceCmdInput = it },
+                            label = { Text("Voice command") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                },
+                confirmButton = {
+                    TextButton(
+                        onClick = {
+                            if (voiceCmdInput.isNotBlank()) {
+                                viewModel.saveAppFromPicker(
+                                    app.copy(voiceCommand = voiceCmdInput.trim().lowercase())
+                                )
+                                pendingApp = null
+                            }
+                        },
+                        enabled = voiceCmdInput.isNotBlank()
+                    ) { Text("Save") }
+                },
+                dismissButton = {
+                    TextButton(onClick = { pendingApp = null }) { Text("Cancel") }
+                }
+            )
         }
 
         // Debug log share/email dialog

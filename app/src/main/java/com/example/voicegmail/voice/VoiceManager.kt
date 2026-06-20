@@ -808,8 +808,6 @@ class VoiceManager @Inject constructor(
             tts?.setSpeechRate(1.0f)
             val myId = ++ttsSequence
             val myIdStr = myId.toString()
-            tts?.setOnUtteranceProgressListener(null)
-            tts?.stop()
             tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
                 override fun onStart(uid: String?) {}
                 override fun onDone(uid: String?) {

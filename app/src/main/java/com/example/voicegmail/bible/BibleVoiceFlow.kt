@@ -353,9 +353,11 @@ class BibleVoiceFlow @Inject constructor(
 
         chunkSpeakGen++
         val myChunkGen = chunkSpeakGen
-        val chunk = currentChunks[currentChunkIndex]
+        val thisIndex = currentChunkIndex
+        val chunk = currentChunks[thisIndex]
         voiceManager.speak(chunk) {
             if (gen != readingGen || myChunkGen != chunkSpeakGen) return@speak
+            if (currentChunkIndex != thisIndex) return@speak
             currentChunkIndex++
             readNextChunk(scope, onExit, gen)
         }

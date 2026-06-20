@@ -270,6 +270,26 @@ class InboxViewModel @Inject constructor(
         _launcherApps.value = appLauncherPrefs.getApps()
     }
 
+    // ── Direct app picker (from VoiceSettingsPanel) ─────────────────────────
+
+    private val _showAppPicker = MutableStateFlow(false)
+    val showAppPicker: StateFlow<Boolean> = _showAppPicker
+
+    /** Opens the app picker dialog directly (bypasses the AppLauncherPanel overlay). */
+    fun openAppPicker() {
+        closeSettingsPanel()
+        _launcherApps.value = appLauncherPrefs.getApps()
+        _showAppPicker.value = true
+    }
+
+    fun closeAppPicker() { _showAppPicker.value = false }
+
+    fun saveAppFromPicker(app: com.example.voicegmail.voice.LauncherApp) {
+        appLauncherPrefs.saveApp(app)
+        _launcherApps.value = appLauncherPrefs.getApps()
+        _showAppPicker.value = false
+    }
+
     // ── Bible options sub-page ──────────────────────────────────────────────
 
     fun openBibleSettings() {

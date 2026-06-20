@@ -397,15 +397,12 @@ fun VoiceSettingsPanel(viewModel: InboxViewModel) {
             Spacer(Modifier.height(8.dp))
 
             OutlinedButton(
-                onClick  = {
-                    viewModel.closeSettingsPanel()
-                    viewModel.openLauncherPanel()
-                },
+                onClick  = { viewModel.openAppPicker() },
                 modifier = Modifier
                     .fillMaxWidth()
-                    .semantics { contentDescription = "Open app launcher" }
+                    .semantics { contentDescription = "Add an app to launch by voice command" }
             ) {
-                Text("App Launcher")
+                Text("Add App to Launcher")
             }
         }
     }
