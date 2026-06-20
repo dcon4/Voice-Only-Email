@@ -433,14 +433,18 @@ class VoiceManager @Inject constructor(
         acquireRecognitionWakeLock()
         muteRecognitionBeep()
 
+        var speechBegan = false
+
         // Samsung One UI requires MODE_IN_COMMUNICATION for the speech recogniser
         // to receive mic audio.  The bt flavour already sets this via
         // BluetoothAudioRouter when SCO connects, so we skip it there.
-        if (!BuildConfig.BLUETOOTH_AUDIO) {
-            audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
+        // Delay to onReadyForSpeech so the system beep plays before the mode
+        // change ducks volume.
+        val setCommsMode = {
+            if (!BuildConfig.BLUETOOTH_AUDIO) {
+                audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
+            }
         }
-
-        var speechBegan = false
 
         speechRecognizer?.destroy()
         speechRecognizer = SpeechRecognizer.createSpeechRecognizer(context).apply {
@@ -448,6 +452,7 @@ class VoiceManager @Inject constructor(
 
                 override fun onReadyForSpeech(params: Bundle?) {
                     _isListening.value = true
+                    setCommsMode()
                     unmuteRecognitionBeep()
                 }
 
@@ -808,12 +813,15 @@ class VoiceManager @Inject constructor(
             tts?.setSpeechRate(1.0f)
             val myId = ++ttsSequence
             val myIdStr = myId.toString()
+            tts?.setOnUtteranceProgressListener(null)
+            tts?.stop()
             tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
                 override fun onStart(uid: String?) {}
                 override fun onDone(uid: String?) {
                     if (uid != myIdStr) return
                     mainHandler.post {
                         if (myId <= lastCompletedTtsId) return@post
+                        if (myId < ttsSequence) return@post
                         lastCompletedTtsId = myId
                         tts?.setOnUtteranceProgressListener(null)
                         onDone()
@@ -824,6 +832,7 @@ class VoiceManager @Inject constructor(
                     if (uid != myIdStr) return
                     mainHandler.post {
                         if (myId <= lastCompletedTtsId) return@post
+                        if (myId < ttsSequence) return@post
                         lastCompletedTtsId = myId
                         tts?.setOnUtteranceProgressListener(null)
                         onDone()

@@ -365,14 +365,8 @@ class VoiceCommandEngine @Inject constructor(
                 lower.contains("app manager") || lower.contains("launch setup") ->
                 VoiceCommand.AppLauncherSetup
 
-            lower == "kill app" || lower == "kill" ||
-                lower == "close app" || lower == "close the app" ||
-                lower == "stop app" || lower == "stop the app" ||
-                lower == "quit app" || lower == "quit" ||
-                lower.contains("close that") || lower.contains("kill that") ->
-                VoiceCommand.KillApp
-
-            lower.startsWith("launch ") || lower.startsWith("start ") -> {
+            lower.startsWith("launch ") || lower.startsWith("start ") ||
+                lower.startsWith("open ") -> {
                 val query = lower.substringAfter(" ").trim()
                 if (query.isNotBlank()) VoiceCommand.LaunchApp(query)
                 else VoiceCommand.FreeText(text)
@@ -388,6 +382,16 @@ class VoiceCommandEngine @Inject constructor(
                 lower.contains("resume reading") || lower == "play" ||
                 lower.contains("pick up where") || lower.contains("keep reading") ->
                 VoiceCommand.ContinueReading
+
+            // ── Kill last launched app ───────────────────────────────────────
+
+            lower == "kill app" || lower == "kill" || lower == "stop" ||
+                lower == "close app" || lower == "close the app" ||
+                lower == "stop app" || lower == "stop the app" ||
+                lower == "quit app" || lower == "quit" ||
+                lower.startsWith("kill ") || lower.startsWith("stop ") ||
+                lower.contains("close that") || lower.contains("kill that") ->
+                VoiceCommand.KillApp
 
             // ── Compose body editing ─────────────────────────────────────────
 
