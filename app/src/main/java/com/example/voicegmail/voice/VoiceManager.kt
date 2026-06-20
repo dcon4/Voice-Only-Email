@@ -431,8 +431,6 @@ class VoiceManager @Inject constructor(
         noSpeechMaxRetries: Int = NO_SPEECH_MAX_RETRIES
     ) {
         acquireRecognitionWakeLock()
-        muteRecognitionBeep()
-
         // Samsung One UI requires MODE_IN_COMMUNICATION for the speech recogniser
         // to receive mic audio.  The bt flavour already sets this via
         // BluetoothAudioRouter when SCO connects, so we skip it there.
@@ -448,7 +446,6 @@ class VoiceManager @Inject constructor(
 
                 override fun onReadyForSpeech(params: Bundle?) {
                     _isListening.value = true
-                    unmuteRecognitionBeep()
                 }
 
                 override fun onBeginningOfSpeech() {
@@ -508,7 +505,6 @@ class VoiceManager @Inject constructor(
                 override fun onError(error: Int) {
                     _isListening.value = false
                     releaseRecognitionWakeLock()
-                    unmuteRecognitionBeep()
                     DebugLogger.log(tag, "Recognition error $error speechBegan=$speechBegan retry=$retryCount noSpeech=$noSpeechRetries max=$noSpeechMaxRetries")
 
                     when {
@@ -588,23 +584,6 @@ class VoiceManager @Inject constructor(
     }
 
     // ------------------------------------------------------------------
-    // Beep suppression
-    // ------------------------------------------------------------------
-
-    private fun muteRecognitionBeep() {
-        runCatching {
-            audioManager.adjustStreamVolume(AudioManager.STREAM_MUSIC, AudioManager.ADJUST_MUTE, 0)
-            mainHandler.postDelayed(::unmuteRecognitionBeep, 1000)
-        }
-    }
-
-    private fun unmuteRecognitionBeep() {
-        runCatching {
-            audioManager.adjustStreamVolume(AudioManager.STREAM_MUSIC, AudioManager.ADJUST_UNMUTE, 0)
-        }
-    }
-
-    // ------------------------------------------------------------------
     // Wake lock
     // ------------------------------------------------------------------
 
@@ -670,7 +649,6 @@ class VoiceManager @Inject constructor(
             speechRecognizer?.destroy()
             speechRecognizer = null
             _isListening.value = false
-            unmuteRecognitionBeep()
         }
     }
 
@@ -961,7 +939,6 @@ class VoiceManager @Inject constructor(
             tts?.setSpeechRate(1.0f)
             speechRecognizer?.destroy(); speechRecognizer = null
             _isListening.value = false
-            unmuteRecognitionBeep()
             restoreAudioMode()
             bluetoothRouter.stopSco()
         }

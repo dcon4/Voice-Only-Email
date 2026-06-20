@@ -100,7 +100,8 @@ fun InboxScreen(
             )
         },
         floatingActionButton = {
-            if (isSignedIn) {
+            val launcherOpen by viewModel.launcherPanelVisible.collectAsState()
+            if (isSignedIn && !launcherOpen) {
                 FloatingActionButton(
                     onClick = { onCompose(null, false) },
                     modifier = Modifier.semantics {
