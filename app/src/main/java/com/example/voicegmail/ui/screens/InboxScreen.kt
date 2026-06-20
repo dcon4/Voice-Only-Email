@@ -98,18 +98,6 @@ fun InboxScreen(
                     }
                 }
             )
-        },
-        floatingActionButton = {
-            if (isSignedIn) {
-                FloatingActionButton(
-                    onClick = { onCompose(null, false) },
-                    modifier = Modifier.semantics {
-                        contentDescription = "Compose new email"
-                    }
-                ) {
-                    Icon(Icons.Default.Add, contentDescription = null)
-                }
-            }
         }
     ) { padding ->
         Box(
@@ -190,6 +178,21 @@ fun InboxScreen(
                             }
                         }
                     }
+                }
+            }
+
+            // Compose FAB inside the content Box (below panel overlays)
+            // so the AppLauncherPanel renders on top of it.
+            val launcherOpen by viewModel.launcherPanelVisible.collectAsState()
+            if (isSignedIn && !launcherOpen) {
+                FloatingActionButton(
+                    onClick = { onCompose(null, false) },
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(16.dp)
+                        .semantics { contentDescription = "Compose new email" }
+                ) {
+                    Icon(Icons.Default.Add, contentDescription = null)
                 }
             }
         }
