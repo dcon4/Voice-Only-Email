@@ -813,8 +813,10 @@ class VoiceManager @Inject constructor(
             tts?.setSpeechRate(1.0f)
             val myId = ++ttsSequence
             val myIdStr = myId.toString()
-            tts?.setOnUtteranceProgressListener(null)
-            tts?.stop()
+            // Set the new listener BEFORE stop() so Samsung's delayed onDone
+            // callback (from the interrupted utterance) is received by this
+            // listener — the uid check then discards it because the old
+            // utterance ID won't match myIdStr.
             tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
                 override fun onStart(uid: String?) {}
                 override fun onDone(uid: String?) {
@@ -839,6 +841,10 @@ class VoiceManager @Inject constructor(
                     }
                 }
             })
+            // Stop any in-flight utterance.  The onDone from this stop will
+            // be received by the listener we just set — uid won't match
+            // myIdStr so it's discarded.
+            tts?.stop()
             tts?.speak(phoneticize(text), TextToSpeech.QUEUE_FLUSH, null, myIdStr)
         }
     }

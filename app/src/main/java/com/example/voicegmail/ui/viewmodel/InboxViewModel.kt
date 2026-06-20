@@ -1052,7 +1052,18 @@ class InboxViewModel @Inject constructor(
                 if (pkg != null) {
                     try {
                         val am = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
-                        am.killBackgroundProcesses(pkg)
+                        // Try forceStopPackage via reflection first (works on
+                        // some devices without system permission).  Fall back to
+                        // killBackgroundProcesses which only stops background
+                        // processes.
+                        try {
+                            val forceStop = ActivityManager::class.java.getMethod(
+                                "forceStopPackage", String::class.java
+                            )
+                            forceStop.invoke(am, pkg)
+                        } catch (_: Exception) {
+                            am.killBackgroundProcesses(pkg)
+                        }
                     } catch (_: Exception) { /* best effort */ }
                     lastLaunchedPackage = null
                     // Bring self to foreground

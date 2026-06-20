@@ -1,6 +1,7 @@
 package com.example.voicegmail.ui.screens
 
 import android.content.Intent
+import android.content.pm.PackageManager
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -225,7 +226,7 @@ fun InboxScreen(
             val pm = context.packageManager
             val allApps = remember {
                 val intent = Intent(Intent.ACTION_MAIN).apply { addCategory(Intent.CATEGORY_LAUNCHER) }
-                pm.queryIntentActivities(intent, 0)
+                pm.queryIntentActivities(intent, PackageManager.MATCH_ALL)
                     .filter { it.activityInfo.packageName != context.packageName }
                     .distinctBy { it.activityInfo.packageName }
                     .sortedBy { it.loadLabel(pm).toString() }

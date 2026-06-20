@@ -341,6 +341,8 @@ class BibleVoiceFlow @Inject constructor(
         }
     }
 
+    private var processedChunkGen = -1
+
     private fun readNextChunk(scope: CoroutineScope, onExit: (VoiceCommand) -> Unit, gen: Int) {
         if (gen != readingGen) {
             DebugLogger.verbose(TAG, "readNextChunk: stale gen=$gen != readingGen=$readingGen — discarding")
@@ -358,6 +360,8 @@ class BibleVoiceFlow @Inject constructor(
         voiceManager.speak(chunk) {
             if (gen != readingGen || myChunkGen != chunkSpeakGen) return@speak
             if (currentChunkIndex != thisIndex) return@speak
+            if (myChunkGen <= processedChunkGen) return@speak
+            processedChunkGen = myChunkGen
             currentChunkIndex++
             readNextChunk(scope, onExit, gen)
         }
