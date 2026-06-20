@@ -431,14 +431,16 @@ class VoiceManager @Inject constructor(
         noSpeechMaxRetries: Int = NO_SPEECH_MAX_RETRIES
     ) {
         acquireRecognitionWakeLock()
-        // Samsung One UI requires MODE_IN_COMMUNICATION for the speech recogniser
-        // to receive mic audio.  The bt flavour already sets this via
-        // BluetoothAudioRouter when SCO connects, so we skip it there.
-        if (!BuildConfig.BLUETOOTH_AUDIO) {
-            audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
-        }
-
         var speechBegan = false
+        // Delay MODE_IN_COMMUNICATION to after the recognizer beep has played.
+        // Setting it before startListening triggers Samsung's system volume
+        // panel and ducks the beep.  The mode is needed for the actual mic
+        // capture but not for the beep itself.
+        val setCommsMode = {
+            if (!BuildConfig.BLUETOOTH_AUDIO) {
+                audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
+            }
+        }
 
         speechRecognizer?.destroy()
         speechRecognizer = SpeechRecognizer.createSpeechRecognizer(context).apply {
@@ -446,6 +448,7 @@ class VoiceManager @Inject constructor(
 
                 override fun onReadyForSpeech(params: Bundle?) {
                     _isListening.value = true
+                    setCommsMode()
                 }
 
                 override fun onBeginningOfSpeech() {
@@ -786,8 +789,6 @@ class VoiceManager @Inject constructor(
             tts?.setSpeechRate(1.0f)
             val myId = ++ttsSequence
             val myIdStr = myId.toString()
-            tts?.setOnUtteranceProgressListener(null)
-            tts?.stop()
             tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
                 override fun onStart(uid: String?) {}
                 override fun onDone(uid: String?) {
