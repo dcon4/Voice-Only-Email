@@ -808,44 +808,31 @@ class VoiceManager @Inject constructor(
      */
     fun speak(text: String, onDone: () -> Unit) {
         mainHandler.post {
-            if (!ttsReady) { onDone(); return@post }
+            if (!ttsReady) { mainHandler.post(onDone); return@post }
             DebugLogger.verbose(tag, "speak: ${text.take(80)}")
             tts?.setSpeechRate(1.0f)
-            val myId = ++ttsSequence
-            val myIdStr = myId.toString()
-            // Set the new listener BEFORE stop() so Samsung's delayed onDone
-            // callback (from the interrupted utterance) is received by this
-            // listener — the uid check then discards it because the old
-            // utterance ID won't match myIdStr.
+            val uid = ++ttsSequence
+            val uidStr = uid.toString()
             tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
-                override fun onStart(uid: String?) {}
-                override fun onDone(uid: String?) {
-                    if (uid != myIdStr) return
+                override fun onStart(u: String?) {}
+                override fun onDone(u: String?) {
+                    if (u != uidStr) return
                     mainHandler.post {
-                        if (myId <= lastCompletedTtsId) return@post
-                        if (myId < ttsSequence) return@post
-                        lastCompletedTtsId = myId
+                        tts?.setSpeechRate(1.0f)
                         tts?.setOnUtteranceProgressListener(null)
                         onDone()
                     }
                 }
                 @Deprecated("Deprecated in API 21")
-                override fun onError(uid: String?) {
-                    if (uid != myIdStr) return
+                override fun onError(u: String?) {
                     mainHandler.post {
-                        if (myId <= lastCompletedTtsId) return@post
-                        if (myId < ttsSequence) return@post
-                        lastCompletedTtsId = myId
+                        tts?.setSpeechRate(1.0f)
                         tts?.setOnUtteranceProgressListener(null)
                         onDone()
                     }
                 }
             })
-            // Stop any in-flight utterance.  The onDone from this stop will
-            // be received by the listener we just set — uid won't match
-            // myIdStr so it's discarded.
-            tts?.stop()
-            tts?.speak(phoneticize(text), TextToSpeech.QUEUE_FLUSH, null, myIdStr)
+            tts?.speak(phoneticize(text), TextToSpeech.QUEUE_FLUSH, null, uidStr)
         }
     }
 

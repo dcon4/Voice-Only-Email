@@ -1050,29 +1050,29 @@ class InboxViewModel @Inject constructor(
             is VoiceCommand.KillApp -> {
                 val pkg = lastLaunchedPackage
                 if (pkg != null) {
+                    lastLaunchedPackage = null
+                    // Send the app to background by going home, then try to
+                    // kill its background processes.
+                    try {
+                        val home = Intent(Intent.ACTION_MAIN).apply {
+                            addCategory(Intent.CATEGORY_HOME)
+                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        }
+                        context.startActivity(home)
+                    } catch (_: Exception) {}
                     try {
                         val am = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
-                        // Try forceStopPackage via reflection first (works on
-                        // some devices without system permission).  Fall back to
-                        // killBackgroundProcesses which only stops background
-                        // processes.
-                        try {
-                            val forceStop = ActivityManager::class.java.getMethod(
-                                "forceStopPackage", String::class.java
-                            )
-                            forceStop.invoke(am, pkg)
-                        } catch (_: Exception) {
-                            am.killBackgroundProcesses(pkg)
-                        }
+                        am.killBackgroundProcesses(pkg)
                     } catch (_: Exception) { /* best effort */ }
-                    lastLaunchedPackage = null
                     // Bring self to foreground
                     val bringBack = context.packageManager.getLaunchIntentForPackage(context.packageName)
                     if (bringBack != null) {
                         bringBack.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
                         context.startActivity(bringBack)
                     }
-                    voiceManager.speak("App closed.")
+                    voiceManager.speak(
+                        "Returning to VoiceGmail. Say a command."
+                    )
                 } else {
                     voiceCommandEngine.speakThenListen(
                         "No app has been launched from VoiceGmail yet."
