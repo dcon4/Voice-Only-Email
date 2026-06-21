@@ -310,12 +310,14 @@ class VoiceManager @Inject constructor(
                 override fun onDone(uid: String?) {
                     tts?.setSpeechRate(1.0f)
                     tts?.setOnUtteranceProgressListener(null)
+                    restoreAudioMode()
                     mainHandler.postDelayed({ startListeningOnMainThread(onResults) }, TTS_TO_MIC_GAP_MS)
                 }
                 @Deprecated("Deprecated in API 21")
                 override fun onError(uid: String?) {
                     tts?.setSpeechRate(1.0f)
                     tts?.setOnUtteranceProgressListener(null)
+                    restoreAudioMode()
                     mainHandler.postDelayed({ startListeningOnMainThread(onResults) }, TTS_TO_MIC_GAP_MS)
                 }
             })
@@ -340,6 +342,7 @@ class VoiceManager @Inject constructor(
                 override fun onDone(uid: String?) {
                     tts?.setSpeechRate(1.0f)
                     tts?.setOnUtteranceProgressListener(null)
+                    restoreAudioMode()
                     mainHandler.postDelayed({
                         startListeningOnMainThread(onResults, 0, 0, 0)
                     }, TTS_TO_MIC_GAP_MS)
@@ -348,6 +351,7 @@ class VoiceManager @Inject constructor(
                 override fun onError(uid: String?) {
                     tts?.setSpeechRate(1.0f)
                     tts?.setOnUtteranceProgressListener(null)
+                    restoreAudioMode()
                     mainHandler.postDelayed({
                         startListeningOnMainThread(onResults, 0, 0, 0)
                     }, TTS_TO_MIC_GAP_MS)
@@ -483,8 +487,7 @@ class VoiceManager @Inject constructor(
                             _recognizedText.value = candidates[0]
                             DebugLogger.verbose(tag, "Recognition results (${candidates.size}): ${candidates.take(3)}")
                             Log.d(tag, "Results (${candidates.size}): ${candidates.take(3)}")
-                            restoreAudioMode()
-                            bluetoothRouter.stopSco() // Release SCO so TTS uses A2DP
+                            bluetoothRouter.stopSco()
                             onResults(candidates)
                         }
                         !speechBegan && noSpeechRetries < noSpeechMaxRetries -> {
@@ -496,7 +499,6 @@ class VoiceManager @Inject constructor(
                         !speechBegan -> {
                             if (noSpeechMaxRetries == 0) {
                                 Log.d(tag, "Brief listen: no speech — returning empty (continue reading)")
-                                restoreAudioMode()
                                 bluetoothRouter.stopSco()
                                 onResults(emptyList())
                             } else {
@@ -525,7 +527,6 @@ class VoiceManager @Inject constructor(
                         !speechBegan -> {
                             if (noSpeechMaxRetries == 0) {
                                 Log.d(tag, "Brief listen error: no speech — returning empty (continue reading)")
-                                restoreAudioMode()
                                 bluetoothRouter.stopSco()
                                 onResults(emptyList())
                             } else {
@@ -831,6 +832,7 @@ class VoiceManager @Inject constructor(
                         tts?.setSpeechRate(1.0f)
                         tts?.setOnUtteranceProgressListener(null)
                         onDone()
+                        restoreAudioMode()
                     }
                 }
                 @Deprecated("Deprecated in API 21")
@@ -842,6 +844,7 @@ class VoiceManager @Inject constructor(
                         tts?.setSpeechRate(1.0f)
                         tts?.setOnUtteranceProgressListener(null)
                         onDone()
+                        restoreAudioMode()
                     }
                 }
             })
@@ -865,17 +868,22 @@ class VoiceManager @Inject constructor(
                 override fun onStart(uid: String?) {}
                 override fun onDone(uid: String?) {
                     tts?.setOnUtteranceProgressListener(null)
-                    // Restore previous voice
                     savedTtsVoice?.let { tts?.voice = it }
                     savedTtsVoice = null
-                    mainHandler.post(onDone)
+                    mainHandler.post {
+                        onDone()
+                        restoreAudioMode()
+                    }
                 }
                 @Deprecated("Deprecated in API 21")
                 override fun onError(uid: String?) {
                     tts?.setOnUtteranceProgressListener(null)
                     savedTtsVoice?.let { tts?.voice = it }
                     savedTtsVoice = null
-                    mainHandler.post(onDone)
+                    mainHandler.post {
+                        onDone()
+                        restoreAudioMode()
+                    }
                 }
             })
             tts?.speak(phoneticize(text), TextToSpeech.QUEUE_FLUSH, null, utteranceId)
@@ -954,6 +962,7 @@ class VoiceManager @Inject constructor(
                         tts?.setSpeechRate(1.0f)
                         tts?.setOnUtteranceProgressListener(null)
                         onDone()
+                        restoreAudioMode()
                     }
                 }
                 @Deprecated("Deprecated in API 21")
@@ -965,6 +974,7 @@ class VoiceManager @Inject constructor(
                         tts?.setSpeechRate(1.0f)
                         tts?.setOnUtteranceProgressListener(null)
                         onDone()
+                        restoreAudioMode()
                     }
                 }
             })

@@ -277,12 +277,23 @@ class MainActivity : ComponentActivity() {
      *
      * Registered in [onCreate] and unregistered in [onDestroy] so it stays
      * active even when the activity is paused with the screen off.
+     *
+     * Debounced at 1 second to filter the event storm that Samsung One UI
+     * fires when the device exits doze/idle mode (11+ rapid events).
      */
+    private var lastScreenOnMs: Long = 0L
+
     private fun registerScreenReceiver() {
         if (screenReceiver != null) return
         screenReceiver = object : BroadcastReceiver() {
             override fun onReceive(context: Context?, intent: Intent?) {
                 if (intent?.action == Intent.ACTION_SCREEN_ON) {
+                    val now = System.currentTimeMillis()
+                    if (now - lastScreenOnMs < 1_000L) {
+                        DebugLogger.log("MainActivity", "Screen ON — debounced (${now - lastScreenOnMs}ms since last)")
+                        return
+                    }
+                    lastScreenOnMs = now
                     DebugLogger.log("MainActivity", "Screen ON — pause TTS, post wake event")
                     voiceManager.stopAll()
                     wakeEventBus.postWake()
