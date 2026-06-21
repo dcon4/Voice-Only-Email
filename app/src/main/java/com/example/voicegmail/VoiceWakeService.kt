@@ -113,11 +113,13 @@ class VoiceWakeService : Service() {
     }
 
     private fun wakeApp() {
-        // Signal InboxViewModel so it re-arms the microphone immediately.
-        wakeEventBus.postWake()
         // Bring MainActivity to the front. Because MainActivity declares
         // setShowWhenLocked(true) + setTurnScreenOn(true), it appears over the
         // lock screen without requiring the user to unlock the device.
+        //
+        // The wake event (and TTS stop) is handled by MainActivity's own
+        // ACTION_SCREEN_ON receiver to avoid double-processing — both
+        // receivers fire for the same event.
         val intent = Intent(this, MainActivity::class.java).apply {
             action = ACTION_SCREEN_WAKE
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
