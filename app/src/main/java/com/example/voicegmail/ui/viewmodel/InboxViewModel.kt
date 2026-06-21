@@ -1582,7 +1582,7 @@ class InboxViewModel @Inject constructor(
             "Multiple contacts found. $listing. Say the number, or say 'spell' to type an email address."
         ) { c ->
             val text = rawText(c).lowercase()
-            val pickIdx = text.split(" ").firstOrNull()?.toIntOrNull()?.let { it - 1 }?.takeIf { it in choices.indices }
+            val pickIdx = parseOrdinal(text, choices.size)
             when {
                 text.contains("spell") -> composerSpellEmail(raw, cmd, emails)
                 pickIdx != null -> {
@@ -1601,13 +1601,31 @@ class InboxViewModel @Inject constructor(
             "I found $listing. Say the number, or say 'spell' to type it letter by letter."
         ) { c ->
             val text = rawText(c).lowercase()
-            val pickIdx = text.split(" ").firstOrNull()?.toIntOrNull()?.let { it - 1 }?.takeIf { it in choices.indices }
+            val pickIdx = parseOrdinal(text, choices.size)
             when {
                 text.contains("spell") -> composerSpellEmail(raw, cmd, emails)
                 pickIdx != null -> composeGoToSubject(choices[pickIdx], cmd, emails)
                 else -> composeEnumerateParsed(parsed, raw, cmd, emails)
             }
         }
+    }
+
+    /**
+     * Accepts a raw spoken response and returns a 0-based index if it matches
+     * a digit ("1", "2"), number word ("one", "two"), or ordinal ("first", "second").
+     */
+    private fun parseOrdinal(text: String, max: Int): Int? {
+        // Number words and ordinals
+        for ((idx, words) in ORDINAL_WORDS.withIndex()) {
+            if (idx >= max) break
+            for (w in words) if (text.contains(w)) return idx
+        }
+        // Bare digits
+        text.toIntOrNull()?.let {
+            val n = it - 1
+            if (n in 0 until max) return n
+        }
+        return null
     }
 
     private fun composeGoToSubject(email: String, cmd: VoiceCommand, emails: List<EmailItem>) {
@@ -2241,6 +2259,14 @@ class InboxViewModel @Inject constructor(
         (_uiState.value as? InboxUiState.Success)?.emails ?: emptyList()
 
     private companion object {
+        val ORDINAL_WORDS = listOf(
+            listOf("first",  "one",   "number one",   "the first"),
+            listOf("second", "two",   "number two",   "the second"),
+            listOf("third",  "three", "number three", "the third"),
+            listOf("fourth", "four",  "number four",  "the fourth"),
+            listOf("fifth",  "five",  "number five",  "the fifth")
+        )
+
         val INSTRUCTION_SECTIONS = listOf(
             "Instructions. Section 1 of 9: Overview. " +
                 "VoiceGmail is completely hands-free. After every spoken message, the microphone opens automatically. " +
