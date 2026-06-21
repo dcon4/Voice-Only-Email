@@ -921,6 +921,61 @@ class VoiceManager @Inject constructor(
         speakChunkSequence(chunks, 0, onDone)
     }
 
+    /**
+     * Speak all [chunks] in sequence using QUEUE_FLUSH + QUEUE_ADD.
+     * Only the last chunk's [onDone] is listened for — no per-chunk
+     * callback chain. [onChunkStart] is invoked with the chunk index
+     * when each chunk begins playing (for position tracking).
+     */
+    fun speakChunks(
+        chunks: List<String>,
+        fromIndex: Int = 0,
+        onChunkStart: (Int) -> Unit = {},
+        onDone: () -> Unit
+    ) {
+        mainHandler.post {
+            if (!ttsReady || fromIndex >= chunks.size) { mainHandler.post(onDone); return@post }
+            DebugLogger.verbose(tag, "speakChunks: fromIndex=$fromIndex count=${chunks.size - fromIndex}")
+            tts?.setSpeechRate(1.0f)
+            val seq = ++ttsSequence
+            val lastUid = "chunk_last_$seq"
+            var doneCalled = false
+            tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
+                override fun onStart(u: String?) {
+                    if (u == null) return
+                    val idx = u.removePrefix("chunk_").takeWhile { it.isDigit() }.toIntOrNull()
+                    if (idx != null) onChunkStart(idx)
+                }
+                override fun onDone(u: String?) {
+                    if (u != lastUid) return
+                    if (doneCalled) return
+                    doneCalled = true
+                    mainHandler.post {
+                        tts?.setSpeechRate(1.0f)
+                        tts?.setOnUtteranceProgressListener(null)
+                        onDone()
+                    }
+                }
+                @Deprecated("Deprecated in API 21")
+                override fun onError(u: String?) {
+                    if (u != lastUid) return
+                    if (doneCalled) return
+                    doneCalled = true
+                    mainHandler.post {
+                        tts?.setSpeechRate(1.0f)
+                        tts?.setOnUtteranceProgressListener(null)
+                        onDone()
+                    }
+                }
+            })
+            for (i in fromIndex until chunks.size) {
+                val uid = if (i == chunks.size - 1) lastUid else "chunk_${i}_$seq"
+                val mode = if (i == fromIndex) TextToSpeech.QUEUE_FLUSH else TextToSpeech.QUEUE_ADD
+                tts?.speak(phoneticize(chunks[i]), mode, null, uid)
+            }
+        }
+    }
+
     private fun speakChunkSequence(chunks: List<String>, index: Int, onDone: () -> Unit) {
         if (index >= chunks.size) {
             onDone()

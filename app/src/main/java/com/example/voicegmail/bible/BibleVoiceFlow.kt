@@ -38,7 +38,6 @@ class BibleVoiceFlow @Inject constructor(
 
     // ── Chunked reading state ──────────────────────────────────────────────
     private var readingGen: Int = 0
-    private var chunkSpeakGen: Int = 0
     private var currentChunks: List<String> = emptyList()
     private var currentChunkIndex: Int = 0
     private var isReadingActive: Boolean = false
@@ -321,7 +320,6 @@ class BibleVoiceFlow @Inject constructor(
         isReadingActive = true
         _isPaused = false
         readingGen++
-        val gen = readingGen
 
         voiceManager.speak("Reading $bookName, chapter $currentChapter.") {
             scope.launch {
@@ -329,7 +327,13 @@ class BibleVoiceFlow @Inject constructor(
                     val chapterText = bibleRepository.getChapterText(bookId, currentChapter, bookName)
                     currentChunks = splitTextIntoChunks(chapterText, CHUNK_SIZE)
                     currentChunkIndex = startChunk.coerceIn(0, (currentChunks.size - 1).coerceAtLeast(0))
-                    readNextChunk(scope, onExit, gen)
+                    val fromIndex = currentChunkIndex
+                    voiceManager.speakChunks(
+                        chunks = currentChunks,
+                        fromIndex = fromIndex,
+                        onChunkStart = { idx -> currentChunkIndex = idx },
+                        onDone = { handleReadingComplete(scope, onExit) }
+                    )
                 } catch (e: Exception) {
                     DebugLogger.log(TAG, "Error fetching chapter text: ${e.message}")
                     voiceCommandEngine.speakThenListen(
@@ -338,32 +342,6 @@ class BibleVoiceFlow @Inject constructor(
                     ) { cmd -> handlePostReadingCommand(cmd, scope, onExit) }
                 }
             }
-        }
-    }
-
-    private var processedChunkGen = -1
-
-    private fun readNextChunk(scope: CoroutineScope, onExit: (VoiceCommand) -> Unit, gen: Int) {
-        if (gen != readingGen) {
-            DebugLogger.verbose(TAG, "readNextChunk: stale gen=$gen != readingGen=$readingGen — discarding")
-            return
-        }
-        if (currentChunkIndex >= currentChunks.size) {
-            handleReadingComplete(scope, onExit)
-            return
-        }
-
-        chunkSpeakGen++
-        val myChunkGen = chunkSpeakGen
-        val thisIndex = currentChunkIndex
-        val chunk = currentChunks[thisIndex]
-        voiceManager.speak(chunk) {
-            if (gen != readingGen || myChunkGen != chunkSpeakGen) return@speak
-            if (currentChunkIndex != thisIndex) return@speak
-            if (myChunkGen <= processedChunkGen) return@speak
-            processedChunkGen = myChunkGen
-            currentChunkIndex++
-            readNextChunk(scope, onExit, gen)
         }
     }
 
