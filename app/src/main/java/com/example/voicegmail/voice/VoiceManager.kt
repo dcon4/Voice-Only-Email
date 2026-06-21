@@ -652,15 +652,22 @@ class VoiceManager @Inject constructor(
             if (!ttsReady) { mainHandler.post(onDone); return@post }
             val uid = System.nanoTime().toString()
             tts?.setSpeechRate(emailReadRate)
+            var doneCalled = false
             tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
                 override fun onStart(u: String?) {}
                 override fun onDone(u: String?) {
+                    if (u != uid) return
+                    if (doneCalled) return
+                    doneCalled = true
                     tts?.setSpeechRate(1.0f)
                     tts?.setOnUtteranceProgressListener(null)
                     mainHandler.post(onDone)
                 }
                 @Deprecated("Deprecated in API 21")
                 override fun onError(u: String?) {
+                    if (u != uid) return
+                    if (doneCalled) return
+                    doneCalled = true
                     tts?.setSpeechRate(1.0f)
                     tts?.setOnUtteranceProgressListener(null)
                     mainHandler.post(onDone)
@@ -813,10 +820,13 @@ class VoiceManager @Inject constructor(
             tts?.setSpeechRate(1.0f)
             val uid = ++ttsSequence
             val uidStr = uid.toString()
+            var doneCalled = false
             tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
                 override fun onStart(u: String?) {}
                 override fun onDone(u: String?) {
                     if (u != uidStr) return
+                    if (doneCalled) return
+                    doneCalled = true
                     mainHandler.post {
                         tts?.setSpeechRate(1.0f)
                         tts?.setOnUtteranceProgressListener(null)
@@ -825,6 +835,9 @@ class VoiceManager @Inject constructor(
                 }
                 @Deprecated("Deprecated in API 21")
                 override fun onError(u: String?) {
+                    if (u != uidStr) return
+                    if (doneCalled) return
+                    doneCalled = true
                     mainHandler.post {
                         tts?.setSpeechRate(1.0f)
                         tts?.setOnUtteranceProgressListener(null)

@@ -233,70 +233,134 @@ fun InboxScreen(
             }
 
             var searchQuery by remember { mutableStateOf("") }
+            var showManualEntry by remember { mutableStateOf(false) }
+            val launcherApps by viewModel.launcherApps.collectAsState()
 
-            AlertDialog(
-                onDismissRequest = { viewModel.closeAppPicker() },
-                title = { Text("Select an App") },
-                text = {
-                    Column {
-                        OutlinedTextField(
-                            value = searchQuery,
-                            onValueChange = { searchQuery = it },
-                            label = { Text("Search apps") },
-                            singleLine = true,
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                        Spacer(Modifier.height(8.dp))
-                        val launcherApps = viewModel.launcherApps.collectAsState().value
-                        val filtered = allApps.filter {
-                            searchQuery.isBlank() ||
-                                it.loadLabel(pm).toString()
-                                    .contains(searchQuery, ignoreCase = true) ||
-                                it.activityInfo.packageName.contains(searchQuery, ignoreCase = true)
+            if (showManualEntry) {
+                var manualName by remember { mutableStateOf("") }
+                var manualPackage by remember { mutableStateOf("") }
+                AlertDialog(
+                    onDismissRequest = { showManualEntry = false },
+                    title = { Text("Manual App Entry") },
+                    text = {
+                        Column {
+                            Text(
+                                "Enter the app details manually. Find the " +
+                                    "package name in Settings > Apps > App info.",
+                                style = MaterialTheme.typography.bodyMedium
+                            )
+                            Spacer(Modifier.height(12.dp))
+                            OutlinedTextField(
+                                value = manualName,
+                                onValueChange = { manualName = it },
+                                label = { Text("Display name") },
+                                placeholder = { Text("e.g. Calculator") },
+                                singleLine = true,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                            Spacer(Modifier.height(8.dp))
+                            OutlinedTextField(
+                                value = manualPackage,
+                                onValueChange = { manualPackage = it },
+                                label = { Text("Package name") },
+                                placeholder = { Text("e.g. com.sec.android.app.popupcalculator") },
+                                singleLine = true,
+                                modifier = Modifier.fillMaxWidth()
+                            )
                         }
-                        LazyColumn(modifier = Modifier.heightIn(max = 400.dp)) {
-                            items(filtered) { resolveInfo ->
-                                val label = resolveInfo.loadLabel(pm).toString()
-                                val pkg = resolveInfo.activityInfo.packageName
-                                val alreadyAdded = launcherApps.any { it.packageName == pkg }
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .clickable(enabled = !alreadyAdded) {
-                                            pendingApp = LauncherApp(
-                                                packageName = pkg,
-                                                displayName = label,
-                                                voiceCommand = ""
-                                            )
-                                            voiceCmdInput = ""
-                                            viewModel.closeAppPicker()
-                                        }
-                                        .padding(12.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Text(
-                                        text = label,
-                                        modifier = Modifier.weight(1f)
-                                    )
-                                    if (alreadyAdded) {
+                    },
+                    confirmButton = {
+                        TextButton(
+                            enabled = manualName.isNotBlank() && manualPackage.isNotBlank(),
+                            onClick = {
+                                pendingApp = LauncherApp(
+                                    packageName = manualPackage.trim(),
+                                    displayName = manualName.trim(),
+                                    voiceCommand = ""
+                                )
+                                voiceCmdInput = ""
+                                showManualEntry = false
+                                viewModel.closeAppPicker()
+                            }
+                        ) { Text("Next") }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { showManualEntry = false }) {
+                            Text("Back")
+                        }
+                    }
+                )
+            } else {
+                AlertDialog(
+                    onDismissRequest = { viewModel.closeAppPicker() },
+                    title = { Text("Select an App") },
+                    text = {
+                        Column {
+                            OutlinedTextField(
+                                value = searchQuery,
+                                onValueChange = { searchQuery = it },
+                                label = { Text("Search apps") },
+                                singleLine = true,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                            Spacer(Modifier.height(4.dp))
+                            OutlinedButton(
+                                onClick = { showManualEntry = true },
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text("Manual entry (type package name)")
+                            }
+                            Spacer(Modifier.height(8.dp))
+                            val filtered = allApps.filter {
+                                searchQuery.isBlank() ||
+                                    it.loadLabel(pm).toString()
+                                        .contains(searchQuery, ignoreCase = true) ||
+                                    it.activityInfo.packageName.contains(searchQuery, ignoreCase = true)
+                            }
+                            LazyColumn(modifier = Modifier.heightIn(max = 360.dp)) {
+                                items(filtered) { resolveInfo ->
+                                    val label = resolveInfo.loadLabel(pm).toString()
+                                    val pkg = resolveInfo.activityInfo.packageName
+                                    val alreadyAdded = launcherApps.any { it.packageName == pkg }
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clickable(enabled = !alreadyAdded) {
+                                                pendingApp = LauncherApp(
+                                                    packageName = pkg,
+                                                    displayName = label,
+                                                    voiceCommand = ""
+                                                )
+                                                voiceCmdInput = ""
+                                                viewModel.closeAppPicker()
+                                            }
+                                            .padding(12.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
                                         Text(
-                                            text = "Already added",
-                                            color = MaterialTheme.colorScheme.error,
-                                            style = MaterialTheme.typography.bodySmall
+                                            text = label,
+                                            modifier = Modifier.weight(1f)
                                         )
+                                        if (alreadyAdded) {
+                                            Text(
+                                                text = "Already added",
+                                                color = MaterialTheme.colorScheme.error,
+                                                style = MaterialTheme.typography.bodySmall
+                                            )
+                                        }
                                     }
                                 }
                             }
                         }
+                    },
+                    confirmButton = {},
+                    dismissButton = {
+                        TextButton(onClick = { viewModel.closeAppPicker() }) {
+                            Text("Cancel")
+                        }
                     }
-                },
-                confirmButton = {},
-                dismissButton = {
-                    TextButton(onClick = { viewModel.closeAppPicker() }) {
-                        Text("Cancel")
-                    }
-                }
-            )
+                )
+            }
         }
 
         // Voice command input dialog (after picking an app)

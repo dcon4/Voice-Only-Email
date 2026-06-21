@@ -1064,6 +1064,15 @@ class InboxViewModel @Inject constructor(
                         val am = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
                         am.killBackgroundProcesses(pkg)
                     } catch (_: Exception) { /* best effort */ }
+                    // Broadcast for MacroDroid to intercept (for apps that
+                    // killBackgroundProcesses cannot stop, like foreground apps)
+                    try {
+                        val killIntent = Intent("com.example.voicegmail.KILL_APP").apply {
+                            putExtra("packageName", pkg)
+                            addFlags(Intent.FLAG_INCLUDE_STOPPED_PACKAGES)
+                        }
+                        context.sendBroadcast(killIntent)
+                    } catch (_: Exception) {}
                     // Bring self to foreground
                     val bringBack = context.packageManager.getLaunchIntentForPackage(context.packageName)
                     if (bringBack != null) {
