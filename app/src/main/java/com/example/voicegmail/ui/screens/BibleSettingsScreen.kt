@@ -138,6 +138,5 @@ private val TRANSLATIONS: List<Pair<String, String>> = listOf(
     "kjv" to "King James Version",
     "asv" to "American Standard Version (1901)",
     "bbe" to "Bible in Basic English",
-    "webbe" to "World English Bible, British Edition",
-    "darby" to "Darby Bible"
+    "webbe" to "World English Bible, British Edition"
 )

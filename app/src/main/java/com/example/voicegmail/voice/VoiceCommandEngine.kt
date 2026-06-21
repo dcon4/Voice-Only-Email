@@ -358,6 +358,31 @@ class VoiceCommandEngine @Inject constructor(
                 lower.contains("search online") || lower.contains("look up online") ->
                 VoiceCommand.Browser
 
+            // ── Compose body editing ─────────────────────────────────────────
+            // Must come before LaunchApp so "start over" doesn't match as "start" → LaunchApp
+
+            lower.contains("add more") || lower.contains("continue writing") ||
+                lower.contains("add to that") || lower.contains("keep going") ||
+                lower.contains("add more text") || lower == "more" ||
+                lower.contains("and also") ||
+                lower.contains("add another") -> VoiceCommand.AddMore
+
+            lower.contains("start over") || lower.contains("start again") ||
+                lower.contains("start from scratch") || lower.contains("new body") ||
+                lower.contains("rewrite") || lower.contains("clear body") ||
+                lower.contains("erase body") -> VoiceCommand.StartOver
+
+            lower.contains("delete last") || lower.contains("undo last") ||
+                lower.contains("remove last") || lower.contains("erase last") ||
+                lower.contains("delete that last") || lower.contains("undo that") ->
+                VoiceCommand.DeleteLast(
+                    when {
+                        lower.contains("paragraph") -> "paragraph"
+                        lower.contains("sentence")  -> "sentence"
+                        else                         -> "word"
+                    }
+                )
+
             // ── App launcher ──────────────────────────────────────────────────
 
             lower.contains("app launcher") || lower.contains("launcher setup") ||
@@ -392,31 +417,6 @@ class VoiceCommandEngine @Inject constructor(
                 lower.startsWith("kill ") || lower.startsWith("stop ") ||
                 lower.contains("close that") || lower.contains("kill that") ->
                 VoiceCommand.KillApp
-
-            // ── Compose body editing ─────────────────────────────────────────
-
-            lower.contains("add more") || lower.contains("continue writing") ||
-                lower.contains("add to that") || lower.contains("keep going") ||
-                lower.contains("add more text") || lower == "more" ||
-                lower.contains("and also") ||
-                lower.contains("add another") -> VoiceCommand.AddMore
-
-            // "start over" must come before "cancel"/"stop" checks
-            lower.contains("start over") || lower.contains("start again") ||
-                lower.contains("start from scratch") || lower.contains("new body") ||
-                lower.contains("rewrite") || lower.contains("clear body") ||
-                lower.contains("erase body") -> VoiceCommand.StartOver
-
-            lower.contains("delete last") || lower.contains("undo last") ||
-                lower.contains("remove last") || lower.contains("erase last") ||
-                lower.contains("delete that last") || lower.contains("undo that") ->
-                VoiceCommand.DeleteLast(
-                    when {
-                        lower.contains("paragraph") -> "paragraph"
-                        lower.contains("sentence")  -> "sentence"
-                        else                         -> "word"
-                    }
-                )
 
             // ── Standard commands ────────────────────────────────────────────
 

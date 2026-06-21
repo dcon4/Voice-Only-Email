@@ -127,6 +127,24 @@ class VoiceManager @Inject constructor(
                     DebugLogger.log(tag, "Samsung device detected but Samsung TTS is not available to third-party apps on One UI 7+")
                 }
                 DebugLogger.log(tag, "TTS ready — defaultEngine=$engineName, activeVoice=${tts?.voice?.name}, voices=$voiceCount, allEngines=$allEngines")
+
+                // Pre-warm the TTS engine so the first real speak call
+                // doesn't have the ~0.5-1s warm-up latency (engine-dependent).
+                tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
+                    override fun onStart(uid: String?) {}
+                    override fun onDone(uid: String?) {
+                        tts?.setOnUtteranceProgressListener(null)
+                        DebugLogger.verbose(tag, "TTS pre-warm complete")
+                    }
+                    override fun onError(uid: String?) {
+                        tts?.setOnUtteranceProgressListener(null)
+                    }
+                })
+                try {
+                    tts?.playSilentUtterance(1, TextToSpeech.QUEUE_ADD, "prewarm")
+                } catch (_: Exception) {
+                    // Some engines don't support silent utterances — ignore.
+                }
             } else {
                 DebugLogger.log(tag, "TTS initialization FAILED: status=$status")
                 Log.e(tag, "TTS initialization failed: $status")

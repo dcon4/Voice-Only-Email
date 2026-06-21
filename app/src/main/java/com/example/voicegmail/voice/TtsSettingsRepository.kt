@@ -90,8 +90,8 @@ class TtsSettingsRepository @Inject constructor(
 
     fun getBibleTranslation(): String {
         val saved = prefs.getString("bible_translation", "web") ?: "web"
-        if (saved == "oeb-us" || saved == "ylt") {
-            // These translations return 404 from bible-api.com as of 2026-06
+        if (saved == "oeb-us" || saved == "ylt" || saved == "darby") {
+            // These translations return 404 from bible-api.com or are no longer listed
             saveBibleTranslation("web")
             return "web"
         }
