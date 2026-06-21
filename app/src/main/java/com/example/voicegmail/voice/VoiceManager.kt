@@ -280,7 +280,7 @@ class VoiceManager @Inject constructor(
             }
             tts?.setSpeechRate(1.0f)
             tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
-                override fun onStart(uid: String?) {}
+                override fun onStart(uid: String?) { DebugLogger.log(tag, "TTS onStart (speakAndThenListen)") }
                 override fun onDone(uid: String?) {
                     tts?.setOnUtteranceProgressListener(null)
                     mainHandler.postDelayed({ startListeningOnMainThread(onResults) }, TTS_TO_MIC_GAP_MS)
@@ -306,7 +306,7 @@ class VoiceManager @Inject constructor(
             }
             tts?.setSpeechRate(emailReadRate)
             tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
-                override fun onStart(uid: String?) {}
+                override fun onStart(uid: String?) { DebugLogger.log(tag, "TTS onStart (speakEmailAndThenListen)") }
                 override fun onDone(uid: String?) {
                     tts?.setSpeechRate(1.0f)
                     tts?.setOnUtteranceProgressListener(null)
@@ -336,7 +336,7 @@ class VoiceManager @Inject constructor(
             }
             tts?.setSpeechRate(emailReadRate)
             tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
-                override fun onStart(uid: String?) {}
+                override fun onStart(uid: String?) { DebugLogger.log(tag, "TTS onStart (speakEmailSentenceAndThenListen)") }
                 override fun onDone(uid: String?) {
                     tts?.setSpeechRate(1.0f)
                     tts?.setOnUtteranceProgressListener(null)
@@ -369,7 +369,7 @@ class VoiceManager @Inject constructor(
             tts?.setSpeechRate(1.0f)
             tts?.voice = voice
             tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
-                override fun onStart(uid: String?) {}
+                override fun onStart(uid: String?) { DebugLogger.log(tag, "TTS onStart (speakWithVoiceAndThenListen)") }
                 override fun onDone(uid: String?) {
                     tts?.setOnUtteranceProgressListener(null)
                     mainHandler.postDelayed({ startListeningOnMainThread(onResults) }, TTS_TO_MIC_GAP_MS)
@@ -442,6 +442,7 @@ class VoiceManager @Inject constructor(
         // change ducks volume.
         val setCommsMode = {
             if (!BuildConfig.BLUETOOTH_AUDIO) {
+                DebugLogger.verbose(tag, "AUDIO: MODE_IN_COMMUNICATION")
                 audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
             }
         }
@@ -454,6 +455,7 @@ class VoiceManager @Inject constructor(
                     _isListening.value = true
                     setCommsMode()
                     unmuteRecognitionBeep()
+                    DebugLogger.log(tag, "AUDIO: recognizer ready — MODE_IN_COMMUNICATION + unmute")
                 }
 
                 override fun onBeginningOfSpeech() {
@@ -565,6 +567,7 @@ class VoiceManager @Inject constructor(
     /** Restore audio mode and abandon audio focus after recognition completes. */
     private fun restoreAudioMode() {
         if (!BuildConfig.BLUETOOTH_AUDIO) {
+            DebugLogger.verbose(tag, "AUDIO: MODE_NORMAL")
             audioManager.mode = AudioManager.MODE_NORMAL
         }
     }
@@ -598,6 +601,7 @@ class VoiceManager @Inject constructor(
 
     private fun muteRecognitionBeep() {
         runCatching {
+            DebugLogger.verbose(tag, "AUDIO: MUTE STREAM_MUSIC")
             audioManager.adjustStreamVolume(AudioManager.STREAM_MUSIC, AudioManager.ADJUST_MUTE, 0)
             mainHandler.postDelayed(::unmuteRecognitionBeep, 1000)
         }
@@ -605,6 +609,7 @@ class VoiceManager @Inject constructor(
 
     private fun unmuteRecognitionBeep() {
         runCatching {
+            DebugLogger.verbose(tag, "AUDIO: UNMUTE STREAM_MUSIC")
             audioManager.adjustStreamVolume(AudioManager.STREAM_MUSIC, AudioManager.ADJUST_UNMUTE, 0)
         }
     }
@@ -654,7 +659,7 @@ class VoiceManager @Inject constructor(
             tts?.setSpeechRate(emailReadRate)
             var doneCalled = false
             tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
-                override fun onStart(u: String?) {}
+                override fun onStart(u: String?) { DebugLogger.log(tag, "TTS onStart (speakEmailChunk)") }
                 override fun onDone(u: String?) {
                     if (u != uid) return
                     if (doneCalled) return
@@ -822,7 +827,7 @@ class VoiceManager @Inject constructor(
             val uidStr = uid.toString()
             var doneCalled = false
             tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
-                override fun onStart(u: String?) {}
+                override fun onStart(u: String?) { DebugLogger.log(tag, "TTS onStart (speak uid=$u)") }
                 override fun onDone(u: String?) {
                     if (u != uidStr) return
                     if (doneCalled) return
@@ -862,10 +867,9 @@ class VoiceManager @Inject constructor(
             DebugLogger.verbose(tag, "speakWithVoice(voice=$voiceName): ${text.take(80)}")
             tts?.setSpeechRate(1.0f)
             tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
-                override fun onStart(uid: String?) {}
+                override fun onStart(uid: String?) { DebugLogger.log(tag, "TTS onStart (speakWithVoice uid=$uid)") }
                 override fun onDone(uid: String?) {
                     tts?.setOnUtteranceProgressListener(null)
-                    // Restore previous voice
                     savedTtsVoice?.let { tts?.voice = it }
                     savedTtsVoice = null
                     mainHandler.post(onDone)
@@ -944,7 +948,12 @@ class VoiceManager @Inject constructor(
                 override fun onStart(u: String?) {
                     if (u == null) return
                     val idx = u.removePrefix("chunk_").takeWhile { it.isDigit() }.toIntOrNull()
-                    if (idx != null) onChunkStart(idx)
+                    if (idx != null) {
+                        if (idx == 0 || idx == fromIndex) {
+                            DebugLogger.log(tag, "TTS onStart (speakChunks first=$idx)")
+                        }
+                        onChunkStart(idx)
+                    }
                 }
                 override fun onDone(u: String?) {
                     if (u != lastUid) return
