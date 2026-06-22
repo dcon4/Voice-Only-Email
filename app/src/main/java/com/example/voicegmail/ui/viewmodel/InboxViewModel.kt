@@ -67,7 +67,8 @@ class InboxViewModel @Inject constructor(
     private val wakePreferences: com.example.voicegmail.voice.WakePreferences,
     private val mediaSessionController: com.example.voicegmail.media.MediaSessionController,
     private val ttsSettings: com.example.voicegmail.voice.TtsSettingsRepository,
-    private val appLauncherPrefs: com.example.voicegmail.voice.AppLauncherPreferences
+    private val appLauncherPrefs: com.example.voicegmail.voice.AppLauncherPreferences,
+    private val audioRepository: com.example.voicegmail.audio.AudioRepository
 ) : ViewModel() {
 
     private var isFirstLoad = true

@@ -135,7 +135,7 @@ class AudioPlayer @Inject constructor(
         }
 
         val mp = MediaPlayer()
-        return try {
+        try {
             mp.setDataSource(context, uri)
             mp.setOnPreparedListener { player ->
                 player.start()
