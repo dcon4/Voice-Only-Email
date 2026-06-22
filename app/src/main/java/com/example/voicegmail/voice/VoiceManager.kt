@@ -286,7 +286,7 @@ class VoiceManager @Inject constructor(
                 DebugLogger.verbose(tag, "speak: ${text.take(80)}")
                 tts?.setSpeechRate(1.0f)
                 tts?.setOnUtteranceProgressListener(null)
-                tts?.playSilentUtterance(100, TextToSpeech.QUEUE_FLUSH, null)
+                tts?.playSilentUtterance(200, TextToSpeech.QUEUE_FLUSH, null)
                 tts?.speak(phoneticize(text), TextToSpeech.QUEUE_ADD, null, utteranceId)
             }
         }
@@ -310,7 +310,7 @@ class VoiceManager @Inject constructor(
                     mainHandler.postDelayed({ startListeningOnMainThread(onResults) }, TTS_TO_MIC_GAP_MS)
                 }
             })
-            tts?.playSilentUtterance(100, TextToSpeech.QUEUE_FLUSH, null)
+            tts?.playSilentUtterance(200, TextToSpeech.QUEUE_FLUSH, null)
             tts?.speak(phoneticize(prompt), TextToSpeech.QUEUE_ADD, null, utteranceId)
         }
     }
@@ -602,7 +602,7 @@ class VoiceManager @Inject constructor(
             error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT ||
             error == SpeechRecognizer.ERROR_RECOGNIZER_BUSY
         if (retriable && retryCount < MAX_RETRIES) {
-            val delay = if (error == SpeechRecognizer.ERROR_RECOGNIZER_BUSY) 600L else 300L
+            val delay = if (error == SpeechRecognizer.ERROR_RECOGNIZER_BUSY) 600L else 1500L
             Log.d(tag, "Retrying recognition ($retryCount -> ${retryCount + 1})")
             mainHandler.postDelayed({
                 startListeningOnMainThread(onResults, retryCount + 1, 0, noSpeechMaxRetries)
@@ -997,7 +997,7 @@ class VoiceManager @Inject constructor(
                     }
                 }
             })
-            tts?.playSilentUtterance(100, TextToSpeech.QUEUE_FLUSH, null)
+            tts?.playSilentUtterance(200, TextToSpeech.QUEUE_FLUSH, null)
             for (i in fromIndex until chunks.size) {
                 val uid = if (i == chunks.size - 1) lastUid else "chunk_${i}_$seq"
                 tts?.speak(phoneticize(chunks[i]), TextToSpeech.QUEUE_ADD, null, uid)
@@ -1093,6 +1093,6 @@ class VoiceManager @Inject constructor(
         val TTS_TO_MIC_GAP_MS: Long = if (BuildConfig.BLUETOOTH_AUDIO) 300L else 600L
         const val MAX_RETRIES              = 3
         const val NO_SPEECH_MAX_RETRIES    = 4
-        const val NO_SPEECH_RETRY_DELAY_MS = 250L
+        const val NO_SPEECH_RETRY_DELAY_MS = 1000L
     }
 }
