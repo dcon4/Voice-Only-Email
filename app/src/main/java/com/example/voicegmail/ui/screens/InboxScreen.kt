@@ -217,6 +217,12 @@ fun InboxScreen(
             BibleSettingsScreen(viewModel = viewModel)
         }
 
+        // Audio player settings (sighted-helper panel)
+        val audioSettingsVisible by viewModel.audioSettingsVisible.collectAsState()
+        if (audioSettingsVisible) {
+            AudioSettingsScreen(viewModel = viewModel)
+        }
+
         // Direct app picker dialog (from VoiceSettingsPanel "App Launcher" button)
         val showAppPicker by viewModel.showAppPicker.collectAsState()
         var pendingApp by remember { mutableStateOf<LauncherApp?>(null) }

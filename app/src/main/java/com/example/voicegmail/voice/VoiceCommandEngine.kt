@@ -62,6 +62,10 @@ sealed class VoiceCommand {
     /** Resume reading from the last paused position. */
     object ContinueReading : VoiceCommand()
 
+    // ── Audio player ──────────────────────────────────────────────────────
+    /** Play a song, album, or artist by name. */
+    data class PlayAudio(val query: String) : VoiceCommand()
+
     // ── Compose editing ───────────────────────────────────────────────────
     /** Append more dictated text to the current message body. */
     object AddMore     : VoiceCommand()
@@ -401,6 +405,16 @@ class VoiceCommandEngine @Inject constructor(
 
             lower == "pause" || lower == "pause reading" || lower == "stop reading" ->
                 VoiceCommand.Pause
+
+            // ── Audio player — must come before ContinueReading's "play" check
+            lower.startsWith("play ") -> {
+                val query = lower.removePrefix("play ").trim()
+                if (query.isNotBlank() && query !in setOf("again", "another", "more")) {
+                    VoiceCommand.PlayAudio(query)
+                } else {
+                    VoiceCommand.Repeat
+                }
+            }
 
             lower in setOf("continue", "continue reading",
                     "continue continue", "continue continue reading") ||

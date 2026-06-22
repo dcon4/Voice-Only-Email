@@ -18,6 +18,7 @@ import com.example.voicegmail.auth.AuthRepository
 import com.example.voicegmail.auth.OAuthDiagnostics
 import com.example.voicegmail.auth.OAuthRedirectBus
 import com.example.voicegmail.bible.BibleVoiceFlow
+import com.example.voicegmail.audio.AudioPlayerVoiceFlow
 import com.example.voicegmail.browser.BrowserVoiceFlow
 import com.example.voicegmail.debug.DebugLogger
 import com.example.voicegmail.gmail.AttachmentReader
@@ -62,6 +63,7 @@ class InboxViewModel @Inject constructor(
     private val wakeEventBus: WakeEventBus,
     private val bibleVoiceFlow: BibleVoiceFlow,
     private val browserVoiceFlow: BrowserVoiceFlow,
+    private val audioPlayerVoiceFlow: AudioPlayerVoiceFlow,
     private val wakePreferences: com.example.voicegmail.voice.WakePreferences,
     private val mediaSessionController: com.example.voicegmail.media.MediaSessionController,
     private val ttsSettings: com.example.voicegmail.voice.TtsSettingsRepository,
@@ -290,6 +292,51 @@ class InboxViewModel @Inject constructor(
         _showAppPicker.value = false
     }
 
+    // ── Audio player settings (sighted-helper panel) ───────────────────────
+
+    private val _audioSettingsVisible = MutableStateFlow(false)
+    val audioSettingsVisible: StateFlow<Boolean> = _audioSettingsVisible
+
+    private val _audioFolderUris = MutableStateFlow<List<String>>(emptyList())
+    val audioFolderUris: StateFlow<List<String>> = _audioFolderUris
+
+    private val _audioTrackCount = MutableStateFlow(0)
+    val audioTrackCount: StateFlow<Int> = _audioTrackCount
+
+    private val _isAudioScanning = MutableStateFlow(false)
+    val isAudioScanning: StateFlow<Boolean> = _isAudioScanning
+
+    fun openAudioSettings() {
+        refreshAudioState()
+        _audioSettingsVisible.value = true
+    }
+
+    fun closeAudioSettings() { _audioSettingsVisible.value = false }
+
+    fun addAudioFolder(uri: Uri) {
+        audioRepository.addFolder(uri)
+        scanAudioFolders()
+    }
+
+    fun removeAudioFolder(uri: Uri) {
+        audioRepository.removeFolder(uri)
+        scanAudioFolders()
+    }
+
+    private fun refreshAudioState() {
+        _audioFolderUris.value = audioRepository.getIndexedFolderUris().map { it.toString() }
+        _audioTrackCount.value = audioRepository.trackCount()
+    }
+
+    fun scanAudioFolders() {
+        _isAudioScanning.value = true
+        viewModelScope.launch {
+            audioRepository.scanAll()
+            refreshAudioState()
+            _isAudioScanning.value = false
+        }
+    }
+
     // ── Bible options sub-page ──────────────────────────────────────────────
 
     fun openBibleSettings() {
@@ -459,7 +506,9 @@ class InboxViewModel @Inject constructor(
     // ------------------------------------------------------------------
 
     private fun handleMediaPlay() {
-        DebugLogger.log("InboxViewModel", "Media: PLAY (continue reading)")
+        DebugLogger.log("InboxViewModel", "Media: PLAY")
+        // If audio player was paused, resume audio
+        if (audioPlayerVoiceFlow.mediaPlay()) return
         val emails = currentEmails()
         // If browser was paused, resume browser
         if (browserVoiceFlow.handleWakeInterrupt()) {
@@ -484,6 +533,7 @@ class InboxViewModel @Inject constructor(
 
     private fun handleMediaPause() {
         DebugLogger.log("InboxViewModel", "Media: PAUSE")
+        if (audioPlayerVoiceFlow.mediaPause()) return
         voiceCommandEngine.cancelListening()
         voiceManager.stopAll()
         mediaSessionController.setPaused()
@@ -491,6 +541,7 @@ class InboxViewModel @Inject constructor(
 
     private fun handleMediaNext() {
         DebugLogger.log("InboxViewModel", "Media: NEXT")
+        if (audioPlayerVoiceFlow.mediaNext()) return
         val emails = currentEmails()
         // If in browser, advance to next article
         if (browserVoiceFlow.handleWakeInterrupt()) {
@@ -510,6 +561,7 @@ class InboxViewModel @Inject constructor(
 
     private fun handleMediaPrevious() {
         DebugLogger.log("InboxViewModel", "Media: PREVIOUS")
+        if (audioPlayerVoiceFlow.mediaPrevious()) return
         val emails = currentEmails()
         handleCommand(VoiceCommand.Previous, emails)
     }
@@ -524,7 +576,8 @@ class InboxViewModel @Inject constructor(
         // Pause any Bible audio that may be playing (preserves position)
         val bibleWasReading = bibleVoiceFlow.handleWakeInterrupt()
         val browserWasReading = browserVoiceFlow.handleWakeInterrupt()
-        DebugLogger.log("InboxViewModel", "handleWakeEvent: bibleWasReading=$bibleWasReading browserWasReading=$browserWasReading")
+        val audioWasPlaying = audioPlayerVoiceFlow.handleWakeInterrupt()
+        DebugLogger.log("InboxViewModel", "handleWakeEvent: bible=$bibleWasReading browser=$browserWasReading audio=$audioWasPlaying")
         // Destroy the in-flight recognizer silently so its error/result callback
         // cannot race with this new session. TTS is handled by QUEUE_FLUSH inside
         // the following speakThenListen call.
@@ -535,13 +588,22 @@ class InboxViewModel @Inject constructor(
         // was saved) so the rest of the wake handler always speaks in the
         // correct voice.
         voiceManager.restoreMainEngine {
-            handleWakeEventAfterEngineRestore(bibleWasReading, browserWasReading)
+            handleWakeEventAfterEngineRestore(bibleWasReading, browserWasReading, audioWasPlaying)
         }
     }
 
-    private fun handleWakeEventAfterEngineRestore(bibleWasReading: Boolean, browserWasReading: Boolean) {
+    private fun handleWakeEventAfterEngineRestore(
+        bibleWasReading: Boolean,
+        browserWasReading: Boolean,
+        audioWasPlaying: Boolean
+    ) {
         when (val state = _uiState.value) {
             is InboxUiState.Success -> {
+                if (audioWasPlaying) {
+                    mediaSessionController.setPaused()
+                    promptAudioResumeAndListen(state.emails)
+                    return
+                }
                 if (bibleWasReading) {
                     promptBibleResumeAndListen(state.emails)
                     return
@@ -682,6 +744,38 @@ class InboxViewModel @Inject constructor(
                         browserVoiceFlow.clearState()
                         handleCommand(cmd, emails)
                     }
+                }
+            }
+        }
+    }
+
+    private fun promptAudioResumeAndListen(emails: List<EmailItem>) {
+        voiceCommandEngine.speakThenListen(
+            "Audio paused. Say 'continue' to resume, or another command."
+        ) { cmd ->
+            when (cmd) {
+                is VoiceCommand.ContinueReading -> {
+                    audioPlayerVoiceFlow.resumeAfterWake(viewModelScope) { exitCmd ->
+                        handleCommand(exitCmd, emails)
+                    }
+                }
+                is VoiceCommand.SessionTimeout, is VoiceCommand.GoToSleep -> {
+                    voiceManager.stopAll()
+                    voiceManager.speak(
+                        "Going to sleep. Press the power button and say 'continue' to resume."
+                    )
+                }
+                is VoiceCommand.Cancel, is VoiceCommand.GoBack -> {
+                    audioPlayerVoiceFlow.stop()
+                    mediaSessionController.setStopped()
+                    voiceCommandEngine.speakThenListen("Audio stopped. Say a command.") { c ->
+                        handleCommand(c, emails)
+                    }
+                }
+                else -> {
+                    audioPlayerVoiceFlow.stop()
+                    mediaSessionController.setStopped()
+                    handleCommand(cmd, emails)
                 }
             }
         }
@@ -925,8 +1019,8 @@ class InboxViewModel @Inject constructor(
                     "Commands: reed, next, previous, repeat, reply, forward, delete, compose, " +
                         "search, refresh, reed unread, mark as read, mark as unread, " +
                         "pause, continue, go to sleep, bible, browser, list attachments, " +
-                        "list drafts, read slower, read faster, voice settings, instructions. " +
-                        "While composing: add more, delete last word or sentence, start over, " +
+                        "list drafts, read slower, read faster, voice settings, instructions, " +
+                        "play. While composing: add more, delete last word or sentence, start over, " +
                         "save draft, read back, send, cancel."
                 ) { cmd -> handleCommand(cmd, emails) }
 
@@ -956,6 +1050,7 @@ class InboxViewModel @Inject constructor(
             is VoiceCommand.GoToSleep -> {
                 // Stop all audio (TTS + mic) before speaking the sleep message,
                 // so any email or article being read aloud is interrupted immediately.
+                audioPlayerVoiceFlow.stop()
                 voiceManager.stopAll()
                 mediaSessionController.setStopped()
                 // NOTE: Do NOT clear pausedPosition here.  If a reading bookmark
@@ -1003,6 +1098,19 @@ class InboxViewModel @Inject constructor(
                     mediaSessionController.setStopped()
                     if (exitCmd is VoiceCommand.None) {
                         voiceCommandEngine.speakThenListen("Back to inbox. Say a command.") { cmd ->
+                            handleCommand(cmd, emails)
+                        }
+                    } else {
+                        handleCommand(exitCmd, emails)
+                    }
+                }
+            }
+
+            is VoiceCommand.PlayAudio -> {
+                audioPlayerVoiceFlow.start(command.query, viewModelScope) { exitCmd ->
+                    mediaSessionController.setStopped()
+                    if (exitCmd is VoiceCommand.None) {
+                        voiceCommandEngine.speakThenListen("Audio player finished. Back to inbox. Say a command.") { cmd ->
                             handleCommand(cmd, emails)
                         }
                     } else {
@@ -1093,6 +1201,11 @@ class InboxViewModel @Inject constructor(
                 val text = command.text.trim()
                 if (text.isBlank()) {
                     voiceManager.speak("Going to sleep. Press the power button to wake me.")
+                } else if (text.lowercase().contains("audio setting") ||
+                    text.lowercase().contains("audio folder") ||
+                    text.lowercase().contains("music setting")) {
+                    openAudioSettings()
+                    voiceManager.speak("Audio player settings opened.")
                 } else if (bibleVoiceFlow.isBibleReference(text)) {
                     // Direct Bible reference from inbox (e.g., "John 3:16")
                     voiceManager.switchToBibleEngine {
