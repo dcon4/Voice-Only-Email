@@ -286,7 +286,8 @@ class VoiceManager @Inject constructor(
                 DebugLogger.verbose(tag, "speak: ${text.take(80)}")
                 tts?.setSpeechRate(1.0f)
                 tts?.setOnUtteranceProgressListener(null)
-                tts?.speak(phoneticize(text), TextToSpeech.QUEUE_FLUSH, null, utteranceId)
+                tts?.playSilentUtterance(100, TextToSpeech.QUEUE_FLUSH, null)
+                tts?.speak(phoneticize(text), TextToSpeech.QUEUE_ADD, null, utteranceId)
             }
         }
     }
@@ -309,7 +310,8 @@ class VoiceManager @Inject constructor(
                     mainHandler.postDelayed({ startListeningOnMainThread(onResults) }, TTS_TO_MIC_GAP_MS)
                 }
             })
-            tts?.speak(phoneticize(prompt), TextToSpeech.QUEUE_FLUSH, null, utteranceId)
+            tts?.playSilentUtterance(100, TextToSpeech.QUEUE_FLUSH, null)
+            tts?.speak(phoneticize(prompt), TextToSpeech.QUEUE_ADD, null, utteranceId)
         }
     }
 
@@ -995,10 +997,10 @@ class VoiceManager @Inject constructor(
                     }
                 }
             })
+            tts?.playSilentUtterance(100, TextToSpeech.QUEUE_FLUSH, null)
             for (i in fromIndex until chunks.size) {
                 val uid = if (i == chunks.size - 1) lastUid else "chunk_${i}_$seq"
-                val mode = if (i == fromIndex) TextToSpeech.QUEUE_FLUSH else TextToSpeech.QUEUE_ADD
-                tts?.speak(phoneticize(chunks[i]), mode, null, uid)
+                tts?.speak(phoneticize(chunks[i]), TextToSpeech.QUEUE_ADD, null, uid)
             }
         }
     }

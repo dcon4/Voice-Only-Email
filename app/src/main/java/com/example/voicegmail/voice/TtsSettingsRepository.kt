@@ -89,7 +89,7 @@ class TtsSettingsRepository @Inject constructor(
     // ── Bible options ──────────────────────────────────────────────────────
 
     fun getBibleTranslation(): String {
-        val saved = prefs.getString("bible_translation", "web") ?: "web"
+        val saved = prefs.getString("bible_translation", "bbe") ?: "bbe"
         if (saved == "oeb-us" || saved == "ylt" || saved == "darby") {
             // These translations return 404 from bible-api.com or are no longer listed
             saveBibleTranslation("web")
@@ -102,7 +102,7 @@ class TtsSettingsRepository @Inject constructor(
         prefs.edit().putString("bible_translation", translation).apply()
     }
 
-    fun getBibleVerseNumbers(): Boolean = prefs.getBoolean("bible_verse_numbers", true)
+    fun getBibleVerseNumbers(): Boolean = prefs.getBoolean("bible_verse_numbers", false)
 
     fun saveBibleVerseNumbers(enabled: Boolean) {
         prefs.edit().putBoolean("bible_verse_numbers", enabled).apply()
