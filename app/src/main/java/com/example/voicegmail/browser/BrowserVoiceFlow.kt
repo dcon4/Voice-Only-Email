@@ -147,7 +147,17 @@ class BrowserVoiceFlow @Inject constructor(
                 }
                 performSearch(query, scope, onExit)
             }
-            else -> onExit(cmd)
+            else -> {
+                val text = when (cmd) {
+                    is VoiceCommand.LaunchApp -> cmd.query
+                    else -> null
+                }
+                if (text != null && text.isNotBlank()) {
+                    performSearch(text, scope, onExit)
+                } else {
+                    onExit(cmd)
+                }
+            }
         }
     }
 
@@ -272,7 +282,17 @@ class BrowserVoiceFlow @Inject constructor(
                     ) { retry -> handleResultSelection(retry, scope, onExit) }
                 }
             }
-            else -> onExit(cmd)
+            else -> {
+                val text = when (cmd) {
+                    is VoiceCommand.LaunchApp -> cmd.query
+                    else -> null
+                }
+                if (text != null && text.isNotBlank()) {
+                    performSearch(text, scope, onExit)
+                } else {
+                    onExit(cmd)
+                }
+            }
         }
     }
 
@@ -483,7 +503,17 @@ class BrowserVoiceFlow @Inject constructor(
                     ) { retry -> handlePostPageCommand(retry, scope, onExit) }
                 }
             }
-            else -> onExit(cmd)
+            else -> {
+                val text = when (cmd) {
+                    is VoiceCommand.LaunchApp -> cmd.query
+                    else -> null
+                }
+                if (text != null && text.isNotBlank()) {
+                    performSearch(text, scope, onExit)
+                } else {
+                    onExit(cmd)
+                }
+            }
         }
     }
 
