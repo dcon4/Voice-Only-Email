@@ -172,13 +172,18 @@ class AudioPlayerVoiceFlow @Inject constructor(
         }
 
         audioPlayer.stop()
+        val announceTracks = audioRepository.getFileAnnouncements()
         audioPlayer.setOnTrackComplete {
             DebugLogger.log(TAG, "track complete: ${it.title}")
             scope.launch {
                 if (currentIndex + 1 < currentQueue.size) {
                     currentIndex++
                     val next = currentQueue[currentIndex]
-                    voiceManager.speak("${next.title} by ${next.artist}.") {
+                    if (announceTracks) {
+                        voiceManager.speak("${next.title} by ${next.artist}.") {
+                            playCurrentAndListen(scope, onExit)
+                        }
+                    } else {
                         playCurrentAndListen(scope, onExit)
                     }
                 } else {
@@ -188,7 +193,16 @@ class AudioPlayerVoiceFlow @Inject constructor(
         }
         audioPlayer.setOnTrackError { errTrack, msg ->
             DebugLogger.log(TAG, "track error: ${errTrack.title} — $msg")
-            voiceManager.speak("Skipping ${errTrack.title}. $msg") {
+            if (announceTracks) {
+                voiceManager.speak("Skipping ${errTrack.title}. $msg") {
+                    if (currentIndex + 1 < currentQueue.size) {
+                        currentIndex++
+                        playCurrentAndListen(scope, onExit)
+                    } else {
+                        announceQueueEnd(scope, onExit)
+                    }
+                }
+            } else {
                 if (currentIndex + 1 < currentQueue.size) {
                     currentIndex++
                     playCurrentAndListen(scope, onExit)

@@ -54,6 +54,37 @@ fun AudioSettingsScreen(viewModel: InboxViewModel) {
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
 
+            val fileAnnouncements by viewModel.audioFileAnnouncements.collectAsState()
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 4.dp)
+                    .semantics(mergeDescendants = true) {
+                        contentDescription = if (fileAnnouncements)
+                            "File announcements on"
+                        else
+                            "File announcements off"
+                    },
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "File Announcements",
+                        style = MaterialTheme.typography.bodyLarge
+                    )
+                    Text(
+                        text = "Announce track title between files",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Switch(
+                    checked = fileAnnouncements,
+                    onCheckedChange = { viewModel.setAudioFileAnnouncements(it) }
+                )
+            }
+
             Button(
                 onClick = { folderPicker.launch(null) },
                 modifier = Modifier

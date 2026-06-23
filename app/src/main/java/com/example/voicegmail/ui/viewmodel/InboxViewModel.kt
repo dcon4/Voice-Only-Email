@@ -307,9 +307,18 @@ class InboxViewModel @Inject constructor(
     private val _isAudioScanning = MutableStateFlow(false)
     val isAudioScanning: StateFlow<Boolean> = _isAudioScanning
 
+    private val _fileAnnouncements = MutableStateFlow(false)
+    val audioFileAnnouncements: StateFlow<Boolean> = _fileAnnouncements
+
     fun openAudioSettings() {
         refreshAudioState()
+        _fileAnnouncements.value = audioRepository.getFileAnnouncements()
         _audioSettingsVisible.value = true
+    }
+
+    fun setAudioFileAnnouncements(enabled: Boolean) {
+        audioRepository.setFileAnnouncements(enabled)
+        _fileAnnouncements.value = enabled
     }
 
     fun closeAudioSettings() { _audioSettingsVisible.value = false }

@@ -19,6 +19,7 @@ import javax.inject.Singleton
 private const val TAG = "AudioRepository"
 private const val PREFS_NAME = "audio_player"
 private const val KEY_FOLDERS = "indexed_folders"
+private const val KEY_FILE_ANNOUNCEMENTS = "file_announcements"
 private const val INDEX_FILE = "audio_index.json"
 private const val MIN_SCORE = 0.3
 
@@ -67,6 +68,12 @@ class AudioRepository @Inject constructor(
     }
 
     fun hasFolders(): Boolean = getIndexedFolderUris().isNotEmpty()
+
+    fun getFileAnnouncements(): Boolean = prefs.getBoolean(KEY_FILE_ANNOUNCEMENTS, false)
+
+    fun setFileAnnouncements(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_FILE_ANNOUNCEMENTS, enabled).apply()
+    }
 
     // ------------------------------------------------------------------
     // Scanning
@@ -226,13 +233,21 @@ class AudioRepository @Inject constructor(
         val qWords = query.split(" ").filter { it.isNotBlank() }
         val tWords = target.split(" ").filter { it.isNotBlank() }
         if (qWords.isEmpty()) return 0.0
-        val matchCount = qWords.count { qw -> tWords.any { it == qw } }
+        val matchCount = qWords.count { qw -> tWords.any { tw -> wordsMatch(qw, tw) } }
         if (matchCount == qWords.size) return 0.9
         return 0.5 * matchCount.toDouble() / qWords.size
     }
 
     private fun wordBoundaryContains(haystack: String, needle: String): Boolean {
         return Regex("\\b${Regex.escape(needle)}\\b").containsMatchIn(haystack)
+    }
+
+    private fun wordsMatch(queryWord: String, targetWord: String): Boolean {
+        if (queryWord == targetWord) return true
+        val qNum = queryWord.toIntOrNull()
+        val tNum = targetWord.toIntOrNull()
+        if (qNum != null && tNum != null) return qNum == tNum
+        return false
     }
 
     // ------------------------------------------------------------------

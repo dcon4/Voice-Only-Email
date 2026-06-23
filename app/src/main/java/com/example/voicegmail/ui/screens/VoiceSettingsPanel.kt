@@ -404,6 +404,17 @@ fun VoiceSettingsPanel(viewModel: InboxViewModel) {
             ) {
                 Text("Add App to Launcher")
             }
+
+            Spacer(Modifier.height(8.dp))
+
+            OutlinedButton(
+                onClick  = { viewModel.openAudioSettings() },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .semantics { contentDescription = "Open audio library settings" }
+            ) {
+                Text("Audio Library Settings")
+            }
         }
     }
 }
