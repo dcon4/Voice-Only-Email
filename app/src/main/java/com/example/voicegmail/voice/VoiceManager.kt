@@ -464,12 +464,13 @@ class VoiceManager @Inject constructor(
 
                 override fun onReadyForSpeech(params: Bundle?) {
                     _isListening.value = true
-                    if (!BuildConfig.BLUETOOTH_AUDIO) {
-                        DebugLogger.verbose(tag, "AUDIO: MODE_IN_COMMUNICATION")
-                        audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
-                    }
+                    // MODE_IN_COMMUNICATION intentionally omitted on the standard
+                    // (non-BT) flavor.  On Samsung A53/A16 it suppresses STREAM_MUSIC
+                    // volume, making MediaPlayer audio near-silent during the
+                    // playback+listening window.  The SpeechRecognizer has its own
+                    // echo cancellation, so the standard flavor stays in MODE_NORMAL.
                     unmuteRecognitionBeep()
-                    DebugLogger.log(tag, "AUDIO: recognizer ready — MODE_IN_COMMUNICATION + unmute")
+                    DebugLogger.log(tag, "AUDIO: recognizer ready — unmute")
                 }
 
                 override fun onBeginningOfSpeech() {
@@ -649,18 +650,25 @@ class VoiceManager @Inject constructor(
     // Beep suppression
     // ------------------------------------------------------------------
 
+    private var savedMusicVolume: Int = -1
+
     private fun muteRecognitionBeep() {
         runCatching {
-            DebugLogger.verbose(tag, "AUDIO: MUTE STREAM_MUSIC")
-            audioManager.adjustStreamVolume(AudioManager.STREAM_MUSIC, AudioManager.ADJUST_MUTE, 0)
-            mainHandler.postDelayed(::unmuteRecognitionBeep, 1000)
+            savedMusicVolume = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
+            if (savedMusicVolume > 0) {
+                DebugLogger.verbose(tag, "AUDIO: SET STREAM_MUSIC VOLUME 0")
+                audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, 0, 0)
+            }
         }
     }
 
     private fun unmuteRecognitionBeep() {
         runCatching {
-            DebugLogger.verbose(tag, "AUDIO: UNMUTE STREAM_MUSIC")
-            audioManager.adjustStreamVolume(AudioManager.STREAM_MUSIC, AudioManager.ADJUST_UNMUTE, 0)
+            if (savedMusicVolume >= 0) {
+                DebugLogger.verbose(tag, "AUDIO: RESTORE STREAM_MUSIC VOLUME $savedMusicVolume")
+                audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, savedMusicVolume, 0)
+                savedMusicVolume = -1
+            }
         }
     }
 
