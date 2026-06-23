@@ -221,13 +221,18 @@ class AudioRepository @Inject constructor(
 
     private fun scoreMatch(query: String, target: String): Double {
         if (target == query) return 1.0
-        if (target.contains(query)) return 0.9
-        if (query.contains(target)) return 0.85
-        val qWords = query.split(" ").filter { it.length > 2 }
-        val tWords = target.split(" ")
+        if (wordBoundaryContains(target, query)) return 0.9
+        if (wordBoundaryContains(query, target)) return 0.85
+        val qWords = query.split(" ").filter { it.isNotBlank() }
+        val tWords = target.split(" ").filter { it.isNotBlank() }
         if (qWords.isEmpty()) return 0.0
-        val matchCount = qWords.count { qw -> tWords.any { it.contains(qw) } }
+        val matchCount = qWords.count { qw -> tWords.any { it == qw } }
+        if (matchCount == qWords.size) return 0.9
         return 0.5 * matchCount.toDouble() / qWords.size
+    }
+
+    private fun wordBoundaryContains(haystack: String, needle: String): Boolean {
+        return Regex("\\b${Regex.escape(needle)}\\b").containsMatchIn(haystack)
     }
 
     // ------------------------------------------------------------------

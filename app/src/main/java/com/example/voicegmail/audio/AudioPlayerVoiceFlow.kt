@@ -200,7 +200,10 @@ class AudioPlayerVoiceFlow @Inject constructor(
 
         audioPlayer.playQueue(currentQueue, currentIndex)
         mediaSessionController.setPlaying(track.title, track.artist)
-        openPlaybackWindow(scope, onExit)
+        // Go to sleep silently — no beeping, no listening. Audio continues
+        // playing in the background. The user can press the power button to
+        // wake, pause, and interact.
+        onExit(VoiceCommand.GoToSleep)
     }
 
     private fun openPlaybackWindow(scope: CoroutineScope, onExit: (VoiceCommand) -> Unit) {
@@ -303,9 +306,7 @@ class AudioPlayerVoiceFlow @Inject constructor(
             }
 
             is VoiceCommand.GoToSleep, is VoiceCommand.SessionTimeout -> {
-                audioPlayer.pause()
-                isPaused = true
-                mediaSessionController.setPaused()
+                // Let audio keep playing — no pause on sleep
                 onExit(cmd)
             }
 
@@ -314,8 +315,8 @@ class AudioPlayerVoiceFlow @Inject constructor(
                 if (text.isNotBlank()) {
                     searchAndPlay(text, scope, onExit)
                 } else {
-                    // Timeout or empty — keep playing, listen again
-                    openPlaybackWindow(scope, onExit)
+                    // Timeout or empty — go to sleep, audio keeps playing
+                    onExit(VoiceCommand.GoToSleep)
                 }
             }
 
@@ -370,26 +371,7 @@ class AudioPlayerVoiceFlow @Inject constructor(
 
     private fun announceQueueEnd(scope: CoroutineScope, onExit: (VoiceCommand) -> Unit) {
         voiceManager.speak("End of queue. Say a song, album, or artist name, or 'cancel' to exit.") {
-            voiceCommandEngine.listen { cmd ->
-                when (cmd) {
-                    is VoiceCommand.FreeText -> {
-                        val text = cmd.text.trim()
-                        if (text.isNotBlank()) searchAndPlay(text, scope, onExit)
-                        else {
-                            stop()
-                            onExit(VoiceCommand.None)
-                        }
-                    }
-                    is VoiceCommand.Cancel, is VoiceCommand.GoBack -> {
-                        stop()
-                        onExit(VoiceCommand.None)
-                    }
-                    else -> {
-                        stop()
-                        onExit(cmd)
-                    }
-                }
-            }
+            onExit(VoiceCommand.None)
         }
     }
 }

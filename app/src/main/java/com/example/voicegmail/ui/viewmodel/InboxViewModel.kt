@@ -1049,21 +1049,25 @@ class InboxViewModel @Inject constructor(
             }
 
             is VoiceCommand.GoToSleep -> {
-                // Stop all audio (TTS + mic) before speaking the sleep message,
+                // Stop all TTS and mic before speaking the sleep message,
                 // so any email or article being read aloud is interrupted immediately.
-                if (!audioPlayerVoiceFlow.isPlayPaused) {
-                    audioPlayerVoiceFlow.stop()
-                }
+                // But keep the audio player running if it's active.
                 voiceManager.stopAll()
-                mediaSessionController.setStopped()
+                if (!audioPlayerVoiceFlow.isActive) {
+                    mediaSessionController.setStopped()
+                }
                 // NOTE: Do NOT clear pausedPosition here.  If a reading bookmark
                 // exists, the user must be able to wake the app later and say
                 // 'continue' to resume from exactly where they left off.
                 val msg = if (pausedPosition != null)
                     "Going to sleep. Press the power button and say 'continue' to resume reading."
+                else if (audioPlayerVoiceFlow.isActive)
+                    ""
                 else
                     "Going to sleep. Press the power button to wake me."
-                voiceManager.speak(msg)
+                if (msg.isNotBlank()) {
+                    voiceManager.speak(msg)
+                }
             }
 
             is VoiceCommand.SignIn -> {
@@ -1111,13 +1115,22 @@ class InboxViewModel @Inject constructor(
 
             is VoiceCommand.PlayAudio -> {
                 audioPlayerVoiceFlow.start(command.query, viewModelScope) { exitCmd ->
-                    mediaSessionController.setStopped()
-                    if (exitCmd is VoiceCommand.None) {
-                        voiceCommandEngine.speakThenListen("Audio player finished. Back to inbox. Say a command.") { cmd ->
-                            handleCommand(cmd, emails)
+                    when {
+                        exitCmd is VoiceCommand.GoToSleep || exitCmd is VoiceCommand.SessionTimeout -> {
+                            // Keep audio playing silently. No "going to sleep" announcement,
+                            // no media session teardown — the user hears their music/audio
+                            // continue while the voice loop exits.
                         }
-                    } else {
-                        handleCommand(exitCmd, emails)
+                        exitCmd is VoiceCommand.None -> {
+                            mediaSessionController.setStopped()
+                            voiceCommandEngine.speakThenListen("Audio player finished. Back to inbox. Say a command.") { cmd ->
+                                handleCommand(cmd, emails)
+                            }
+                        }
+                        else -> {
+                            mediaSessionController.setStopped()
+                            handleCommand(exitCmd, emails)
+                        }
                     }
                 }
             }
