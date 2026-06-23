@@ -6,7 +6,7 @@ import java.util.Locale
 /**
  * Unified contact record used by the voice-driven compose flow.  Originates
  * from either the user's Google Contacts ("people") or from the unique
- * sender addresses we've seen in the locally-fetched Gmail inbox.
+ * sender addresses we have seen in the locally-fetched Gmail inbox.
  */
 data class Contact(
     val displayName: String,
