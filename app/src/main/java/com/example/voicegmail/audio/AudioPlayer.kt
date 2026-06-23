@@ -1,8 +1,10 @@
 package com.example.voicegmail.audio
 
 import android.content.Context
+import android.media.AudioManager
 import android.media.MediaPlayer
 import android.net.Uri
+import com.example.voicegmail.BuildConfig
 import com.example.voicegmail.debug.DebugLogger
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
@@ -136,7 +138,18 @@ class AudioPlayer @Inject constructor(
 
         val mp = MediaPlayer()
         try {
-            mp.setDataSource(context, uri)
+            context.contentResolver.openFileDescriptor(uri, "r")?.use { fd ->
+                mp.setDataSource(fd.fileDescriptor)
+            } ?: run {
+                DebugLogger.log(TAG, "playCurrent: openFileDescriptor returned null for ${track.title}")
+                onTrackError?.invoke(track, "Cannot open file")
+                try { mp.release() } catch (_: Exception) {}
+                return
+            }
+            if (!BuildConfig.BLUETOOTH_AUDIO) {
+                val am = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+                am.mode = AudioManager.MODE_NORMAL
+            }
             mp.setOnPreparedListener { player ->
                 player.start()
                 DebugLogger.log(TAG, "playCurrent: started ${track.title}")

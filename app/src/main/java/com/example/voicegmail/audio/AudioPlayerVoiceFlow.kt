@@ -251,7 +251,7 @@ class AudioPlayerVoiceFlow @Inject constructor(
                 isPaused = true
                 mediaSessionController.setPaused()
                 voiceCommandEngine.speakThenListen(
-                    "Paused. Say 'continue' to resume, or 'stop' to exit."
+                    "Paused. Say 'resume', 'continue', or 'play' to resume, or 'stop' to exit."
                 ) { resumeCmd ->
                     when (resumeCmd) {
                         is VoiceCommand.ContinueReading -> {
@@ -303,7 +303,9 @@ class AudioPlayerVoiceFlow @Inject constructor(
             }
 
             is VoiceCommand.GoToSleep, is VoiceCommand.SessionTimeout -> {
-                stop()
+                audioPlayer.pause()
+                isPaused = true
+                mediaSessionController.setPaused()
                 onExit(cmd)
             }
 

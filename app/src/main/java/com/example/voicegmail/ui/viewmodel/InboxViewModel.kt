@@ -752,7 +752,7 @@ class InboxViewModel @Inject constructor(
 
     private fun promptAudioResumeAndListen(emails: List<EmailItem>) {
         voiceCommandEngine.speakThenListen(
-            "Audio paused. Say 'continue' to resume, or another command."
+            "Audio paused. Say 'resume', 'continue', or 'play' to resume, or give another command."
         ) { cmd ->
             when (cmd) {
                 is VoiceCommand.ContinueReading -> {
@@ -1051,7 +1051,9 @@ class InboxViewModel @Inject constructor(
             is VoiceCommand.GoToSleep -> {
                 // Stop all audio (TTS + mic) before speaking the sleep message,
                 // so any email or article being read aloud is interrupted immediately.
-                audioPlayerVoiceFlow.stop()
+                if (!audioPlayerVoiceFlow.isPlayPaused) {
+                    audioPlayerVoiceFlow.stop()
+                }
                 voiceManager.stopAll()
                 mediaSessionController.setStopped()
                 // NOTE: Do NOT clear pausedPosition here.  If a reading bookmark
