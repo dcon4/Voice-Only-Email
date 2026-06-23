@@ -187,6 +187,7 @@ class AudioRepository @Inject constructor(
         ensureLoaded()
         val q = query.trim().lowercase()
         if (q.isBlank()) return emptyList()
+        val qWords = q.split(" ").filter { it.isNotBlank() }
 
         return cachedTracks
             .map { track ->
@@ -195,7 +196,14 @@ class AudioRepository @Inject constructor(
                     scoreMatch(q, track.artist.lowercase()),
                     scoreMatch(q, track.album.lowercase())
                 )
-                track to score
+                // Tiebreaker: bonus if the query's last word matches the target's last word
+                // (handles book-number prefix in titles like "23 Isaiah 28" vs "23 Isaiah 23")
+                val lastWordBonus = if (qWords.size >= 2) {
+                    val lastQ = qWords.last()
+                    val tWords = track.title.lowercase().split(" ").filter { it.isNotBlank() }
+                    if (tWords.isNotEmpty() && wordsMatch(lastQ, tWords.last())) 0.04 else 0.0
+                } else 0.0
+                track to (score + lastWordBonus)
             }
             .filter { it.second >= MIN_SCORE }
             .sortedByDescending { it.second }
@@ -233,9 +241,17 @@ class AudioRepository @Inject constructor(
         val qWords = query.split(" ").filter { it.isNotBlank() }
         val tWords = target.split(" ").filter { it.isNotBlank() }
         if (qWords.isEmpty()) return 0.0
+        // All query words match target words (including numeric normalization)
         val matchCount = qWords.count { qw -> tWords.any { tw -> wordsMatch(qw, tw) } }
         if (matchCount == qWords.size) return 0.9
-        return 0.5 * matchCount.toDouble() / qWords.size
+        // For partial scores only count longer query words (length > 2) so that
+        // queries like "nehemiah 3" still match album "Nehemiah" at 0.5 rather
+        // than being dragged down by short number words that don't appear in the
+        // album/artist field.
+        val longQWords = qWords.filter { it.length > 2 }
+        if (longQWords.isEmpty()) return 0.5 * matchCount.toDouble() / qWords.size
+        val longMatchCount = longQWords.count { qw -> tWords.any { tw -> wordsMatch(qw, tw) } }
+        return 0.5 * longMatchCount.toDouble() / longQWords.size
     }
 
     private fun wordBoundaryContains(haystack: String, needle: String): Boolean {
