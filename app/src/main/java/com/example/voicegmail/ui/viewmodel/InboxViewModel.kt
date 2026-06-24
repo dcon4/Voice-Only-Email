@@ -1157,7 +1157,21 @@ class InboxViewModel @Inject constructor(
                 val app = appLauncherPrefs.findByVoiceCommand(command.query)
                 if (app != null) {
                     try {
-                        val intent = context.packageManager.getLaunchIntentForPackage(app.packageName)
+                        val pm = context.packageManager
+                        var intent = pm.getLaunchIntentForPackage(app.packageName)
+                        // Some apps (e.g. accessibility services) don't expose a
+                        // standard CATEGORY_LAUNCHER activity.  Fall back to
+                        // querying for ANY exported activity in the package.
+                        if (intent == null) {
+                            val ri = pm.queryIntentActivities(
+                                Intent(Intent.ACTION_MAIN), 0
+                            ).firstOrNull { it.activityInfo.packageName == app.packageName }
+                            if (ri != null) {
+                                intent = Intent().apply {
+                                    setClassName(app.packageName, ri.activityInfo.name)
+                                }
+                            }
+                        }
                         if (intent != null) {
                             lastLaunchedPackage = app.packageName
                             context.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
