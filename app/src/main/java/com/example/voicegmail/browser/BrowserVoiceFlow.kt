@@ -371,12 +371,15 @@ class BrowserVoiceFlow @Inject constructor(
 
     private fun handlePageFinished(scope: CoroutineScope, onExit: (VoiceCommand) -> Unit) {
         if (readingAllSequentially) {
-            // Check if there's a next result in the current page
             val pageEnd = (pageOffset + PAGE_SIZE).coerceAtMost(allResults.size)
+            val resultsOnPage = pageEnd - pageOffset
             if (currentResultIndex + 1 < pageEnd) {
+                val articleNum = currentResultIndex - pageOffset + 1
                 currentResultIndex++
+                val nextNum = currentResultIndex - pageOffset + 1
                 voiceCommandEngine.speakThenListen(
-                    "End of article. Moving to the next result. Say 'skip' to skip, or 'cancel'."
+                    "That concludes article $articleNum of $resultsOnPage. " +
+                        "Now, continuing to number $nextNum. Say 'cancel' to stop."
                 ) { cmd ->
                     when (cmd) {
                         is VoiceCommand.Cancel, is VoiceCommand.GoBack -> {

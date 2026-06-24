@@ -169,6 +169,9 @@ class InboxViewModel @Inject constructor(
     private var readingGen = 0
     @Volatile private var flowGen = 0L
 
+    private var readingAllTotal: Int = 0
+    private var readingAllRemaining: Int = 0
+
     // ------------------------------------------------------------------
     // Init
     // ------------------------------------------------------------------
@@ -593,6 +596,8 @@ class InboxViewModel @Inject constructor(
         // the following speakThenListen call.
         voiceCommandEngine.cancelListening()
         readingGen++ // invalidate any in-flight speakEmailChunk onDone callbacks
+        readingAllTotal = 0
+        readingAllRemaining = 0
         // Restore the main TTS engine+voice in case Bible mode was active.
         // This runs even if Bible was not active (it is a no-op when no engine
         // was saved) so the rest of the wake handler always speaks in the
@@ -769,6 +774,25 @@ class InboxViewModel @Inject constructor(
                         handleCommand(exitCmd, emails)
                     }
                 }
+
+                is VoiceCommand.Repeat -> {
+                    audioPlayerVoiceFlow.resumeAndRestart(viewModelScope) { exitCmd ->
+                        handleCommand(exitCmd, emails)
+                    }
+                }
+
+                is VoiceCommand.Next -> {
+                    audioPlayerVoiceFlow.resumeAndNext(viewModelScope) { exitCmd ->
+                        handleCommand(exitCmd, emails)
+                    }
+                }
+
+                is VoiceCommand.Previous -> {
+                    audioPlayerVoiceFlow.resumeAndPrevious(viewModelScope) { exitCmd ->
+                        handleCommand(exitCmd, emails)
+                    }
+                }
+
                 is VoiceCommand.SessionTimeout, is VoiceCommand.GoToSleep -> {
                     voiceManager.stopAll()
                     voiceManager.speak(
@@ -810,8 +834,22 @@ class InboxViewModel @Inject constructor(
                 is VoiceCommand.ContinueReading ->
                     resumeFromPause(emails)
 
+                is VoiceCommand.Repeat -> {
+                    pausedPosition = null
+                    repeatCurrentEmail(emails)
+                }
+
+                is VoiceCommand.Next -> {
+                    pausedPosition = null
+                    advanceAndRead(+1, emails)
+                }
+
+                is VoiceCommand.Previous -> {
+                    pausedPosition = null
+                    advanceAndRead(-1, emails)
+                }
+
                 is VoiceCommand.SessionTimeout, is VoiceCommand.GoToSleep -> {
-                    // Preserve bookmark — user can resume after the next wake.
                     voiceManager.stopAll()
                     voiceManager.speak(
                         "Going to sleep. Press the power button and say 'continue' to resume reading."
@@ -819,7 +857,6 @@ class InboxViewModel @Inject constructor(
                 }
 
                 is VoiceCommand.Cancel, is VoiceCommand.Pause ->
-                    // Preserve bookmark and re-prompt without timing out into a "lost".
                     promptResumeAndListen(
                         "Paused. Say 'continue' to resume, 'go to sleep' to keep the bookmark, " +
                             "or another command.",
@@ -827,8 +864,6 @@ class InboxViewModel @Inject constructor(
                     )
 
                 is VoiceCommand.FreeText -> {
-                    // Unrecognized speech or empty result from recognizer.  Do NOT
-                    // clear the bookmark — re-prompt so the user can try again.
                     DebugLogger.log(
                         "InboxViewModel",
                         "promptResumeAndListen: unrecognized FreeText='${cmd.text}' — preserving bookmark"
@@ -841,14 +876,23 @@ class InboxViewModel @Inject constructor(
                 }
 
                 else -> {
-                    // Intentional navigation/action command (next, previous, search,
-                    // refresh, delete, compose, etc.).  These handlers already clear
-                    // pausedPosition themselves when appropriate, so we only clear
-                    // it here as a defensive default.
                     pausedPosition = null
                     handleCommand(cmd, emails)
                 }
             }
+        }
+    }
+
+    private fun advanceAndRead(delta: Int, emails: List<EmailItem>) {
+        val newIdx = _currentEmailIndex.value + delta
+        val email = emails.getOrNull(newIdx)
+        if (email != null) {
+            _currentEmailIndex.value = newIdx
+            readCurrentEmail(emails)
+        } else {
+            voiceCommandEngine.speakThenListen(
+                if (delta > 0) "You are at the last email." else "You are at the first email."
+            ) { cmd -> handleCommand(cmd, emails) }
         }
     }
 
@@ -947,10 +991,22 @@ class InboxViewModel @Inject constructor(
         DebugLogger.log("InboxViewModel", "handleCommand: ${command::class.simpleName}" +
             if (command is VoiceCommand.FreeText) " text='${command.text}'" else "")
         when (command) {
-            is VoiceCommand.Read         -> readCurrentEmail(emails)
-            is VoiceCommand.Next         -> advanceEmail(+1, emails)
-            is VoiceCommand.Previous     -> advanceEmail(-1, emails)
-            is VoiceCommand.Repeat       -> repeatCurrentEmail(emails)
+            is VoiceCommand.Read         -> {
+                readingAllTotal = 0; readingAllRemaining = 0
+                readCurrentEmail(emails)
+            }
+            is VoiceCommand.Next         -> {
+                readingAllTotal = 0; readingAllRemaining = 0
+                advanceEmail(+1, emails)
+            }
+            is VoiceCommand.Previous     -> {
+                readingAllTotal = 0; readingAllRemaining = 0
+                advanceEmail(-1, emails)
+            }
+            is VoiceCommand.Repeat       -> {
+                readingAllTotal = 0; readingAllRemaining = 0
+                repeatCurrentEmail(emails)
+            }
             is VoiceCommand.Refresh      -> loadInbox()
             is VoiceCommand.Compose -> startVoiceCompose(emails)
             is VoiceCommand.Reply -> {
@@ -1304,12 +1360,18 @@ class InboxViewModel @Inject constructor(
                 handleCommand(cmd, emails)
             }; return
         }
-        pausedPosition = null // clear any stale bookmark before starting fresh
+        pausedPosition = null
         mediaSessionController.setPlaying("Email: ${email.subject}", "From ${email.from}")
         val unreadPrefix = if (email.isUnread) "Unread. " else ""
         val bodyForSpeech = email.body.forSpeech()
-        val fullText = "${unreadPrefix}Email ${_currentEmailIndex.value + 1} of ${emails.size}. " +
-            "From ${email.from}. Subject: ${email.subject}. $bodyForSpeech"
+        val fullText = if (readingAllTotal > 0) {
+            val seqNum = readingAllTotal - readingAllRemaining
+            "${unreadPrefix}Unread email $seqNum of $readingAllTotal. " +
+                "From ${email.from}. Subject: ${email.subject}. $bodyForSpeech"
+        } else {
+            "${unreadPrefix}Email ${_currentEmailIndex.value + 1} of ${emails.size}. " +
+                "From ${email.from}. Subject: ${email.subject}. $bodyForSpeech"
+        }
         readEmailBySentences(email, emails, fullText)
     }
 
@@ -1380,9 +1442,39 @@ class InboxViewModel @Inject constructor(
         if (gen != readingGen) return // stale callback — a newer session is now active
 
         if (index >= chunks.size) {
-            // Reached the end — clear the bookmark
             pausedPosition = null
             mediaSessionController.setStopped()
+
+            if (readingAllRemaining > 0) {
+                val seqNum = readingAllTotal - readingAllRemaining
+                readingAllRemaining--
+                _currentEmailIndex.value++
+                val nextEmail = emails.getOrNull(_currentEmailIndex.value)
+                if (nextEmail != null) {
+                    voiceCommandEngine.speakThenListen(
+                        "That concludes email $seqNum of $readingAllTotal. " +
+                            "Now, continuing to number ${seqNum + 1}."
+                    ) { cmd ->
+                        when (cmd) {
+                            is VoiceCommand.Cancel, is VoiceCommand.GoBack -> {
+                                readingAllTotal = 0
+                                readingAllRemaining = 0
+                                handleCommand(cmd, emails)
+                            }
+                            is VoiceCommand.GoToSleep, is VoiceCommand.SessionTimeout -> {
+                                readingAllTotal = 0
+                                readingAllRemaining = 0
+                                handleCommand(cmd, emails)
+                            }
+                            else -> readCurrentEmail(emails)
+                        }
+                    }
+                    return
+                }
+                readingAllTotal = 0
+                readingAllRemaining = 0
+            }
+
             val attachHint = when (email.attachments.size) {
                 0    -> ""
                 1    -> " This email has 1 attachment: ${email.attachments[0].filename}."
@@ -1515,6 +1607,8 @@ class InboxViewModel @Inject constructor(
     }
 
     private fun readAllUnread(emails: List<EmailItem>) {
+        readingAllTotal = 0
+        readingAllRemaining = 0
         val unread = emails.filter { it.isUnread }
         if (unread.isEmpty()) {
             voiceCommandEngine.speakThenListen("No unread emails. All caught up!") { cmd ->
@@ -1523,12 +1617,17 @@ class InboxViewModel @Inject constructor(
         }
         val idx = emails.indexOf(unread.first()).coerceAtLeast(0)
         _currentEmailIndex.value = idx
-        val email = unread.first()
-        voiceCommandEngine.speakEmailThenListen(
-            "You have ${unread.size} unread email${if (unread.size == 1) "" else "s"}. " +
-                "First unread: From ${email.from}. Subject: ${email.subject}. " +
-                "Say 'reed' to hear it in full, or 'next' for the next email."
-        ) { cmd -> handleCommand(cmd, emails) }
+        if (unread.size == 1) {
+            val email = unread.first()
+            voiceCommandEngine.speakEmailThenListen(
+                "You have 1 unread email. From ${email.from}. Subject: ${email.subject}. " +
+                    "Say 'reed' to hear it in full."
+            ) { cmd -> handleCommand(cmd, emails) }
+        } else {
+            readingAllTotal = unread.size
+            readingAllRemaining = unread.size - 1
+            readCurrentEmail(emails)
+        }
     }
 
     // ------------------------------------------------------------------

@@ -64,8 +64,63 @@ class AudioPlayerVoiceFlow @Inject constructor(
             currentQueue[currentIndex].title,
             currentQueue[currentIndex].artist
         )
-        // Go to sleep silently — no beeping, no listening. Audio continues.
         onExit(VoiceCommand.GoToSleep)
+    }
+
+    fun resumeAndRestart(scope: CoroutineScope, onExit: (VoiceCommand) -> Unit) {
+        if (!isPaused) {
+            onExit(VoiceCommand.None)
+            return
+        }
+        isPaused = false
+        audioPlayer.seekTo(0)
+        audioPlayer.playQueue(currentQueue, currentIndex)
+        mediaSessionController.setPlaying(
+            currentQueue[currentIndex].title,
+            currentQueue[currentIndex].artist
+        )
+        onExit(VoiceCommand.GoToSleep)
+    }
+
+    fun resumeAndNext(scope: CoroutineScope, onExit: (VoiceCommand) -> Unit) {
+        if (!isPaused || !audioPlayer.hasNext) {
+            onExit(VoiceCommand.None)
+            return
+        }
+        isPaused = false
+        val next = audioPlayer.next() ?: run {
+            onExit(VoiceCommand.None)
+            return
+        }
+        currentIndex = (currentIndex + 1).coerceAtMost(currentQueue.size - 1)
+        mediaSessionController.setPlaying(next.title, next.artist)
+        voiceManager.speak("${next.title} by ${next.artist}.") {
+            onExit(VoiceCommand.GoToSleep)
+        }
+    }
+
+    fun resumeAndPrevious(scope: CoroutineScope, onExit: (VoiceCommand) -> Unit) {
+        if (!isPaused) {
+            onExit(VoiceCommand.None)
+            return
+        }
+        isPaused = false
+        if (audioPlayer.hasPrevious) {
+            val prev = audioPlayer.previous() ?: run {
+                onExit(VoiceCommand.None)
+                return
+            }
+            currentIndex = (currentIndex - 1).coerceAtLeast(0)
+            mediaSessionController.setPlaying(prev.title, prev.artist)
+            voiceManager.speak("${prev.title} by ${prev.artist}.") {
+                onExit(VoiceCommand.GoToSleep)
+            }
+        } else {
+            audioPlayer.seekTo(0)
+            voiceManager.speak("Restarting.") {
+                onExit(VoiceCommand.GoToSleep)
+            }
+        }
     }
 
     fun stop() {
