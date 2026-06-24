@@ -1161,24 +1161,46 @@ class InboxViewModel @Inject constructor(
                         var intent = pm.getLaunchIntentForPackage(app.packageName)
                         // Some apps (e.g. accessibility services) don't expose a
                         // standard CATEGORY_LAUNCHER activity.  Fall back to
-                        // querying for ANY exported activity in the package.
+                        // finding ANY exported activity in the package.
                         if (intent == null) {
-                            val ri = pm.queryIntentActivities(
-                                Intent(Intent.ACTION_MAIN), 0
-                            ).firstOrNull { it.activityInfo.packageName == app.packageName }
-                            if (ri != null) {
-                                intent = Intent().apply {
-                                    setClassName(app.packageName, ri.activityInfo.name)
+                            try {
+                                val pkgInfo = pm.getPackageInfo(
+                                    app.packageName,
+                                    android.content.pm.PackageManager.GET_ACTIVITIES
+                                )
+                                val exportedActivity = pkgInfo.activities?.firstOrNull { it.exported }
+                                if (exportedActivity != null) {
+                                    intent = Intent().apply {
+                                        setClassName(app.packageName, exportedActivity.name)
+                                    }
                                 }
-                            }
+                            } catch (_: Exception) { }
                         }
                         if (intent != null) {
                             lastLaunchedPackage = app.packageName
                             context.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
                         } else {
-                            voiceCommandEngine.speakThenListen(
-                                "Could not launch ${app.displayName}. The app may not be installed."
-                            ) { cmd -> handleCommand(cmd, emails) }
+                            // Last resort: open the system App Info page.
+                            // The user can tap "Open" from there, or verify
+                            // the package name is correct.
+                            val settingsIntent = Intent(
+                                android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS
+                            ).apply {
+                                data = android.net.Uri.fromParts("package", app.packageName, null)
+                                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                            }
+                            try {
+                                context.startActivity(settingsIntent)
+                                voiceCommandEngine.speakThenListen(
+                                    "Could not launch ${app.displayName} directly. " +
+                                        "Opening app settings so you can open it manually."
+                                ) { cmd -> handleCommand(cmd, emails) }
+                            } catch (_: Exception) {
+                                voiceCommandEngine.speakThenListen(
+                                    "Could not launch ${app.displayName}. " +
+                                        "The app may not be installed."
+                                ) { cmd -> handleCommand(cmd, emails) }
+                            }
                         }
                     } catch (e: Exception) {
                         DebugLogger.log("InboxViewModel", "Launch failed: ${e.message}")
