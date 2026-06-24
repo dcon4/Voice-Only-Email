@@ -64,7 +64,8 @@ class AudioPlayerVoiceFlow @Inject constructor(
             currentQueue[currentIndex].title,
             currentQueue[currentIndex].artist
         )
-        openPlaybackWindow(scope, onExit)
+        // Go to sleep silently — no beeping, no listening. Audio continues.
+        onExit(VoiceCommand.GoToSleep)
     }
 
     fun stop() {
