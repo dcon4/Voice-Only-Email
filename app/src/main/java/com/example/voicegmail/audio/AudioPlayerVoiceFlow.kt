@@ -94,9 +94,7 @@ class AudioPlayerVoiceFlow @Inject constructor(
         }
         currentIndex = (currentIndex + 1).coerceAtMost(currentQueue.size - 1)
         mediaSessionController.setPlaying(next.title, next.artist)
-        voiceManager.speak("${next.title} by ${next.artist}.") {
-            onExit(VoiceCommand.GoToSleep)
-        }
+        onExit(VoiceCommand.GoToSleep)
     }
 
     fun resumeAndPrevious(scope: CoroutineScope, onExit: (VoiceCommand) -> Unit) {
@@ -112,14 +110,10 @@ class AudioPlayerVoiceFlow @Inject constructor(
             }
             currentIndex = (currentIndex - 1).coerceAtLeast(0)
             mediaSessionController.setPlaying(prev.title, prev.artist)
-            voiceManager.speak("${prev.title} by ${prev.artist}.") {
-                onExit(VoiceCommand.GoToSleep)
-            }
+            onExit(VoiceCommand.GoToSleep)
         } else {
             audioPlayer.seekTo(0)
-            voiceManager.speak("Restarting.") {
-                onExit(VoiceCommand.GoToSleep)
-            }
+            onExit(VoiceCommand.GoToSleep)
         }
     }
 
@@ -228,20 +222,12 @@ class AudioPlayerVoiceFlow @Inject constructor(
         }
 
         audioPlayer.stop()
-        val announceTracks = audioRepository.getFileAnnouncements()
         audioPlayer.setOnTrackComplete {
             DebugLogger.log(TAG, "track complete: ${it.title}")
             scope.launch {
                 if (currentIndex + 1 < currentQueue.size) {
                     currentIndex++
-                    val next = currentQueue[currentIndex]
-                    if (announceTracks) {
-                        voiceManager.speak("${next.title} by ${next.artist}.") {
-                            playCurrentAndListen(scope, onExit)
-                        }
-                    } else {
-                        playCurrentAndListen(scope, onExit)
-                    }
+                    playCurrentAndListen(scope, onExit)
                 } else {
                     announceQueueEnd(scope, onExit)
                 }
@@ -249,22 +235,11 @@ class AudioPlayerVoiceFlow @Inject constructor(
         }
         audioPlayer.setOnTrackError { errTrack, msg ->
             DebugLogger.log(TAG, "track error: ${errTrack.title} — $msg")
-            if (announceTracks) {
-                voiceManager.speak("Skipping ${errTrack.title}. $msg") {
-                    if (currentIndex + 1 < currentQueue.size) {
-                        currentIndex++
-                        playCurrentAndListen(scope, onExit)
-                    } else {
-                        announceQueueEnd(scope, onExit)
-                    }
-                }
+            if (currentIndex + 1 < currentQueue.size) {
+                currentIndex++
+                playCurrentAndListen(scope, onExit)
             } else {
-                if (currentIndex + 1 < currentQueue.size) {
-                    currentIndex++
-                    playCurrentAndListen(scope, onExit)
-                } else {
-                    announceQueueEnd(scope, onExit)
-                }
+                announceQueueEnd(scope, onExit)
             }
         }
 
@@ -293,9 +268,7 @@ class AudioPlayerVoiceFlow @Inject constructor(
                     currentIndex = audioPlayer.currentTrack
                         ?.let { currentQueue.indexOf(it) }
                         ?.coerceAtLeast(0) ?: (currentIndex + 1).coerceAtMost(currentQueue.size - 1)
-                    voiceManager.speak("${next.title} by ${next.artist}.") {
-                        openPlaybackWindow(scope, onExit)
-                    }
+                    openPlaybackWindow(scope, onExit)
                 } else {
                     voiceManager.speak("End of queue.") {
                         openPlaybackWindow(scope, onExit)
@@ -308,14 +281,10 @@ class AudioPlayerVoiceFlow @Inject constructor(
                     val prev = audioPlayer.previous() ?: return
                     mediaSessionController.setPlaying(prev.title, prev.artist)
                     currentIndex = (currentIndex - 1).coerceAtLeast(0)
-                    voiceManager.speak("${prev.title} by ${prev.artist}.") {
-                        openPlaybackWindow(scope, onExit)
-                    }
+                    openPlaybackWindow(scope, onExit)
                 } else {
                     audioPlayer.seekTo(0)
-                    voiceManager.speak("Restarting.") {
-                        openPlaybackWindow(scope, onExit)
-                    }
+                    openPlaybackWindow(scope, onExit)
                 }
             }
 
@@ -365,9 +334,7 @@ class AudioPlayerVoiceFlow @Inject constructor(
 
             is VoiceCommand.Repeat -> {
                 audioPlayer.seekTo(0)
-                voiceManager.speak("Restarting.") {
-                    openPlaybackWindow(scope, onExit)
-                }
+                openPlaybackWindow(scope, onExit)
             }
 
             is VoiceCommand.Cancel, is VoiceCommand.GoBack -> {
