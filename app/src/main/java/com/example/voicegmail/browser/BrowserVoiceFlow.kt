@@ -377,18 +377,11 @@ class BrowserVoiceFlow @Inject constructor(
                 val articleNum = currentResultIndex - pageOffset + 1
                 currentResultIndex++
                 val nextNum = currentResultIndex - pageOffset + 1
-                voiceCommandEngine.speakThenListen(
+                voiceManager.speak(
                     "That concludes article $articleNum of $resultsOnPage. " +
-                        "Now, continuing to number $nextNum. Say 'cancel' to stop."
-                ) { cmd ->
-                    when (cmd) {
-                        is VoiceCommand.Cancel, is VoiceCommand.GoBack -> {
-                            readingAllSequentially = false
-                            handlePostPageCommand(VoiceCommand.Cancel, scope, onExit)
-                        }
-                        is VoiceCommand.GoToSleep, is VoiceCommand.SessionTimeout -> onExit(cmd)
-                        else -> openResult(currentResultIndex, scope, onExit)
-                    }
+                        "Now, continuing to number $nextNum."
+                ) {
+                    openResult(currentResultIndex, scope, onExit)
                 }
             } else {
                 // Finished all in current page

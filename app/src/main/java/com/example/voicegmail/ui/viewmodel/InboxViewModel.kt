@@ -1451,23 +1451,11 @@ class InboxViewModel @Inject constructor(
                 _currentEmailIndex.value++
                 val nextEmail = emails.getOrNull(_currentEmailIndex.value)
                 if (nextEmail != null) {
-                    voiceCommandEngine.speakThenListen(
+                    voiceManager.speak(
                         "That concludes email $seqNum of $readingAllTotal. " +
                             "Now, continuing to number ${seqNum + 1}."
-                    ) { cmd ->
-                        when (cmd) {
-                            is VoiceCommand.Cancel, is VoiceCommand.GoBack -> {
-                                readingAllTotal = 0
-                                readingAllRemaining = 0
-                                handleCommand(cmd, emails)
-                            }
-                            is VoiceCommand.GoToSleep, is VoiceCommand.SessionTimeout -> {
-                                readingAllTotal = 0
-                                readingAllRemaining = 0
-                                handleCommand(cmd, emails)
-                            }
-                            else -> readCurrentEmail(emails)
-                        }
+                    ) {
+                        readCurrentEmail(emails)
                     }
                     return
                 }
