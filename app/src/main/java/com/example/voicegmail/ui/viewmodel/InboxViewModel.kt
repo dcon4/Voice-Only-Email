@@ -1038,6 +1038,7 @@ class InboxViewModel @Inject constructor(
             is VoiceCommand.ListDrafts   -> startDraftFlow(emails)
             is VoiceCommand.ListAttachments  -> listAttachments(emails)
             is VoiceCommand.ReadAttachment   -> readAttachment(command.index, emails)
+            is VoiceCommand.ReadAll          -> readAll(emails)
             is VoiceCommand.ReadAllUnread    -> readAllUnread(emails)
 
             is VoiceCommand.Pause ->
@@ -1374,7 +1375,7 @@ class InboxViewModel @Inject constructor(
         val bodyForSpeech = email.body.forSpeech()
         val fullText = if (readingAllTotal > 0) {
             val seqNum = readingAllTotal - readingAllRemaining
-            "${unreadPrefix}Unread email $seqNum of $readingAllTotal. " +
+            "${unreadPrefix}Email $seqNum of $readingAllTotal. " +
                 "From ${email.from}. Subject: ${email.subject}. $bodyForSpeech"
         } else {
             "${unreadPrefix}Email ${_currentEmailIndex.value + 1} of ${emails.size}. " +
@@ -1599,6 +1600,33 @@ class InboxViewModel @Inject constructor(
             voiceCommandEngine.speakThenListen(
                 "You are at the $limit email. Say '${if (delta > 0) "previous" else "next"}', 'refresh', or 'compose'."
             ) { cmd -> handleCommand(cmd, emails) }
+        }
+    }
+
+    /**
+     * Read ALL items in [emails] sequentially, regardless of read/unread status.
+     * Used when the user says "read all" — differs from [readAllUnread] which
+     * filters to unread only.
+     */
+    private fun readAll(emails: List<EmailItem>) {
+        readingAllTotal = 0
+        readingAllRemaining = 0
+        if (emails.isEmpty()) {
+            voiceCommandEngine.speakThenListen("No emails to read.") { cmd ->
+                handleCommand(cmd, emails)
+            }; return
+        }
+        _currentEmailIndex.value = 0
+        if (emails.size == 1) {
+            val email = emails[0]
+            voiceCommandEngine.speakEmailThenListen(
+                "1 email. From ${email.from}. Subject: ${email.subject}. " +
+                    "Say 'reed' to hear it."
+            ) { cmd -> handleCommand(cmd, emails) }
+        } else {
+            readingAllTotal = emails.size
+            readingAllRemaining = emails.size - 1
+            readCurrentEmail(emails)
         }
     }
 

@@ -225,14 +225,11 @@ class VoiceCommandEngine @Inject constructor(
             "add more", "and more"           -> "add more"
             // "read all" classically misrecognised by Android STT (especially
             // on Bluetooth SCO narrowband audio) as "redial" / "re-dial" /
-            // "read it all".  Map them all back to "read all unread" so the
-            // parser routes to ReadAllUnread instead of accidentally treating
-            // them as free-form text (which a search-prompt window would then
-            // use as a query string).
-            "redial", "re-dial", "re dial",
-            "read all", "reed all", "red all", "read it all",
-            "read 'em all", "read them all", "read everything",
-            "hear all", "hear them all"      -> "read all unread"
+            // "read it all".  Map redial-like variants to "read all" so the
+            // parser routes to ReadAll (reads ALL current items) instead of
+            // accidentally treating them as free-form text.  The user who
+            // says "read all unread" explicitly still reaches ReadAllUnread.
+            "redial", "re-dial", "re dial" -> "read all"
             else                             -> s
         }
         s = s
@@ -254,11 +251,12 @@ class VoiceCommandEngine @Inject constructor(
             .replace(Regex("\\bgo to sleep\\b"), "go to sleep")
             .replace(Regex("\\bgoto sleep\\b"), "go to sleep")
             .replace(Regex("\\bgo too sleep\\b"), "go to sleep")
-            // Also catch "redial" / "read all" appearing as part of a longer
+            // Also catch "redial" appearing as part of a longer
             // misrecognised phrase, e.g. "redial please", "please redial".
-            .replace(Regex("\\bredial\\b"), "read all unread")
-            .replace(Regex("\\bre-dial\\b"), "read all unread")
-            .replace(Regex("\\bread all\\b(?! unread)"), "read all unread")
+            // "read all" is left as-is so the parser routes it to ReadAll
+            // (all current items) rather than ReadAllUnread (unread only).
+            .replace(Regex("\\bredial\\b"), "read all")
+            .replace(Regex("\\bre-dial\\b"), "read all")
             .replace(Regex("\\bdecon\\b"), "dcon")
         return s
     }
