@@ -996,11 +996,19 @@ class InboxViewModel @Inject constructor(
                 readCurrentEmail(emails)
             }
             is VoiceCommand.Next         -> {
-                readingAllTotal = 0; readingAllRemaining = 0
+                if (readingAllTotal > 0) {
+                    readingAllTotal = 0; readingAllRemaining = 0
+                    voiceManager.stopAll()
+                    return
+                }
                 advanceEmail(+1, emails)
             }
             is VoiceCommand.Previous     -> {
-                readingAllTotal = 0; readingAllRemaining = 0
+                if (readingAllTotal > 0) {
+                    readingAllTotal = 0; readingAllRemaining = 0
+                    voiceManager.stopAll()
+                    return
+                }
                 advanceEmail(-1, emails)
             }
             is VoiceCommand.Repeat       -> {
