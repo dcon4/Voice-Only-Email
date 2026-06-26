@@ -452,6 +452,10 @@ class VoiceManager @Inject constructor(
         var noSpeechMaxRetries: Int = NO_SPEECH_MAX_RETRIES
         var speechBegan: Boolean = false
         var gen: Long = 0
+        /** True when [onError] has already handled the current session.
+         *  Prevents a second [onError] callback (e.g. error 5 followed by
+         *  error 7) from scheduling a duplicate retry chain. */
+        var errorHandled: Boolean = false
     }
 
     private val recState = RecognitionState()
@@ -534,6 +538,11 @@ class VoiceManager @Inject constructor(
                 }
 
                 override fun onError(error: Int) {
+                    if (recState.errorHandled) {
+                        Log.d(tag, "onError($error): already handled — ignoring")
+                        return
+                    }
+                    recState.errorHandled = true
                     _isListening.value = false
                     releaseRecognitionWakeLock()
                     unmuteRecognitionBeep()
@@ -589,6 +598,7 @@ class VoiceManager @Inject constructor(
         recState.noSpeechRetries = noSpeechRetries
         recState.noSpeechMaxRetries = noSpeechMaxRetries
         recState.speechBegan = false
+        recState.errorHandled = false
 
         ensureSpeechRecognizer()
 
@@ -640,6 +650,10 @@ class VoiceManager @Inject constructor(
             }
         } else {
             Log.e(tag, "Recognition giving up (error=$error retries=$retryCount)")
+            // Destroy the recognizer so any next session starts fresh —
+            // persistent Error 5/7 can leave the internal state broken.
+            speechRecognizer?.destroy()
+            speechRecognizer = null
             restoreAudioMode()
             bluetoothRouter.stopSco()
             recState.onResults(emptyList())
@@ -742,6 +756,7 @@ class VoiceManager @Inject constructor(
 
     fun cancelListening() {
         mainHandler.post {
+            recState.gen++
             speechRecognizer?.destroy()
             speechRecognizer = null
             _isListening.value = false
@@ -1091,6 +1106,7 @@ class VoiceManager @Inject constructor(
      */
     fun stopAll() {
         mainHandler.post {
+            recState.gen++
             tts?.setOnUtteranceProgressListener(null)
             tts?.stop()
             tts?.setSpeechRate(1.0f)
