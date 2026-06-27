@@ -62,7 +62,7 @@ class BrowserVoiceFlow @Inject constructor(
      * Returns the resume prompt if reading was in progress, null otherwise.
      */
     fun handleWakeInterrupt(): Boolean {
-        if (currentPageChunks.isNotEmpty() && currentChunkIndex > 0) {
+        if (currentPageChunks.isNotEmpty()) {
             readingGen++ // invalidate in-flight chunk callbacks
             return true
         }
@@ -314,6 +314,11 @@ class BrowserVoiceFlow @Inject constructor(
             }
             return
         }
+
+        // Clear stale chunks before fetch — if the user presses power during
+        // the fetch, handleWakeInterrupt won't find old page chunks to resume.
+        currentPageChunks = emptyList()
+        currentChunkIndex = 0
 
         voiceManager.speak("Opening: ${result.title}.")
         scope.launch {
