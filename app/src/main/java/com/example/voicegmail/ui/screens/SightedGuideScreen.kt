@@ -1,17 +1,49 @@
 package com.example.voicegmail.ui.screens
 
+import android.content.Context
+import android.content.Intent
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.core.content.FileProvider
+import com.example.voicegmail.BuildConfig
+import com.example.voicegmail.R
 import com.example.voicegmail.ui.viewmodel.InboxViewModel
+import java.io.File
+
+/** Copy the bundled PDF guide to a shareable file and open the system share chooser. */
+private fun shareSightedGuide(context: Context) {
+    val pdfFile = File(context.filesDir, "voicegmail-sighted-guide.pdf")
+    if (!pdfFile.exists()) {
+        context.resources.openRawResource(R.raw.sighted_guide).use { input ->
+            pdfFile.outputStream().use { output ->
+                input.copyTo(output)
+            }
+        }
+    }
+    val uri = FileProvider.getUriForFile(
+        context,
+        "${BuildConfig.APPLICATION_ID}.debug.fileprovider",
+        pdfFile
+    )
+    val intent = Intent(Intent.ACTION_SEND).apply {
+        type = "application/pdf"
+        putExtra(Intent.EXTRA_STREAM, uri)
+        putExtra(Intent.EXTRA_SUBJECT, "VoiceGmail Sighted User's Guide")
+        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    }
+    context.startActivity(Intent.createChooser(intent, "Share or Print Guide"))
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SightedGuideScreen(viewModel: InboxViewModel) {
+    val context = LocalContext.current
     ModalBottomSheet(
         onDismissRequest = { viewModel.closeSightedGuide() },
         modifier = Modifier.fillMaxWidth()
@@ -255,6 +287,15 @@ fun SightedGuideScreen(viewModel: InboxViewModel) {
             )
 
             Spacer(Modifier.height(16.dp))
+
+            OutlinedButton(
+                onClick = { shareSightedGuide(context) },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("Share / Print")
+            }
+
+            Spacer(Modifier.height(8.dp))
 
             Button(
                 onClick = { viewModel.closeSightedGuide() },
