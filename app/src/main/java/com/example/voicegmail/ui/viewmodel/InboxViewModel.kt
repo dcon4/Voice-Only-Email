@@ -88,6 +88,9 @@ class InboxViewModel @Inject constructor(
     private val _settingsPanelVisible = MutableStateFlow(false)
     val settingsPanelVisible: StateFlow<Boolean> = _settingsPanelVisible
 
+    private val _sightedGuideVisible = MutableStateFlow(false)
+    val sightedGuideVisible: StateFlow<Boolean> = _sightedGuideVisible
+
     private val _availableEngines = MutableStateFlow<List<TextToSpeech.EngineInfo>>(emptyList())
     val availableEngines: StateFlow<List<TextToSpeech.EngineInfo>> = _availableEngines
 
@@ -256,6 +259,9 @@ class InboxViewModel @Inject constructor(
     }
 
     fun closeSettingsPanel() { _settingsPanelVisible.value = false }
+
+    fun openSightedGuide() { _sightedGuideVisible.value = true }
+    fun closeSightedGuide() { _sightedGuideVisible.value = false }
 
     // ── App launcher panel ───────────────────────────────────────────────────
 
@@ -2523,6 +2529,16 @@ class InboxViewModel @Inject constructor(
             authRepository.clearTokens()
             _isSignedIn.value = false
             _uiState.value = InboxUiState.SignedOut
+        }
+    }
+
+    fun changeGmailAccount() {
+        closeSettingsPanel()
+        viewModelScope.launch {
+            authRepository.clearTokens()
+            _isSignedIn.value = false
+            _uiState.value = InboxUiState.SignedOut
+            requestSignIn()
         }
     }
 

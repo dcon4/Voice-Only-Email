@@ -15,9 +15,33 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import com.example.voicegmail.ui.viewmodel.InboxViewModel
 
+/** Change Gmail Account confirmation dialog. */
+@Composable
+private fun ChangeAccountDialog(onConfirm: () -> Unit, onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Change Gmail Account") },
+        text = {
+            Text(
+                "This will sign you out and let you pick a different account. " +
+                    "All other settings (voice, Bible, audio library, app launcher) " +
+                    "will be preserved. Proceed?"
+            )
+        },
+        confirmButton = {
+            TextButton(onClick = onConfirm) { Text("Change Account") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel") }
+        }
+    )
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun VoiceSettingsPanel(viewModel: InboxViewModel) {
+
+    var showChangeAccountDialog by remember { mutableStateOf(false) }
 
     val engines          by viewModel.availableEngines.collectAsState()
     val voices           by viewModel.settingsVoices.collectAsState()
@@ -415,7 +439,28 @@ fun VoiceSettingsPanel(viewModel: InboxViewModel) {
             ) {
                 Text("Audio Library Settings")
             }
+
+            Spacer(Modifier.height(8.dp))
+
+            OutlinedButton(
+                onClick  = { showChangeAccountDialog = true },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .semantics { contentDescription = "Change Gmail account" }
+            ) {
+                Text("Change Gmail Account")
+            }
         }
+    }
+
+    if (showChangeAccountDialog) {
+        ChangeAccountDialog(
+            onConfirm = {
+                showChangeAccountDialog = false
+                viewModel.changeGmailAccount()
+            },
+            onDismiss = { showChangeAccountDialog = false }
+        )
     }
 }
 
