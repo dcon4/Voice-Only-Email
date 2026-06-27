@@ -154,7 +154,9 @@ class InboxViewModel @Inject constructor(
         val emailId: String,
         val emailIndex: Int,
         val chunks: List<String>,
-        val chunkIndex: Int
+        val chunkIndex: Int,
+        val readingAllTotal: Int = 0,
+        val readingAllRemaining: Int = 0
     )
 
     private var pausedPosition: ReadingPosition? = null
@@ -1486,11 +1488,14 @@ class InboxViewModel @Inject constructor(
         }
 
         // Update bookmark BEFORE speaking — power-button wake reads this position
+        // Also save read-all state so a wake+continue can resume multi-email reading.
         pausedPosition = ReadingPosition(
             emailId    = email.id,
             emailIndex = _currentEmailIndex.value,
             chunks     = chunks,
-            chunkIndex = index
+            chunkIndex = index,
+            readingAllTotal = readingAllTotal,
+            readingAllRemaining = readingAllRemaining
         )
 
         voiceCommandEngine.speakEmailChunk(chunks[index]) {
@@ -1530,6 +1535,11 @@ class InboxViewModel @Inject constructor(
         }
         _currentEmailIndex.value = pos.emailIndex
         readingGen++ // new session for resume — clears any stale flushed-chunk callbacks
+        // Restore read-all counters that were cleared by handleWakeEvent.
+        // Without this, resumeFromPause at the end of an email chunk would stop
+        // instead of advancing to the next email in the ReadAll sequence.
+        readingAllTotal = pos.readingAllTotal
+        readingAllRemaining = pos.readingAllRemaining
         DebugLogger.log(
             "InboxViewModel",
             "resumeFromPause: emailIndex=${pos.emailIndex} chunkIndex=${pos.chunkIndex}/${pos.chunks.size} gen=$readingGen"
