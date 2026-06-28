@@ -64,6 +64,15 @@ class VoiceManager @Inject constructor(
     private var emailReadRate: Float = ttsSettings.getEmailReadRate()
 
     init {
+        // Capture media volume ONCE at startup while audio mode is MODE_NORMAL.
+        // On BT, SCO changes audio mode to MODE_IN_COMMUNICATION which makes
+        // getStreamVolume() return lower values — so we must grab it before
+        // any SCO connection ever happens.  This value is used by
+        // muteRecognitionBeep() to correctly restore volume after recognition.
+        runCatching {
+            preScoMusicVolume = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
+            DebugLogger.verbose(tag, "AUDIO: captured startup volume=$preScoMusicVolume")
+        }
         mainHandler.post { initTts() }
     }
 
@@ -434,12 +443,9 @@ class VoiceManager @Inject constructor(
             Log.w(tag, "Speech recognition unavailable"); onResults(emptyList()); return
         }
 
-        // Capture volume BEFORE SCO mode change — on BT, ensureScoActive switches
-        // to MODE_IN_COMMUNICATION which reports lower STREAM_MUSIC levels, causing
-        // the wrong volume to be saved and restoring silence after SCO disconnects.
-        runCatching {
-            preScoMusicVolume = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
-        }
+        // Volume is captured once at app init (MODE_NORMAL guaranteed).
+        // On BT, SCO reconnects during TTS before this runs, so capturing
+        // here would get the wrong MODE_IN_COMMUNICATION value.
 
         bluetoothRouter.ensureScoActive {
             DebugLogger.verbose(tag, "Mic starting (retry=$retryCount noSpeech=$noSpeechRetries max=$noSpeechMaxRetries)")
@@ -679,14 +685,15 @@ class VoiceManager @Inject constructor(
 
     private fun muteRecognitionBeep() {
         runCatching {
-            // Prefer the volume captured before SCO mode change (MODE_NORMAL value).
-            // If unavailable (non-BT or first call), capture current volume.
+            // Use the volume captured once at app init (MODE_NORMAL guaranteed).
+            // On BT, SCO changes audio mode which makes getStreamVolume() return
+            // lower values, so we must never re-capture after init.
+            // Fallback for non-BT or edge cases where init capture failed.
             savedMusicVolume = if (preScoMusicVolume >= 0) {
                 preScoMusicVolume
             } else {
                 audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
             }
-            preScoMusicVolume = -1
             if (savedMusicVolume > 0) {
                 DebugLogger.verbose(tag, "AUDIO: SET STREAM_MUSIC VOLUME 0")
                 audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, 0, 0)
