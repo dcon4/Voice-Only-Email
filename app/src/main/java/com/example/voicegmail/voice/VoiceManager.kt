@@ -434,6 +434,13 @@ class VoiceManager @Inject constructor(
             Log.w(tag, "Speech recognition unavailable"); onResults(emptyList()); return
         }
 
+        // Capture volume BEFORE SCO mode change — on BT, ensureScoActive switches
+        // to MODE_IN_COMMUNICATION which reports lower STREAM_MUSIC levels, causing
+        // the wrong volume to be saved and restoring silence after SCO disconnects.
+        runCatching {
+            preScoMusicVolume = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
+        }
+
         bluetoothRouter.ensureScoActive {
             DebugLogger.verbose(tag, "Mic starting (retry=$retryCount noSpeech=$noSpeechRetries max=$noSpeechMaxRetries)")
             doStartRecognizer(onResults, retryCount, noSpeechRetries, noSpeechMaxRetries)
@@ -665,10 +672,21 @@ class VoiceManager @Inject constructor(
     // ------------------------------------------------------------------
 
     private var savedMusicVolume: Int = -1
+    /** Volume captured BEFORE SCO mode change (in MODE_NORMAL). Used by BT flavor
+     *  to restore the correct volume after SCO disconnects, since getStreamVolume()
+     *  returns lower values while in MODE_IN_COMMUNICATION. */
+    private var preScoMusicVolume: Int = -1
 
     private fun muteRecognitionBeep() {
         runCatching {
-            savedMusicVolume = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
+            // Prefer the volume captured before SCO mode change (MODE_NORMAL value).
+            // If unavailable (non-BT or first call), capture current volume.
+            savedMusicVolume = if (preScoMusicVolume >= 0) {
+                preScoMusicVolume
+            } else {
+                audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
+            }
+            preScoMusicVolume = -1
             if (savedMusicVolume > 0) {
                 DebugLogger.verbose(tag, "AUDIO: SET STREAM_MUSIC VOLUME 0")
                 audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, 0, 0)
