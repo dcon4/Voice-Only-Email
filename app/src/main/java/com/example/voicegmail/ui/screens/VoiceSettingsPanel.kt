@@ -155,6 +155,44 @@ fun VoiceSettingsPanel(viewModel: InboxViewModel) {
 
             HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
 
+            // ---- Silent Wake -----------------------------------------------
+            val silentWake by viewModel.silentWake.collectAsState()
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 8.dp)
+                    .semantics(mergeDescendants = true) {
+                        contentDescription = if (silentWake)
+                            "Silent wake is on. TTS announcements on wake are silenced, only beeps play."
+                        else
+                            "Silent wake is off. TTS announcements play normally on wake."
+                    },
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Silent wake",
+                        style = MaterialTheme.typography.bodyLarge
+                    )
+                    Text(
+                        text = if (silentWake)
+                            "No TTS on wake — only beeps and mic"
+                        else
+                            "TTS announcements play normally on wake",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Switch(
+                    checked = silentWake,
+                    onCheckedChange = { viewModel.setSilentWake(it) }
+                )
+            }
+
+            HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
+
             // ---- TTS Engine ------------------------------------------------
             Text(
                 text = "Text-to-Speech Engine",

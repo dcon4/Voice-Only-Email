@@ -52,6 +52,9 @@ sealed class VoiceCommand {
     /** User wants to hear the battery percentage. */
     object Battery         : VoiceCommand()
 
+    /** User wants to hear the current state (always available). */
+    object Status          : VoiceCommand()
+
     /** Read all results in a browser set sequentially. */
     object ReadAll         : VoiceCommand()
     /** Show the next page of browser results. */
@@ -108,6 +111,15 @@ class VoiceCommandEngine @Inject constructor(
 
     fun speakThenListen(prompt: String, onCommand: (VoiceCommand) -> Unit) {
         voiceManager.speakAndThenListen(prompt) { candidates ->
+            val cmd = parseAll(candidates)
+            _lastCommand.value = cmd
+            onCommand(cmd)
+        }
+    }
+
+    /** Start listening without speaking (for silent wake mode). */
+    fun listenOnly(onCommand: (VoiceCommand) -> Unit) {
+        voiceManager.startListeningOnly { candidates ->
             val cmd = parseAll(candidates)
             _lastCommand.value = cmd
             onCommand(cmd)
@@ -472,6 +484,8 @@ class VoiceCommandEngine @Inject constructor(
 
             lower.contains("help") || lower.contains("what can i say") ||
                 lower.contains("commands") -> VoiceCommand.Help
+
+            lower == "status" -> VoiceCommand.Status
 
             lower.contains("search") || lower.contains("find") ||
                 lower.contains("look for") -> VoiceCommand.Search

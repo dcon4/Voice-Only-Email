@@ -315,6 +315,11 @@ class VoiceManager @Inject constructor(
         }
     }
 
+    /** Start listening without speaking anything (for silent wake mode). */
+    fun startListeningOnly(onResults: (List<String>) -> Unit) {
+        mainHandler.post { startListeningOnMainThread(onResults) }
+    }
+
     // ------------------------------------------------------------------
     // TTS output — email rate (email bodies and attachments only)
     // ------------------------------------------------------------------
