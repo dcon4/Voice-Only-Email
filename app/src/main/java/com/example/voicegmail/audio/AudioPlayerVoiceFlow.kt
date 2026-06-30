@@ -64,7 +64,57 @@ class AudioPlayerVoiceFlow @Inject constructor(
             currentQueue[currentIndex].title,
             currentQueue[currentIndex].artist
         )
-        openPlaybackWindow(scope, onExit)
+        onExit(VoiceCommand.GoToSleep)
+    }
+
+    fun resumeAndRestart(scope: CoroutineScope, onExit: (VoiceCommand) -> Unit) {
+        if (!isPaused) {
+            onExit(VoiceCommand.None)
+            return
+        }
+        isPaused = false
+        audioPlayer.seekTo(0)
+        audioPlayer.playQueue(currentQueue, currentIndex)
+        mediaSessionController.setPlaying(
+            currentQueue[currentIndex].title,
+            currentQueue[currentIndex].artist
+        )
+        onExit(VoiceCommand.GoToSleep)
+    }
+
+    fun resumeAndNext(scope: CoroutineScope, onExit: (VoiceCommand) -> Unit) {
+        if (!isPaused || !audioPlayer.hasNext) {
+            onExit(VoiceCommand.None)
+            return
+        }
+        isPaused = false
+        val next = audioPlayer.next() ?: run {
+            onExit(VoiceCommand.None)
+            return
+        }
+        currentIndex = (currentIndex + 1).coerceAtMost(currentQueue.size - 1)
+        mediaSessionController.setPlaying(next.title, next.artist)
+        onExit(VoiceCommand.GoToSleep)
+    }
+
+    fun resumeAndPrevious(scope: CoroutineScope, onExit: (VoiceCommand) -> Unit) {
+        if (!isPaused) {
+            onExit(VoiceCommand.None)
+            return
+        }
+        isPaused = false
+        if (audioPlayer.hasPrevious) {
+            val prev = audioPlayer.previous() ?: run {
+                onExit(VoiceCommand.None)
+                return
+            }
+            currentIndex = (currentIndex - 1).coerceAtLeast(0)
+            mediaSessionController.setPlaying(prev.title, prev.artist)
+            onExit(VoiceCommand.GoToSleep)
+        } else {
+            audioPlayer.seekTo(0)
+            onExit(VoiceCommand.GoToSleep)
+        }
     }
 
     fun stop() {
@@ -177,10 +227,7 @@ class AudioPlayerVoiceFlow @Inject constructor(
             scope.launch {
                 if (currentIndex + 1 < currentQueue.size) {
                     currentIndex++
-                    val next = currentQueue[currentIndex]
-                    voiceManager.speak("${next.title} by ${next.artist}.") {
-                        playCurrentAndListen(scope, onExit)
-                    }
+                    playCurrentAndListen(scope, onExit)
                 } else {
                     announceQueueEnd(scope, onExit)
                 }
@@ -188,19 +235,20 @@ class AudioPlayerVoiceFlow @Inject constructor(
         }
         audioPlayer.setOnTrackError { errTrack, msg ->
             DebugLogger.log(TAG, "track error: ${errTrack.title} — $msg")
-            voiceManager.speak("Skipping ${errTrack.title}. $msg") {
-                if (currentIndex + 1 < currentQueue.size) {
-                    currentIndex++
-                    playCurrentAndListen(scope, onExit)
-                } else {
-                    announceQueueEnd(scope, onExit)
-                }
+            if (currentIndex + 1 < currentQueue.size) {
+                currentIndex++
+                playCurrentAndListen(scope, onExit)
+            } else {
+                announceQueueEnd(scope, onExit)
             }
         }
 
         audioPlayer.playQueue(currentQueue, currentIndex)
         mediaSessionController.setPlaying(track.title, track.artist)
-        openPlaybackWindow(scope, onExit)
+        // Go to sleep silently — no beeping, no listening. Audio continues
+        // playing in the background. The user can press the power button to
+        // wake, pause, and interact.
+        onExit(VoiceCommand.GoToSleep)
     }
 
     private fun openPlaybackWindow(scope: CoroutineScope, onExit: (VoiceCommand) -> Unit) {
@@ -220,9 +268,7 @@ class AudioPlayerVoiceFlow @Inject constructor(
                     currentIndex = audioPlayer.currentTrack
                         ?.let { currentQueue.indexOf(it) }
                         ?.coerceAtLeast(0) ?: (currentIndex + 1).coerceAtMost(currentQueue.size - 1)
-                    voiceManager.speak("${next.title} by ${next.artist}.") {
-                        openPlaybackWindow(scope, onExit)
-                    }
+                    openPlaybackWindow(scope, onExit)
                 } else {
                     voiceManager.speak("End of queue.") {
                         openPlaybackWindow(scope, onExit)
@@ -235,14 +281,10 @@ class AudioPlayerVoiceFlow @Inject constructor(
                     val prev = audioPlayer.previous() ?: return
                     mediaSessionController.setPlaying(prev.title, prev.artist)
                     currentIndex = (currentIndex - 1).coerceAtLeast(0)
-                    voiceManager.speak("${prev.title} by ${prev.artist}.") {
-                        openPlaybackWindow(scope, onExit)
-                    }
+                    openPlaybackWindow(scope, onExit)
                 } else {
                     audioPlayer.seekTo(0)
-                    voiceManager.speak("Restarting.") {
-                        openPlaybackWindow(scope, onExit)
-                    }
+                    openPlaybackWindow(scope, onExit)
                 }
             }
 
@@ -292,9 +334,7 @@ class AudioPlayerVoiceFlow @Inject constructor(
 
             is VoiceCommand.Repeat -> {
                 audioPlayer.seekTo(0)
-                voiceManager.speak("Restarting.") {
-                    openPlaybackWindow(scope, onExit)
-                }
+                openPlaybackWindow(scope, onExit)
             }
 
             is VoiceCommand.Cancel, is VoiceCommand.GoBack -> {
@@ -303,9 +343,7 @@ class AudioPlayerVoiceFlow @Inject constructor(
             }
 
             is VoiceCommand.GoToSleep, is VoiceCommand.SessionTimeout -> {
-                audioPlayer.pause()
-                isPaused = true
-                mediaSessionController.setPaused()
+                // Let audio keep playing — no pause on sleep
                 onExit(cmd)
             }
 
@@ -314,8 +352,8 @@ class AudioPlayerVoiceFlow @Inject constructor(
                 if (text.isNotBlank()) {
                     searchAndPlay(text, scope, onExit)
                 } else {
-                    // Timeout or empty — keep playing, listen again
-                    openPlaybackWindow(scope, onExit)
+                    // Timeout or empty — go to sleep, audio keeps playing
+                    onExit(VoiceCommand.GoToSleep)
                 }
             }
 
@@ -370,26 +408,7 @@ class AudioPlayerVoiceFlow @Inject constructor(
 
     private fun announceQueueEnd(scope: CoroutineScope, onExit: (VoiceCommand) -> Unit) {
         voiceManager.speak("End of queue. Say a song, album, or artist name, or 'cancel' to exit.") {
-            voiceCommandEngine.listen { cmd ->
-                when (cmd) {
-                    is VoiceCommand.FreeText -> {
-                        val text = cmd.text.trim()
-                        if (text.isNotBlank()) searchAndPlay(text, scope, onExit)
-                        else {
-                            stop()
-                            onExit(VoiceCommand.None)
-                        }
-                    }
-                    is VoiceCommand.Cancel, is VoiceCommand.GoBack -> {
-                        stop()
-                        onExit(VoiceCommand.None)
-                    }
-                    else -> {
-                        stop()
-                        onExit(cmd)
-                    }
-                }
-            }
+            onExit(VoiceCommand.None)
         }
     }
 }

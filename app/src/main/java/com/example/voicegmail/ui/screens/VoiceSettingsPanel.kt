@@ -5,6 +5,7 @@ import android.speech.tts.Voice
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -12,12 +13,37 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.example.voicegmail.ui.viewmodel.InboxViewModel
+
+/** Change Gmail Account confirmation dialog. */
+@Composable
+private fun ChangeAccountDialog(onConfirm: () -> Unit, onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Change Gmail Account") },
+        text = {
+            Text(
+                "This will sign you out and let you pick a different account. " +
+                    "All other settings (voice, Bible, audio library, app launcher) " +
+                    "will be preserved. Proceed?"
+            )
+        },
+        confirmButton = {
+            TextButton(onClick = onConfirm) { Text("Change Account") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel") }
+        }
+    )
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun VoiceSettingsPanel(viewModel: InboxViewModel) {
+
+    var showChangeAccountDialog by remember { mutableStateOf(false) }
 
     val engines          by viewModel.availableEngines.collectAsState()
     val voices           by viewModel.settingsVoices.collectAsState()
@@ -128,6 +154,92 @@ fun VoiceSettingsPanel(viewModel: InboxViewModel) {
                     onCheckedChange = { viewModel.setVerboseLogging(it) }
                 )
             }
+
+            HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
+
+            // ---- Silent Wake -----------------------------------------------
+            val silentWake by viewModel.silentWake.collectAsState()
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 8.dp)
+                    .semantics(mergeDescendants = true) {
+                        contentDescription = if (silentWake)
+                            "Silent wake is on. TTS announcements on wake are silenced, only beeps play."
+                        else
+                            "Silent wake is off. TTS announcements play normally on wake."
+                    },
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Silent wake",
+                        style = MaterialTheme.typography.bodyLarge
+                    )
+                    Text(
+                        text = if (silentWake)
+                            "No TTS on wake — only beeps and mic"
+                        else
+                            "TTS announcements play normally on wake",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Switch(
+                    checked = silentWake,
+                    onCheckedChange = { viewModel.setSilentWake(it) }
+                )
+            }
+
+            HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
+
+            // ---- Zip Code --------------------------------------------------
+            val zipCode by viewModel.zipCode.collectAsState()
+            var zipCodeInput by remember(zipCode) { mutableStateOf(zipCode) }
+
+            Text(
+                text = "Zip Code",
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.padding(top = 4.dp, bottom = 4.dp)
+            )
+
+            OutlinedTextField(
+                value = zipCodeInput,
+                onValueChange = { zipCodeInput = it },
+                label = { Text("USA zip code") },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                modifier = Modifier.fillMaxWidth()
+            )
+
+            Spacer(Modifier.height(4.dp))
+
+            OutlinedButton(
+                onClick = { viewModel.setZipCode(zipCodeInput) },
+                modifier = Modifier.fillMaxWidth(),
+                enabled = zipCodeInput.length == 5 && zipCodeInput.all { it.isDigit() }
+            ) {
+                Text("Save zip code")
+            }
+
+            if (zipCode.isNotBlank()) {
+                Text(
+                    text = "Current zip code: $zipCode",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+
+            Spacer(Modifier.height(4.dp))
+
+            Text(
+                text = "Used for 'time' and 'weather' voice commands.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
 
             HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
 
@@ -404,7 +516,39 @@ fun VoiceSettingsPanel(viewModel: InboxViewModel) {
             ) {
                 Text("Add App to Launcher")
             }
+
+            Spacer(Modifier.height(8.dp))
+
+            OutlinedButton(
+                onClick  = { viewModel.openAudioSettings() },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .semantics { contentDescription = "Open audio library settings" }
+            ) {
+                Text("Audio Library Settings")
+            }
+
+            Spacer(Modifier.height(8.dp))
+
+            OutlinedButton(
+                onClick  = { showChangeAccountDialog = true },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .semantics { contentDescription = "Change Gmail account" }
+            ) {
+                Text("Change Gmail Account")
+            }
         }
+    }
+
+    if (showChangeAccountDialog) {
+        ChangeAccountDialog(
+            onConfirm = {
+                showChangeAccountDialog = false
+                viewModel.changeGmailAccount()
+            },
+            onDismiss = { showChangeAccountDialog = false }
+        )
     }
 }
 

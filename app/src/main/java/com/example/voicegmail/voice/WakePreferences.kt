@@ -27,6 +27,7 @@ class WakePreferences @Inject constructor(
     companion object {
         private const val KEY_RUN_IN_BACKGROUND = "run_in_background"
         private const val KEY_VERBOSE_LOGGING = "verbose_logging"
+        private const val KEY_SILENT_WAKE = "silent_wake"
     }
 
     /** Whether the app should run in background mode (wake on power button). Default: true. */
@@ -43,5 +44,13 @@ class WakePreferences @Inject constructor(
 
     fun setVerboseLogging(enabled: Boolean) {
         prefs.edit().putBoolean(KEY_VERBOSE_LOGGING, enabled).apply()
+    }
+
+    /** Whether silent wake is enabled (no TTS on wake, just beep + listen). Default: false. */
+    fun isSilentWake(): Boolean =
+        prefs.getBoolean(KEY_SILENT_WAKE, false)
+
+    fun setSilentWake(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_SILENT_WAKE, enabled).apply()
     }
 }

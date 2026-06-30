@@ -137,6 +137,16 @@ class BluetoothAudioRouter @Inject constructor(
                 audioManager.isBluetoothScoAvailableOffCall
 
     /**
+     * Returns true when BT SCO is currently connected and audio mode
+     * is MODE_IN_COMMUNICATION.  VoiceManager uses this to skip the
+     * mute/unmute cycle — when SCO is active, the recognition beep
+     * goes through the SCO channel (not STREAM_MUSIC), so muting
+     * STREAM_MUSIC is pointless and causes volume degradation.
+     */
+    val isScoActive: Boolean
+        get() = scoConnected
+
+    /**
      * Ensure the Bluetooth SCO channel is active for microphone use,
      * then invoke [onReady].
      *

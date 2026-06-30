@@ -315,6 +315,11 @@ class VoiceManager @Inject constructor(
         }
     }
 
+    /** Start listening without speaking anything (for silent wake mode). */
+    fun startListeningOnly(onResults: (List<String>) -> Unit) {
+        mainHandler.post { startListeningOnMainThread(onResults) }
+    }
+
     // ------------------------------------------------------------------
     // TTS output — email rate (email bodies and attachments only)
     // ------------------------------------------------------------------
@@ -452,6 +457,10 @@ class VoiceManager @Inject constructor(
         var noSpeechMaxRetries: Int = NO_SPEECH_MAX_RETRIES
         var speechBegan: Boolean = false
         var gen: Long = 0
+        /** True when [onError] has already handled the current session.
+         *  Prevents a second [onError] callback (e.g. error 5 followed by
+         *  error 7) from scheduling a duplicate retry chain. */
+        var errorHandled: Boolean = false
     }
 
     private val recState = RecognitionState()
@@ -534,6 +543,11 @@ class VoiceManager @Inject constructor(
                 }
 
                 override fun onError(error: Int) {
+                    if (recState.errorHandled) {
+                        Log.d(tag, "onError($error): already handled — ignoring")
+                        return
+                    }
+                    recState.errorHandled = true
                     _isListening.value = false
                     releaseRecognitionWakeLock()
                     unmuteRecognitionBeep()
@@ -589,6 +603,7 @@ class VoiceManager @Inject constructor(
         recState.noSpeechRetries = noSpeechRetries
         recState.noSpeechMaxRetries = noSpeechMaxRetries
         recState.speechBegan = false
+        recState.errorHandled = false
 
         ensureSpeechRecognizer()
 
@@ -640,6 +655,10 @@ class VoiceManager @Inject constructor(
             }
         } else {
             Log.e(tag, "Recognition giving up (error=$error retries=$retryCount)")
+            // Destroy the recognizer so any next session starts fresh —
+            // persistent Error 5/7 can leave the internal state broken.
+            speechRecognizer?.destroy()
+            speechRecognizer = null
             restoreAudioMode()
             bluetoothRouter.stopSco()
             recState.onResults(emptyList())
@@ -653,6 +672,11 @@ class VoiceManager @Inject constructor(
     private var savedMusicVolume: Int = -1
 
     private fun muteRecognitionBeep() {
+        // When SCO is active (BT headset connected), the recognition beep
+        // goes through the SCO channel, not STREAM_MUSIC.  Muting
+        // STREAM_MUSIC is pointless here and causes volume degradation
+        // because MODE_IN_COMMUNICATION changes how volume maps to loudness.
+        if (bluetoothRouter.isScoActive) return
         runCatching {
             savedMusicVolume = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
             if (savedMusicVolume > 0) {
@@ -663,6 +687,7 @@ class VoiceManager @Inject constructor(
     }
 
     private fun unmuteRecognitionBeep() {
+        if (bluetoothRouter.isScoActive) return
         runCatching {
             if (savedMusicVolume >= 0) {
                 DebugLogger.verbose(tag, "AUDIO: RESTORE STREAM_MUSIC VOLUME $savedMusicVolume")
@@ -742,6 +767,7 @@ class VoiceManager @Inject constructor(
 
     fun cancelListening() {
         mainHandler.post {
+            recState.gen++
             speechRecognizer?.destroy()
             speechRecognizer = null
             _isListening.value = false
@@ -1091,6 +1117,7 @@ class VoiceManager @Inject constructor(
      */
     fun stopAll() {
         mainHandler.post {
+            recState.gen++
             tts?.setOnUtteranceProgressListener(null)
             tts?.stop()
             tts?.setSpeechRate(1.0f)

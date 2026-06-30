@@ -62,7 +62,7 @@ class BrowserVoiceFlow @Inject constructor(
      * Returns the resume prompt if reading was in progress, null otherwise.
      */
     fun handleWakeInterrupt(): Boolean {
-        if (currentPageChunks.isNotEmpty() && currentChunkIndex > 0) {
+        if (currentPageChunks.isNotEmpty()) {
             readingGen++ // invalidate in-flight chunk callbacks
             return true
         }
@@ -147,7 +147,17 @@ class BrowserVoiceFlow @Inject constructor(
                 }
                 performSearch(query, scope, onExit)
             }
-            else -> onExit(cmd)
+            else -> {
+                val text = when (cmd) {
+                    is VoiceCommand.LaunchApp -> cmd.query
+                    else -> null
+                }
+                if (text != null && text.isNotBlank()) {
+                    performSearch(text, scope, onExit)
+                } else {
+                    onExit(cmd)
+                }
+            }
         }
     }
 
@@ -272,7 +282,17 @@ class BrowserVoiceFlow @Inject constructor(
                     ) { retry -> handleResultSelection(retry, scope, onExit) }
                 }
             }
-            else -> onExit(cmd)
+            else -> {
+                val text = when (cmd) {
+                    is VoiceCommand.LaunchApp -> cmd.query
+                    else -> null
+                }
+                if (text != null && text.isNotBlank()) {
+                    performSearch(text, scope, onExit)
+                } else {
+                    onExit(cmd)
+                }
+            }
         }
     }
 
@@ -294,6 +314,11 @@ class BrowserVoiceFlow @Inject constructor(
             }
             return
         }
+
+        // Clear stale chunks before fetch — if the user presses power during
+        // the fetch, handleWakeInterrupt won't find old page chunks to resume.
+        currentPageChunks = emptyList()
+        currentChunkIndex = 0
 
         voiceManager.speak("Opening: ${result.title}.")
         scope.launch {
@@ -351,21 +376,17 @@ class BrowserVoiceFlow @Inject constructor(
 
     private fun handlePageFinished(scope: CoroutineScope, onExit: (VoiceCommand) -> Unit) {
         if (readingAllSequentially) {
-            // Check if there's a next result in the current page
             val pageEnd = (pageOffset + PAGE_SIZE).coerceAtMost(allResults.size)
+            val resultsOnPage = pageEnd - pageOffset
             if (currentResultIndex + 1 < pageEnd) {
+                val articleNum = currentResultIndex - pageOffset + 1
                 currentResultIndex++
-                voiceCommandEngine.speakThenListen(
-                    "End of article. Moving to the next result. Say 'skip' to skip, or 'cancel'."
-                ) { cmd ->
-                    when (cmd) {
-                        is VoiceCommand.Cancel, is VoiceCommand.GoBack -> {
-                            readingAllSequentially = false
-                            handlePostPageCommand(VoiceCommand.Cancel, scope, onExit)
-                        }
-                        is VoiceCommand.GoToSleep, is VoiceCommand.SessionTimeout -> onExit(cmd)
-                        else -> openResult(currentResultIndex, scope, onExit)
-                    }
+                val nextNum = currentResultIndex - pageOffset + 1
+                voiceManager.speak(
+                    "That concludes article $articleNum of $resultsOnPage. " +
+                        "Now, continuing to number $nextNum."
+                ) {
+                    openResult(currentResultIndex, scope, onExit)
                 }
             } else {
                 // Finished all in current page
@@ -483,7 +504,17 @@ class BrowserVoiceFlow @Inject constructor(
                     ) { retry -> handlePostPageCommand(retry, scope, onExit) }
                 }
             }
-            else -> onExit(cmd)
+            else -> {
+                val text = when (cmd) {
+                    is VoiceCommand.LaunchApp -> cmd.query
+                    else -> null
+                }
+                if (text != null && text.isNotBlank()) {
+                    performSearch(text, scope, onExit)
+                } else {
+                    onExit(cmd)
+                }
+            }
         }
     }
 

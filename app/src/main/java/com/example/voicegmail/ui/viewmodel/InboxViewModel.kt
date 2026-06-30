@@ -68,7 +68,9 @@ class InboxViewModel @Inject constructor(
     private val mediaSessionController: com.example.voicegmail.media.MediaSessionController,
     private val ttsSettings: com.example.voicegmail.voice.TtsSettingsRepository,
     private val appLauncherPrefs: com.example.voicegmail.voice.AppLauncherPreferences,
-    private val audioRepository: com.example.voicegmail.audio.AudioRepository
+    private val audioRepository: com.example.voicegmail.audio.AudioRepository,
+    private val timeWeatherRepository: com.example.voicegmail.voice.TimeWeatherRepository,
+    private val zipCodePrefs: com.example.voicegmail.voice.ZipCodePreferences
 ) : ViewModel() {
 
     private var isFirstLoad = true
@@ -87,6 +89,9 @@ class InboxViewModel @Inject constructor(
 
     private val _settingsPanelVisible = MutableStateFlow(false)
     val settingsPanelVisible: StateFlow<Boolean> = _settingsPanelVisible
+
+    private val _sightedGuideVisible = MutableStateFlow(false)
+    val sightedGuideVisible: StateFlow<Boolean> = _sightedGuideVisible
 
     private val _availableEngines = MutableStateFlow<List<TextToSpeech.EngineInfo>>(emptyList())
     val availableEngines: StateFlow<List<TextToSpeech.EngineInfo>> = _availableEngines
@@ -132,6 +137,12 @@ class InboxViewModel @Inject constructor(
     private val _verboseLogging = MutableStateFlow(false)
     val verboseLogging: StateFlow<Boolean> = _verboseLogging
 
+    private val _silentWake = MutableStateFlow(false)
+    val silentWake: StateFlow<Boolean> = _silentWake
+
+    private val _zipCode = MutableStateFlow("")
+    val zipCode: StateFlow<String> = _zipCode
+
     private val _batteryThreshold = MutableStateFlow(30)
     val batteryThreshold: StateFlow<Int> = _batteryThreshold
 
@@ -154,7 +165,9 @@ class InboxViewModel @Inject constructor(
         val emailId: String,
         val emailIndex: Int,
         val chunks: List<String>,
-        val chunkIndex: Int
+        val chunkIndex: Int,
+        val readingAllTotal: Int = 0,
+        val readingAllRemaining: Int = 0
     )
 
     private var pausedPosition: ReadingPosition? = null
@@ -168,6 +181,9 @@ class InboxViewModel @Inject constructor(
      */
     private var readingGen = 0
     @Volatile private var flowGen = 0L
+
+    private var readingAllTotal: Int = 0
+    private var readingAllRemaining: Int = 0
 
     // ------------------------------------------------------------------
     // Init
@@ -246,11 +262,16 @@ class InboxViewModel @Inject constructor(
         }
         _runInBackground.value    = wakePreferences.isRunInBackground()
         _verboseLogging.value     = wakePreferences.isVerboseLogging()
+        _silentWake.value         = wakePreferences.isSilentWake()
+        _zipCode.value            = zipCodePrefs.getZipCode()
         _batteryThreshold.value   = ttsSettings.getBatteryThreshold()
         _settingsPanelVisible.value = true
     }
 
     fun closeSettingsPanel() { _settingsPanelVisible.value = false }
+
+    fun openSightedGuide() { _sightedGuideVisible.value = true }
+    fun closeSightedGuide() { _sightedGuideVisible.value = false }
 
     // ── App launcher panel ───────────────────────────────────────────────────
 
@@ -307,9 +328,18 @@ class InboxViewModel @Inject constructor(
     private val _isAudioScanning = MutableStateFlow(false)
     val isAudioScanning: StateFlow<Boolean> = _isAudioScanning
 
+    private val _fileAnnouncements = MutableStateFlow(false)
+    val audioFileAnnouncements: StateFlow<Boolean> = _fileAnnouncements
+
     fun openAudioSettings() {
         refreshAudioState()
+        _fileAnnouncements.value = audioRepository.getFileAnnouncements()
         _audioSettingsVisible.value = true
+    }
+
+    fun setAudioFileAnnouncements(enabled: Boolean) {
+        audioRepository.setFileAnnouncements(enabled)
+        _fileAnnouncements.value = enabled
     }
 
     fun closeAudioSettings() { _audioSettingsVisible.value = false }
@@ -393,6 +423,18 @@ class InboxViewModel @Inject constructor(
         _verboseLogging.value = enabled
         DebugLogger.verboseEnabled = enabled
         DebugLogger.log("InboxViewModel", "Verbose logging = $enabled")
+    }
+
+    fun setSilentWake(enabled: Boolean) {
+        wakePreferences.setSilentWake(enabled)
+        _silentWake.value = enabled
+        DebugLogger.log("InboxViewModel", "Silent wake = $enabled")
+    }
+
+    fun setZipCode(value: String) {
+        zipCodePrefs.setZipCode(value)
+        _zipCode.value = value
+        DebugLogger.log("InboxViewModel", "Zip code = $value")
     }
 
     fun setBatteryThreshold(threshold: Int) {
@@ -584,6 +626,8 @@ class InboxViewModel @Inject constructor(
         // the following speakThenListen call.
         voiceCommandEngine.cancelListening()
         readingGen++ // invalidate any in-flight speakEmailChunk onDone callbacks
+        readingAllTotal = 0
+        readingAllRemaining = 0
         // Restore the main TTS engine+voice in case Bible mode was active.
         // This runs even if Bible was not active (it is a no-op when no engine
         // was saved) so the rest of the wake handler always speaks in the
@@ -674,9 +718,11 @@ class InboxViewModel @Inject constructor(
                 handleCommand(exitCmd, emails)
             }
         }
-        voiceCommandEngine.speakThenListen(
-            "Bible reading was paused. Say 'continue' to resume, or another command."
-        ) { cmd ->
+        val promptBible = "Bible reading was paused. Say 'continue' to resume, or another command."
+        val listenBible: ((VoiceCommand) -> Unit) -> Unit =
+            if (_silentWake.value) { cb -> voiceCommandEngine.listenOnly(cb) }
+            else { cb -> voiceCommandEngine.speakThenListen(promptBible, cb) }
+        listenBible { cmd ->
             when (cmd) {
                 is VoiceCommand.ContinueReading -> {
                     voiceManager.switchToBibleEngine {
@@ -710,17 +756,21 @@ class InboxViewModel @Inject constructor(
                 }
             } else handleCommand(exitCmd, emails)
         }
-        voiceCommandEngine.speakThenListen(
-            "Browser reading paused. Say 'continue' to resume, 'next' for the next article, or 'cancel'."
-        ) { cmd ->
+        val promptBrowser = "Browser reading paused. Say 'continue' to resume, 'next' for the next article, or 'cancel'."
+        val listenBrowser: ((VoiceCommand) -> Unit) -> Unit =
+            if (_silentWake.value) { cb -> voiceCommandEngine.listenOnly(cb) }
+            else { cb -> voiceCommandEngine.speakThenListen(promptBrowser, cb) }
+        listenBrowser { cmd ->
             when (cmd) {
                 is VoiceCommand.SessionTimeout, is VoiceCommand.GoToSleep -> {
                     // Preserve browser bookmark — user can resume after the next wake.
                     voiceManager.stopAll()
-                    voiceManager.speak(
-                        "Going to sleep. Press the power button and say 'continue' " +
-                            "to resume the article."
-                    )
+                    if (!_silentWake.value) {
+                        voiceManager.speak(
+                            "Going to sleep. Press the power button and say 'continue' " +
+                                "to resume the article."
+                        )
+                    }
                 }
                 is VoiceCommand.FreeText -> {
                     // Unrecognized speech or empty recognizer result.  Do NOT
@@ -751,20 +801,43 @@ class InboxViewModel @Inject constructor(
     }
 
     private fun promptAudioResumeAndListen(emails: List<EmailItem>) {
-        voiceCommandEngine.speakThenListen(
-            "Audio paused. Say 'resume', 'continue', or 'play' to resume, or give another command."
-        ) { cmd ->
+        val promptAudio = "Audio paused. Say 'resume', 'continue', or 'play' to resume, or give another command."
+        val listenAudio: ((VoiceCommand) -> Unit) -> Unit =
+            if (_silentWake.value) { cb -> voiceCommandEngine.listenOnly(cb) }
+            else { cb -> voiceCommandEngine.speakThenListen(promptAudio, cb) }
+        listenAudio { cmd ->
             when (cmd) {
                 is VoiceCommand.ContinueReading -> {
                     audioPlayerVoiceFlow.resumeAfterWake(viewModelScope) { exitCmd ->
                         handleCommand(exitCmd, emails)
                     }
                 }
+
+                is VoiceCommand.Repeat -> {
+                    audioPlayerVoiceFlow.resumeAndRestart(viewModelScope) { exitCmd ->
+                        handleCommand(exitCmd, emails)
+                    }
+                }
+
+                is VoiceCommand.Next -> {
+                    audioPlayerVoiceFlow.resumeAndNext(viewModelScope) { exitCmd ->
+                        handleCommand(exitCmd, emails)
+                    }
+                }
+
+                is VoiceCommand.Previous -> {
+                    audioPlayerVoiceFlow.resumeAndPrevious(viewModelScope) { exitCmd ->
+                        handleCommand(exitCmd, emails)
+                    }
+                }
+
                 is VoiceCommand.SessionTimeout, is VoiceCommand.GoToSleep -> {
                     voiceManager.stopAll()
-                    voiceManager.speak(
-                        "Going to sleep. Press the power button and say 'continue' to resume."
-                    )
+                    if (!_silentWake.value) {
+                        voiceManager.speak(
+                            "Going to sleep. Press the power button and say 'continue' to resume."
+                        )
+                    }
                 }
                 is VoiceCommand.Cancel, is VoiceCommand.GoBack -> {
                     audioPlayerVoiceFlow.stop()
@@ -796,21 +869,39 @@ class InboxViewModel @Inject constructor(
      * causing the subsequent "continue" to fail with "No reading in progress".
      */
     private fun promptResumeAndListen(prompt: String, emails: List<EmailItem>) {
-        voiceCommandEngine.speakThenListen(prompt) { cmd ->
+        val listenResume: ((VoiceCommand) -> Unit) -> Unit =
+            if (_silentWake.value) { cb -> voiceCommandEngine.listenOnly(cb) }
+            else { cb -> voiceCommandEngine.speakThenListen(prompt, cb) }
+        listenResume { cmd ->
             when (cmd) {
                 is VoiceCommand.ContinueReading ->
                     resumeFromPause(emails)
 
+                is VoiceCommand.Repeat -> {
+                    pausedPosition = null
+                    repeatCurrentEmail(emails)
+                }
+
+                is VoiceCommand.Next -> {
+                    pausedPosition = null
+                    advanceAndRead(+1, emails)
+                }
+
+                is VoiceCommand.Previous -> {
+                    pausedPosition = null
+                    advanceAndRead(-1, emails)
+                }
+
                 is VoiceCommand.SessionTimeout, is VoiceCommand.GoToSleep -> {
-                    // Preserve bookmark — user can resume after the next wake.
                     voiceManager.stopAll()
-                    voiceManager.speak(
-                        "Going to sleep. Press the power button and say 'continue' to resume reading."
-                    )
+                    if (!_silentWake.value) {
+                        voiceManager.speak(
+                            "Going to sleep. Press the power button and say 'continue' to resume."
+                        )
+                    }
                 }
 
                 is VoiceCommand.Cancel, is VoiceCommand.Pause ->
-                    // Preserve bookmark and re-prompt without timing out into a "lost".
                     promptResumeAndListen(
                         "Paused. Say 'continue' to resume, 'go to sleep' to keep the bookmark, " +
                             "or another command.",
@@ -818,8 +909,6 @@ class InboxViewModel @Inject constructor(
                     )
 
                 is VoiceCommand.FreeText -> {
-                    // Unrecognized speech or empty result from recognizer.  Do NOT
-                    // clear the bookmark — re-prompt so the user can try again.
                     DebugLogger.log(
                         "InboxViewModel",
                         "promptResumeAndListen: unrecognized FreeText='${cmd.text}' — preserving bookmark"
@@ -832,14 +921,23 @@ class InboxViewModel @Inject constructor(
                 }
 
                 else -> {
-                    // Intentional navigation/action command (next, previous, search,
-                    // refresh, delete, compose, etc.).  These handlers already clear
-                    // pausedPosition themselves when appropriate, so we only clear
-                    // it here as a defensive default.
                     pausedPosition = null
                     handleCommand(cmd, emails)
                 }
             }
+        }
+    }
+
+    private fun advanceAndRead(delta: Int, emails: List<EmailItem>) {
+        val newIdx = _currentEmailIndex.value + delta
+        val email = emails.getOrNull(newIdx)
+        if (email != null) {
+            _currentEmailIndex.value = newIdx
+            readCurrentEmail(emails)
+        } else {
+            voiceCommandEngine.speakThenListen(
+                if (delta > 0) "You are at the last email." else "You are at the first email."
+            ) { cmd -> handleCommand(cmd, emails) }
         }
     }
 
@@ -938,10 +1036,30 @@ class InboxViewModel @Inject constructor(
         DebugLogger.log("InboxViewModel", "handleCommand: ${command::class.simpleName}" +
             if (command is VoiceCommand.FreeText) " text='${command.text}'" else "")
         when (command) {
-            is VoiceCommand.Read         -> readCurrentEmail(emails)
-            is VoiceCommand.Next         -> advanceEmail(+1, emails)
-            is VoiceCommand.Previous     -> advanceEmail(-1, emails)
-            is VoiceCommand.Repeat       -> repeatCurrentEmail(emails)
+            is VoiceCommand.Read         -> {
+                readingAllTotal = 0; readingAllRemaining = 0
+                readCurrentEmail(emails)
+            }
+            is VoiceCommand.Next         -> {
+                if (readingAllTotal > 0) {
+                    readingAllTotal = 0; readingAllRemaining = 0
+                    voiceManager.stopAll()
+                    return
+                }
+                advanceEmail(+1, emails)
+            }
+            is VoiceCommand.Previous     -> {
+                if (readingAllTotal > 0) {
+                    readingAllTotal = 0; readingAllRemaining = 0
+                    voiceManager.stopAll()
+                    return
+                }
+                advanceEmail(-1, emails)
+            }
+            is VoiceCommand.Repeat       -> {
+                readingAllTotal = 0; readingAllRemaining = 0
+                repeatCurrentEmail(emails)
+            }
             is VoiceCommand.Refresh      -> loadInbox()
             is VoiceCommand.Compose -> startVoiceCompose(emails)
             is VoiceCommand.Reply -> {
@@ -965,6 +1083,7 @@ class InboxViewModel @Inject constructor(
             is VoiceCommand.ListDrafts   -> startDraftFlow(emails)
             is VoiceCommand.ListAttachments  -> listAttachments(emails)
             is VoiceCommand.ReadAttachment   -> readAttachment(command.index, emails)
+            is VoiceCommand.ReadAll          -> readAll(emails)
             is VoiceCommand.ReadAllUnread    -> readAllUnread(emails)
 
             is VoiceCommand.Pause ->
@@ -1021,9 +1140,22 @@ class InboxViewModel @Inject constructor(
                         "search, refresh, reed unread, mark as read, mark as unread, " +
                         "pause, continue, go to sleep, bible, browser, list attachments, " +
                         "list drafts, read slower, read faster, voice settings, instructions, " +
-                        "play. While composing: add more, delete last word or sentence, start over, " +
+                        "play, time, weather, status. While composing: add more, delete last word or sentence, start over, " +
                         "save draft, read back, send, cancel."
                 ) { cmd -> handleCommand(cmd, emails) }
+
+            is VoiceCommand.Status -> {
+                val msg = when {
+                    pausedPosition != null ->
+                        "Reading paused at email ${pausedPosition!!.emailIndex + 1} of ${pausedPosition!!.readingAllTotal}. " +
+                            "Say 'continue' to resume."
+                    audioPlayerVoiceFlow.isActive ->
+                        "Audio is playing. Say 'pause' or 'next'."
+                    else ->
+                        "VoiceGmail ready. Say a command."
+                }
+                voiceCommandEngine.speakThenListen(msg) { cmd -> handleCommand(cmd, emails) }
+            }
 
             is VoiceCommand.ReadSlower -> {
                 voiceManager.adjustEmailReadRate(-0.10f)
@@ -1041,29 +1173,37 @@ class InboxViewModel @Inject constructor(
             }
 
             is VoiceCommand.SessionTimeout -> {
-                val msg = if (pausedPosition != null)
-                    "Going to sleep. Press the power button and say 'continue' to resume reading."
-                else
-                    "Going to sleep. Press the power button to wake me."
-                voiceManager.speak(msg)
+                if (!_silentWake.value) {
+                    val msg = if (pausedPosition != null)
+                        "Going to sleep. Press the power button and say 'continue' to resume reading."
+                    else
+                        "Going to sleep. Press the power button to wake me."
+                    voiceManager.speak(msg)
+                }
             }
 
             is VoiceCommand.GoToSleep -> {
-                // Stop all audio (TTS + mic) before speaking the sleep message,
+                // Stop all TTS and mic before speaking the sleep message,
                 // so any email or article being read aloud is interrupted immediately.
-                if (!audioPlayerVoiceFlow.isPlayPaused) {
-                    audioPlayerVoiceFlow.stop()
-                }
+                // But keep the audio player running if it's active.
                 voiceManager.stopAll()
-                mediaSessionController.setStopped()
+                if (!audioPlayerVoiceFlow.isActive) {
+                    mediaSessionController.setStopped()
+                }
                 // NOTE: Do NOT clear pausedPosition here.  If a reading bookmark
                 // exists, the user must be able to wake the app later and say
                 // 'continue' to resume from exactly where they left off.
-                val msg = if (pausedPosition != null)
-                    "Going to sleep. Press the power button and say 'continue' to resume reading."
-                else
-                    "Going to sleep. Press the power button to wake me."
-                voiceManager.speak(msg)
+                if (!_silentWake.value) {
+                    val msg = if (pausedPosition != null)
+                        "Going to sleep. Press the power button and say 'continue' to resume reading."
+                    else if (audioPlayerVoiceFlow.isActive)
+                        ""
+                    else
+                        "Going to sleep. Press the power button to wake me."
+                    if (msg.isNotBlank()) {
+                        voiceManager.speak(msg)
+                    }
+                }
             }
 
             is VoiceCommand.SignIn -> {
@@ -1095,6 +1235,54 @@ class InboxViewModel @Inject constructor(
                 }
             }
 
+            is VoiceCommand.Time -> {
+                val zip = _zipCode.value
+                if (zip.isBlank()) {
+                    voiceCommandEngine.speakThenListen(
+                        "Please enter your zip code in voice settings."
+                    ) { cmd -> handleCommand(cmd, emails) }
+                } else {
+                    viewModelScope.launch {
+                        val result = timeWeatherRepository.getTimeInfo(zip)
+                        result.onSuccess { info ->
+                            val period = if (info.isAm) "A. M." else "P. M."
+                            val minuteStr = if (info.minute < 10) "O ${numberWord(info.minute)}" else numberWord(info.minute)
+                            val msg = "The time is now ${numberWord(info.hour)}, $minuteStr $period."
+                            voiceCommandEngine.speakThenListen(msg) { cmd -> handleCommand(cmd, emails) }
+                        }.onFailure {
+                            voiceCommandEngine.speakThenListen(
+                                "Could not get the time right now."
+                            ) { cmd -> handleCommand(cmd, emails) }
+                        }
+                    }
+                }
+            }
+
+            is VoiceCommand.Weather -> {
+                val zip = _zipCode.value
+                if (zip.isBlank()) {
+                    voiceCommandEngine.speakThenListen(
+                        "Please enter your zip code in voice settings."
+                    ) { cmd -> handleCommand(cmd, emails) }
+                } else {
+                    viewModelScope.launch {
+                        val result = timeWeatherRepository.getWeather(zip)
+                        result.onSuccess { w ->
+                            val msg = buildString {
+                                append("Current weather: ${w.currentTemp} degrees, ${w.condition}. ")
+                                append("Today's high ${w.highToday}, low ${w.lowToday}. ")
+                                append("Tomorrow: high ${w.highTomorrow}, low ${w.lowTomorrow}, ${w.conditionTomorrow}.")
+                            }
+                            voiceCommandEngine.speakThenListen(msg) { cmd -> handleCommand(cmd, emails) }
+                        }.onFailure {
+                            voiceCommandEngine.speakThenListen(
+                                "Weather service not available right now."
+                            ) { cmd -> handleCommand(cmd, emails) }
+                        }
+                    }
+                }
+            }
+
             is VoiceCommand.Browser -> {
                 mediaSessionController.setPlaying("Browser", "Searching...")
                 browserVoiceFlow.start(viewModelScope) { exitCmd ->
@@ -1111,13 +1299,22 @@ class InboxViewModel @Inject constructor(
 
             is VoiceCommand.PlayAudio -> {
                 audioPlayerVoiceFlow.start(command.query, viewModelScope) { exitCmd ->
-                    mediaSessionController.setStopped()
-                    if (exitCmd is VoiceCommand.None) {
-                        voiceCommandEngine.speakThenListen("Audio player finished. Back to inbox. Say a command.") { cmd ->
-                            handleCommand(cmd, emails)
+                    when {
+                        exitCmd is VoiceCommand.GoToSleep || exitCmd is VoiceCommand.SessionTimeout -> {
+                            // Keep audio playing silently. No "going to sleep" announcement,
+                            // no media session teardown — the user hears their music/audio
+                            // continue while the voice loop exits.
                         }
-                    } else {
-                        handleCommand(exitCmd, emails)
+                        exitCmd is VoiceCommand.None -> {
+                            mediaSessionController.setStopped()
+                            voiceCommandEngine.speakThenListen("Audio player finished. Back to inbox. Say a command.") { cmd ->
+                                handleCommand(cmd, emails)
+                            }
+                        }
+                        else -> {
+                            mediaSessionController.setStopped()
+                            handleCommand(exitCmd, emails)
+                        }
                     }
                 }
             }
@@ -1135,14 +1332,50 @@ class InboxViewModel @Inject constructor(
                 val app = appLauncherPrefs.findByVoiceCommand(command.query)
                 if (app != null) {
                     try {
-                        val intent = context.packageManager.getLaunchIntentForPackage(app.packageName)
+                        val pm = context.packageManager
+                        var intent = pm.getLaunchIntentForPackage(app.packageName)
+                        // Some apps (e.g. accessibility services) don't expose a
+                        // standard CATEGORY_LAUNCHER activity.  Fall back to
+                        // finding ANY exported activity in the package.
+                        if (intent == null) {
+                            try {
+                                val pkgInfo = pm.getPackageInfo(
+                                    app.packageName,
+                                    android.content.pm.PackageManager.GET_ACTIVITIES
+                                )
+                                val exportedActivity = pkgInfo.activities?.firstOrNull { it.exported }
+                                if (exportedActivity != null) {
+                                    intent = Intent().apply {
+                                        setClassName(app.packageName, exportedActivity.name)
+                                    }
+                                }
+                            } catch (_: Exception) { }
+                        }
                         if (intent != null) {
                             lastLaunchedPackage = app.packageName
                             context.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
                         } else {
-                            voiceCommandEngine.speakThenListen(
-                                "Could not launch ${app.displayName}. The app may not be installed."
-                            ) { cmd -> handleCommand(cmd, emails) }
+                            // Last resort: open the system App Info page.
+                            // The user can tap "Open" from there, or verify
+                            // the package name is correct.
+                            val settingsIntent = Intent(
+                                android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS
+                            ).apply {
+                                data = android.net.Uri.fromParts("package", app.packageName, null)
+                                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                            }
+                            try {
+                                context.startActivity(settingsIntent)
+                                voiceCommandEngine.speakThenListen(
+                                    "Could not launch ${app.displayName} directly. " +
+                                        "Opening app settings so you can open it manually."
+                                ) { cmd -> handleCommand(cmd, emails) }
+                            } catch (_: Exception) {
+                                voiceCommandEngine.speakThenListen(
+                                    "Could not launch ${app.displayName}. " +
+                                        "The app may not be installed."
+                                ) { cmd -> handleCommand(cmd, emails) }
+                            }
                         }
                     } catch (e: Exception) {
                         DebugLogger.log("InboxViewModel", "Launch failed: ${e.message}")
@@ -1203,7 +1436,9 @@ class InboxViewModel @Inject constructor(
             is VoiceCommand.FreeText -> {
                 val text = command.text.trim()
                 if (text.isBlank()) {
-                    voiceManager.speak("Going to sleep. Press the power button to wake me.")
+                    if (!_silentWake.value) {
+                        voiceManager.speak("Going to sleep. Press the power button to wake me.")
+                    }
                 } else if (text.lowercase().contains("audio setting") ||
                     text.lowercase().contains("audio folder") ||
                     text.lowercase().contains("music setting")) {
@@ -1246,12 +1481,18 @@ class InboxViewModel @Inject constructor(
                 handleCommand(cmd, emails)
             }; return
         }
-        pausedPosition = null // clear any stale bookmark before starting fresh
+        pausedPosition = null
         mediaSessionController.setPlaying("Email: ${email.subject}", "From ${email.from}")
         val unreadPrefix = if (email.isUnread) "Unread. " else ""
         val bodyForSpeech = email.body.forSpeech()
-        val fullText = "${unreadPrefix}Email ${_currentEmailIndex.value + 1} of ${emails.size}. " +
-            "From ${email.from}. Subject: ${email.subject}. $bodyForSpeech"
+        val fullText = if (readingAllTotal > 0) {
+            val seqNum = readingAllTotal - readingAllRemaining
+            "${unreadPrefix}Email $seqNum of $readingAllTotal. " +
+                "From ${email.from}. Subject: ${email.subject}. $bodyForSpeech"
+        } else {
+            "${unreadPrefix}Email ${_currentEmailIndex.value + 1} of ${emails.size}. " +
+                "From ${email.from}. Subject: ${email.subject}. $bodyForSpeech"
+        }
         readEmailBySentences(email, emails, fullText)
     }
 
@@ -1322,9 +1563,27 @@ class InboxViewModel @Inject constructor(
         if (gen != readingGen) return // stale callback — a newer session is now active
 
         if (index >= chunks.size) {
-            // Reached the end — clear the bookmark
             pausedPosition = null
             mediaSessionController.setStopped()
+
+            if (readingAllRemaining > 0) {
+                val seqNum = readingAllTotal - readingAllRemaining
+                readingAllRemaining--
+                _currentEmailIndex.value++
+                val nextEmail = emails.getOrNull(_currentEmailIndex.value)
+                if (nextEmail != null) {
+                    voiceManager.speak(
+                        "That concludes email $seqNum of $readingAllTotal. " +
+                            "Now, continuing to number ${seqNum + 1}."
+                    ) {
+                        readCurrentEmail(emails)
+                    }
+                    return
+                }
+                readingAllTotal = 0
+                readingAllRemaining = 0
+            }
+
             val attachHint = when (email.attachments.size) {
                 0    -> ""
                 1    -> " This email has 1 attachment: ${email.attachments[0].filename}."
@@ -1339,11 +1598,14 @@ class InboxViewModel @Inject constructor(
         }
 
         // Update bookmark BEFORE speaking — power-button wake reads this position
+        // Also save read-all state so a wake+continue can resume multi-email reading.
         pausedPosition = ReadingPosition(
             emailId    = email.id,
             emailIndex = _currentEmailIndex.value,
             chunks     = chunks,
-            chunkIndex = index
+            chunkIndex = index,
+            readingAllTotal = readingAllTotal,
+            readingAllRemaining = readingAllRemaining
         )
 
         voiceCommandEngine.speakEmailChunk(chunks[index]) {
@@ -1383,6 +1645,11 @@ class InboxViewModel @Inject constructor(
         }
         _currentEmailIndex.value = pos.emailIndex
         readingGen++ // new session for resume — clears any stale flushed-chunk callbacks
+        // Restore read-all counters that were cleared by handleWakeEvent.
+        // Without this, resumeFromPause at the end of an email chunk would stop
+        // instead of advancing to the next email in the ReadAll sequence.
+        readingAllTotal = pos.readingAllTotal
+        readingAllRemaining = pos.readingAllRemaining
         DebugLogger.log(
             "InboxViewModel",
             "resumeFromPause: emailIndex=${pos.emailIndex} chunkIndex=${pos.chunkIndex}/${pos.chunks.size} gen=$readingGen"
@@ -1456,7 +1723,36 @@ class InboxViewModel @Inject constructor(
         }
     }
 
+    /**
+     * Read ALL items in [emails] sequentially, regardless of read/unread status.
+     * Used when the user says "read all" — differs from [readAllUnread] which
+     * filters to unread only.
+     */
+    private fun readAll(emails: List<EmailItem>) {
+        readingAllTotal = 0
+        readingAllRemaining = 0
+        if (emails.isEmpty()) {
+            voiceCommandEngine.speakThenListen("No emails to read.") { cmd ->
+                handleCommand(cmd, emails)
+            }; return
+        }
+        _currentEmailIndex.value = 0
+        if (emails.size == 1) {
+            val email = emails[0]
+            voiceCommandEngine.speakEmailThenListen(
+                "1 email. From ${email.from}. Subject: ${email.subject}. " +
+                    "Say 'reed' to hear it."
+            ) { cmd -> handleCommand(cmd, emails) }
+        } else {
+            readingAllTotal = emails.size
+            readingAllRemaining = emails.size - 1
+            readCurrentEmail(emails)
+        }
+    }
+
     private fun readAllUnread(emails: List<EmailItem>) {
+        readingAllTotal = 0
+        readingAllRemaining = 0
         val unread = emails.filter { it.isUnread }
         if (unread.isEmpty()) {
             voiceCommandEngine.speakThenListen("No unread emails. All caught up!") { cmd ->
@@ -1465,12 +1761,17 @@ class InboxViewModel @Inject constructor(
         }
         val idx = emails.indexOf(unread.first()).coerceAtLeast(0)
         _currentEmailIndex.value = idx
-        val email = unread.first()
-        voiceCommandEngine.speakEmailThenListen(
-            "You have ${unread.size} unread email${if (unread.size == 1) "" else "s"}. " +
-                "First unread: From ${email.from}. Subject: ${email.subject}. " +
-                "Say 'reed' to hear it in full, or 'next' for the next email."
-        ) { cmd -> handleCommand(cmd, emails) }
+        if (unread.size == 1) {
+            val email = unread.first()
+            voiceCommandEngine.speakEmailThenListen(
+                "You have 1 unread email. From ${email.from}. Subject: ${email.subject}. " +
+                    "Say 'reed' to hear it in full."
+            ) { cmd -> handleCommand(cmd, emails) }
+        } else {
+            readingAllTotal = unread.size
+            readingAllRemaining = unread.size - 1
+            readCurrentEmail(emails)
+        }
     }
 
     // ------------------------------------------------------------------
@@ -2335,6 +2636,16 @@ class InboxViewModel @Inject constructor(
         }
     }
 
+    fun changeGmailAccount() {
+        closeSettingsPanel()
+        viewModelScope.launch {
+            authRepository.clearTokens()
+            _isSignedIn.value = false
+            _uiState.value = InboxUiState.SignedOut
+            requestSignIn()
+        }
+    }
+
     fun stopVoice() = voiceCommandEngine.stopAll()
 
     fun getShareLogIntent(): Intent? {
@@ -2444,6 +2755,28 @@ class InboxViewModel @Inject constructor(
         val level = intent?.getIntExtra(BatteryManager.EXTRA_LEVEL, -1) ?: -1
         val scale = intent?.getIntExtra(BatteryManager.EXTRA_SCALE, -1) ?: -1
         return if (scale > 0) (level * 100 / scale) else -1
+    }
+
+    private fun numberWord(n: Int): String = when (n) {
+        0 -> "zero"; 1 -> "one"; 2 -> "two"; 3 -> "three"; 4 -> "four"
+        5 -> "five"; 6 -> "six"; 7 -> "seven"; 8 -> "eight"; 9 -> "nine"
+        10 -> "ten"; 11 -> "eleven"; 12 -> "twelve"; 13 -> "thirteen"
+        14 -> "fourteen"; 15 -> "fifteen"; 16 -> "sixteen"; 17 -> "seventeen"
+        18 -> "eighteen"; 19 -> "nineteen"; 20 -> "twenty"
+        21 -> "twenty-one"; 22 -> "twenty-two"; 23 -> "twenty-three"
+        24 -> "twenty-four"; 25 -> "twenty-five"; 26 -> "twenty-six"
+        27 -> "twenty-seven"; 28 -> "twenty-eight"; 29 -> "twenty-nine"
+        30 -> "thirty"; 31 -> "thirty-one"; 32 -> "thirty-two"
+        33 -> "thirty-three"; 34 -> "thirty-four"; 35 -> "thirty-five"
+        36 -> "thirty-six"; 37 -> "thirty-seven"; 38 -> "thirty-eight"
+        39 -> "thirty-nine"; 40 -> "forty"; 41 -> "forty-one"
+        42 -> "forty-two"; 43 -> "forty-three"; 44 -> "forty-four"
+        45 -> "forty-five"; 46 -> "forty-six"; 47 -> "forty-seven"
+        48 -> "forty-eight"; 49 -> "forty-nine"; 50 -> "fifty"
+        51 -> "fifty-one"; 52 -> "fifty-two"; 53 -> "fifty-three"
+        54 -> "fifty-four"; 55 -> "fifty-five"; 56 -> "fifty-six"
+        57 -> "fifty-seven"; 58 -> "fifty-eight"; 59 -> "fifty-nine"
+        else -> n.toString()
     }
 
     private fun announceBatteryLevel(onDone: () -> Unit) {

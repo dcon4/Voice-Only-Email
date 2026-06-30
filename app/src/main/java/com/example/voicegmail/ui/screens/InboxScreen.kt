@@ -9,6 +9,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.BugReport
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
@@ -80,6 +81,15 @@ fun InboxScreen(
                                 contentDescription = null
                             )
                         }
+                    }
+                    // Sighted User's Guide — help page for sighted helpers
+                    IconButton(
+                        onClick = { viewModel.openSightedGuide() },
+                        modifier = Modifier.semantics {
+                            contentDescription = "Open Sighted User's Guide"
+                        }
+                    ) {
+                        Icon(Icons.Default.Info, contentDescription = null)
                     }
                     // Debug log share
                     IconButton(
@@ -221,6 +231,12 @@ fun InboxScreen(
         val audioSettingsVisible by viewModel.audioSettingsVisible.collectAsState()
         if (audioSettingsVisible) {
             AudioSettingsScreen(viewModel = viewModel)
+        }
+
+        // Sighted User's Guide (help page for sighted helpers)
+        val sightedGuideVisible by viewModel.sightedGuideVisible.collectAsState()
+        if (sightedGuideVisible) {
+            SightedGuideScreen(viewModel = viewModel)
         }
 
         // Direct app picker dialog (from VoiceSettingsPanel "App Launcher" button)
