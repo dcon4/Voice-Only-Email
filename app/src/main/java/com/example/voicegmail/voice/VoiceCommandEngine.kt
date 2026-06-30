@@ -52,6 +52,12 @@ sealed class VoiceCommand {
     /** User wants to hear the battery percentage. */
     object Battery         : VoiceCommand()
 
+    /** User wants to hear the current time based on their zip code. */
+    object Time            : VoiceCommand()
+
+    /** User wants to hear the current weather and forecast for their zip code. */
+    object Weather         : VoiceCommand()
+
     /** User wants to hear the current state (always available). */
     object Status          : VoiceCommand()
 
@@ -486,6 +492,10 @@ class VoiceCommandEngine @Inject constructor(
                 lower.contains("commands") -> VoiceCommand.Help
 
             lower == "status" -> VoiceCommand.Status
+
+            lower == "time" -> VoiceCommand.Time
+
+            lower.contains("weather") || lower == "forecast" -> VoiceCommand.Weather
 
             lower.contains("search") || lower.contains("find") ||
                 lower.contains("look for") -> VoiceCommand.Search

@@ -5,6 +5,7 @@ import android.speech.tts.Voice
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -12,6 +13,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.example.voicegmail.ui.viewmodel.InboxViewModel
 
@@ -190,6 +192,54 @@ fun VoiceSettingsPanel(viewModel: InboxViewModel) {
                     onCheckedChange = { viewModel.setSilentWake(it) }
                 )
             }
+
+            HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
+
+            // ---- Zip Code --------------------------------------------------
+            val zipCode by viewModel.zipCode.collectAsState()
+            var zipCodeInput by remember(zipCode) { mutableStateOf(zipCode) }
+
+            Text(
+                text = "Zip Code",
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.padding(top = 4.dp, bottom = 4.dp)
+            )
+
+            OutlinedTextField(
+                value = zipCodeInput,
+                onValueChange = { zipCodeInput = it },
+                label = { Text("USA zip code") },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                modifier = Modifier.fillMaxWidth()
+            )
+
+            Spacer(Modifier.height(4.dp))
+
+            OutlinedButton(
+                onClick = { viewModel.setZipCode(zipCodeInput) },
+                modifier = Modifier.fillMaxWidth(),
+                enabled = zipCodeInput.length == 5 && zipCodeInput.all { it.isDigit() }
+            ) {
+                Text("Save zip code")
+            }
+
+            if (zipCode.isNotBlank()) {
+                Text(
+                    text = "Current zip code: $zipCode",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+
+            Spacer(Modifier.height(4.dp))
+
+            Text(
+                text = "Used for 'time' and 'weather' voice commands.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
 
             HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
 

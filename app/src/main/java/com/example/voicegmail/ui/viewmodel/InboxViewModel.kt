@@ -68,7 +68,9 @@ class InboxViewModel @Inject constructor(
     private val mediaSessionController: com.example.voicegmail.media.MediaSessionController,
     private val ttsSettings: com.example.voicegmail.voice.TtsSettingsRepository,
     private val appLauncherPrefs: com.example.voicegmail.voice.AppLauncherPreferences,
-    private val audioRepository: com.example.voicegmail.audio.AudioRepository
+    private val audioRepository: com.example.voicegmail.audio.AudioRepository,
+    private val timeWeatherRepository: com.example.voicegmail.voice.TimeWeatherRepository,
+    private val zipCodePrefs: com.example.voicegmail.voice.ZipCodePreferences
 ) : ViewModel() {
 
     private var isFirstLoad = true
@@ -137,6 +139,9 @@ class InboxViewModel @Inject constructor(
 
     private val _silentWake = MutableStateFlow(false)
     val silentWake: StateFlow<Boolean> = _silentWake
+
+    private val _zipCode = MutableStateFlow("")
+    val zipCode: StateFlow<String> = _zipCode
 
     private val _batteryThreshold = MutableStateFlow(30)
     val batteryThreshold: StateFlow<Int> = _batteryThreshold
@@ -258,6 +263,7 @@ class InboxViewModel @Inject constructor(
         _runInBackground.value    = wakePreferences.isRunInBackground()
         _verboseLogging.value     = wakePreferences.isVerboseLogging()
         _silentWake.value         = wakePreferences.isSilentWake()
+        _zipCode.value            = zipCodePrefs.getZipCode()
         _batteryThreshold.value   = ttsSettings.getBatteryThreshold()
         _settingsPanelVisible.value = true
     }
@@ -423,6 +429,12 @@ class InboxViewModel @Inject constructor(
         wakePreferences.setSilentWake(enabled)
         _silentWake.value = enabled
         DebugLogger.log("InboxViewModel", "Silent wake = $enabled")
+    }
+
+    fun setZipCode(value: String) {
+        zipCodePrefs.setZipCode(value)
+        _zipCode.value = value
+        DebugLogger.log("InboxViewModel", "Zip code = $value")
     }
 
     fun setBatteryThreshold(threshold: Int) {
@@ -1128,7 +1140,7 @@ class InboxViewModel @Inject constructor(
                         "search, refresh, reed unread, mark as read, mark as unread, " +
                         "pause, continue, go to sleep, bible, browser, list attachments, " +
                         "list drafts, read slower, read faster, voice settings, instructions, " +
-                        "play, status. While composing: add more, delete last word or sentence, start over, " +
+                        "play, time, weather, status. While composing: add more, delete last word or sentence, start over, " +
                         "save draft, read back, send, cancel."
                 ) { cmd -> handleCommand(cmd, emails) }
 
@@ -1219,6 +1231,54 @@ class InboxViewModel @Inject constructor(
                 announceBatteryLevel {
                     voiceCommandEngine.speakThenListen("Say a command.") { cmd ->
                         handleCommand(cmd, emails)
+                    }
+                }
+            }
+
+            is VoiceCommand.Time -> {
+                val zip = _zipCode.value
+                if (zip.isBlank()) {
+                    voiceCommandEngine.speakThenListen(
+                        "Please enter your zip code in voice settings."
+                    ) { cmd -> handleCommand(cmd, emails) }
+                } else {
+                    viewModelScope.launch {
+                        val result = timeWeatherRepository.getTimeInfo(zip)
+                        result.onSuccess { info ->
+                            val period = if (info.isAm) "A. M." else "P. M."
+                            val minuteStr = if (info.minute < 10) "O ${numberWord(info.minute)}" else numberWord(info.minute)
+                            val msg = "The time is now ${numberWord(info.hour)}, $minuteStr $period."
+                            voiceCommandEngine.speakThenListen(msg) { cmd -> handleCommand(cmd, emails) }
+                        }.onFailure {
+                            voiceCommandEngine.speakThenListen(
+                                "Could not get the time right now."
+                            ) { cmd -> handleCommand(cmd, emails) }
+                        }
+                    }
+                }
+            }
+
+            is VoiceCommand.Weather -> {
+                val zip = _zipCode.value
+                if (zip.isBlank()) {
+                    voiceCommandEngine.speakThenListen(
+                        "Please enter your zip code in voice settings."
+                    ) { cmd -> handleCommand(cmd, emails) }
+                } else {
+                    viewModelScope.launch {
+                        val result = timeWeatherRepository.getWeather(zip)
+                        result.onSuccess { w ->
+                            val msg = buildString {
+                                append("Current weather: ${w.currentTemp} degrees, ${w.condition}. ")
+                                append("Today's high ${w.highToday}, low ${w.lowToday}. ")
+                                append("Tomorrow: high ${w.highTomorrow}, low ${w.lowTomorrow}, ${w.conditionTomorrow}.")
+                            }
+                            voiceCommandEngine.speakThenListen(msg) { cmd -> handleCommand(cmd, emails) }
+                        }.onFailure {
+                            voiceCommandEngine.speakThenListen(
+                                "Weather service not available right now."
+                            ) { cmd -> handleCommand(cmd, emails) }
+                        }
                     }
                 }
             }
@@ -2695,6 +2755,28 @@ class InboxViewModel @Inject constructor(
         val level = intent?.getIntExtra(BatteryManager.EXTRA_LEVEL, -1) ?: -1
         val scale = intent?.getIntExtra(BatteryManager.EXTRA_SCALE, -1) ?: -1
         return if (scale > 0) (level * 100 / scale) else -1
+    }
+
+    private fun numberWord(n: Int): String = when (n) {
+        0 -> "zero"; 1 -> "one"; 2 -> "two"; 3 -> "three"; 4 -> "four"
+        5 -> "five"; 6 -> "six"; 7 -> "seven"; 8 -> "eight"; 9 -> "nine"
+        10 -> "ten"; 11 -> "eleven"; 12 -> "twelve"; 13 -> "thirteen"
+        14 -> "fourteen"; 15 -> "fifteen"; 16 -> "sixteen"; 17 -> "seventeen"
+        18 -> "eighteen"; 19 -> "nineteen"; 20 -> "twenty"
+        21 -> "twenty-one"; 22 -> "twenty-two"; 23 -> "twenty-three"
+        24 -> "twenty-four"; 25 -> "twenty-five"; 26 -> "twenty-six"
+        27 -> "twenty-seven"; 28 -> "twenty-eight"; 29 -> "twenty-nine"
+        30 -> "thirty"; 31 -> "thirty-one"; 32 -> "thirty-two"
+        33 -> "thirty-three"; 34 -> "thirty-four"; 35 -> "thirty-five"
+        36 -> "thirty-six"; 37 -> "thirty-seven"; 38 -> "thirty-eight"
+        39 -> "thirty-nine"; 40 -> "forty"; 41 -> "forty-one"
+        42 -> "forty-two"; 43 -> "forty-three"; 44 -> "forty-four"
+        45 -> "forty-five"; 46 -> "forty-six"; 47 -> "forty-seven"
+        48 -> "forty-eight"; 49 -> "forty-nine"; 50 -> "fifty"
+        51 -> "fifty-one"; 52 -> "fifty-two"; 53 -> "fifty-three"
+        54 -> "fifty-four"; 55 -> "fifty-five"; 56 -> "fifty-six"
+        57 -> "fifty-seven"; 58 -> "fifty-eight"; 59 -> "fifty-nine"
+        else -> n.toString()
     }
 
     private fun announceBatteryLevel(onDone: () -> Unit) {
